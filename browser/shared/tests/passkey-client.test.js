@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createPasskeyClient } from "../src/passkey-client.js";
 
-function makeClient({ sendScript, openPopout, focusTab } = {}) {
+function makeClient({ sendScript, openPopout, focusTab, sessionStore } = {}) {
   const pushed = []; // every port.postMessage payload
   const removedWindows = [];
   const port = {
@@ -14,6 +14,7 @@ function makeClient({ sendScript, openPopout, focusTab } = {}) {
   };
   const popovers = [];
   const client = createPasskeyClient(sendScript || vi.fn(), {
+    sessionStore,
     openPopout:
       openPopout ||
       ((session) => {
@@ -390,7 +391,7 @@ describe("popout lifecycle", () => {
     // uiDecide-less cleanup path only touches sessions + ports.
     const { client } = makeClient({ sendScript: send });
     await client.handleCreateRequest(sender, createPayload());
-    client.cleanupTab(7);
+    await client.cleanupTab(7);
     expect(client.activeSessions()).toHaveLength(0);
     void removed;
     void origRemove;
@@ -520,7 +521,7 @@ describe("review fixes", () => {
     const { client } = makeClient({ sendScript: send });
     await client.handleCreateRequest(sender, createPayload({ sessionId: "page-1" }));
     expect(client.activeSessions()).toHaveLength(1);
-    client.handleAbortRequest(sender, "page-1");
+    await client.handleAbortRequest(sender, "page-1");
     expect(client.activeSessions()).toHaveLength(0);
   });
 
@@ -589,5 +590,166 @@ describe("review fixes", () => {
     });
     await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-good" });
     expect(pushed[0].data.type).toBe("success");
+  });
+});
+
+describe("parked session survival", () => {
+  const conditionalPayload = (overrides = {}) => ({
+    sessionId: "s-cond",
+    contextId: "ctx-1",
+    options: { challenge: "Y2g", rpId: "rp.example" },
+    requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
+    mediation: "conditional",
+    ...overrides,
+  });
+
+  // A Map-backed storage.session: in-memory, browser-lifetime, the same
+  // surface the production code reads.
+  const makeStore = () => {
+    const map = new Map();
+    return {
+      map,
+      get: async (key) => (map.has(key) ? { [key]: map.get(key) } : {}),
+      set: async (obj) => {
+        for (const [k, v] of Object.entries(obj)) map.set(k, v);
+      },
+    };
+  };
+
+  const assertScript = () =>
+    vi.fn(async (action, payload) => {
+      if (action === "passkey.list") return daemonOk([pkRow("cred-1")]);
+      if (action === "passkey.provider_assert")
+        return daemonOk({ ceremony_id: "c", assertion_response: { rawId: "cred-1" } });
+      if (action === "passkey.consume_assertion") return daemonOk({});
+      throw new Error("unexpected " + action);
+    });
+
+  it("persists undecided conditional sessions as a clean projection", async () => {
+    const store = makeStore();
+    const send = vi.fn(async () => daemonOk([pkRow("cred-1")]));
+    const { client } = makeClient({ sendScript: send, sessionStore: store });
+    await client.handleGetRequest(sender, conditionalPayload());
+    const parked = store.map.get("pkParked");
+    expect(Array.isArray(parked)).toBe(true);
+    expect(parked).toHaveLength(1);
+    expect(parked[0].mode).toBe("get");
+    expect(parked[0].conditional).toBe(true);
+    expect(parked[0].tabId).toBe(7);
+    expect(parked[0].origin).toBe("https://rp.example");
+    expect(parked[0].rpId).toBe("rp.example");
+    expect(parked[0].options.challenge).toBe("Y2g");
+    expect(parked[0].expiresAt).toBeGreaterThan(Date.now());
+    // Handles and promises must never reach storage.
+    expect(parked[0].rowsPromise).toBeUndefined();
+    expect(parked[0].timer).toBeUndefined();
+    // Round-trips through JSON untouched (storage.session stores
+    // structured clones, but the projection must be serializable anyway).
+    expect(JSON.parse(JSON.stringify(parked))).toEqual(parked);
+  });
+
+  it("resumes a parked ceremony on a restarted worker and completes the pick", async () => {
+    const store = makeStore();
+    const send = assertScript();
+    const first = makeClient({ sendScript: send, sessionStore: store });
+    await first.client.handleGetRequest(sender, conditionalPayload());
+    // The SW restarts; the fresh instance restores the parked session.
+    const second = makeClient({ sendScript: assertScript(), sessionStore: store });
+    const restored = await second.client.restoreParked();
+    expect(restored).toBe(1);
+    expect(second.client.activeSessions()).toHaveLength(1);
+    const inline = await second.client.handleInlinePasskeys(sender);
+    expect(inline.rows).toHaveLength(1);
+    const r = await second.client.handleInlinePick(sender, "cred-1");
+    expect(r.accepted).toBe(true);
+    expect(second.pushed[0].data.type).toBe("success");
+    // The finished ceremony must not linger in storage.
+    expect(await second.client.restoreParked()).toBe(0);
+  });
+
+  it("keeps the expiry clock across repeated restarts", async () => {
+    const store = makeStore();
+    const first = makeClient({ sendScript: vi.fn(async () => daemonOk([pkRow("cred-1")])), sessionStore: store });
+    await first.client.handleGetRequest(sender, conditionalPayload());
+    const before = store.map.get("pkParked")[0].expiresAt;
+    const second = makeClient({ sendScript: vi.fn(), sessionStore: store });
+    expect(await second.client.restoreParked()).toBe(1);
+    // The rewrite must not strip the clock: entry stays resumable.
+    const entry = store.map.get("pkParked")[0];
+    expect(entry.id).toBe(second.client.activeSessions()[0].id);
+    expect(entry.expiresAt).toBe(before);
+    const third = makeClient({ sendScript: vi.fn(), sessionStore: store });
+    expect(await third.client.restoreParked()).toBe(1);
+  });
+
+  it("never surfaces a parked session to a different origin on the same tab", async () => {
+    const store = makeStore();
+    const first = makeClient({ sendScript: vi.fn(async () => daemonOk([pkRow("cred-1")])), sessionStore: store });
+    await first.client.handleGetRequest(sender, conditionalPayload());
+    const second = makeClient({ sendScript: vi.fn(async () => daemonOk([pkRow("cred-1")])), sessionStore: store });
+    await second.client.restoreParked();
+    // The user navigated tab 7 elsewhere; the new document's ask must not
+    // see (or let a user pick from) the old origin's session.
+    const navigate = { tab: { id: 7, url: "https://evil.example/" }, origin: "https://evil.example", frameId: 0 };
+    expect((await second.client.handleInlinePasskeys(navigate)).rows).toHaveLength(0);
+    expect(await second.client.handleInlinePick(navigate, "cred-1")).toEqual({ error: "no session" });
+    // The honest origin still resumes it.
+    expect((await second.client.handleInlinePasskeys(sender)).rows).toHaveLength(1);
+  });
+
+  it("does not resurrect a session whose pick is already in flight", async () => {
+    const store = makeStore();
+    let releaseAssertion;
+    const gate = new Promise((r) => (releaseAssertion = r));
+    const send = vi.fn(async (action) => {
+      if (action === "passkey.list") return daemonOk([pkRow("cred-1")]);
+      if (action === "passkey.provider_assert") await gate;
+      if (action === "passkey.consume_assertion") return daemonOk({});
+      return daemonOk({});
+    });
+    const first = makeClient({ sendScript: send, sessionStore: store });
+    await first.client.handleGetRequest(sender, conditionalPayload());
+    await first.client.handleInlinePasskeys(sender);
+    const picking = first.client.handleInlinePick(sender, "cred-1");
+    await new Promise((r) => setTimeout(r, 10));
+    // The SW dies mid-assertion: the parked projection must be empty.
+    const restart = makeClient({ sendScript: vi.fn(), sessionStore: store });
+    expect(await restart.client.restoreParked()).toBe(0);
+    releaseAssertion();
+    expect((await picking).accepted).toBe(true);
+  });
+
+  it("drops expired and malformed parked entries instead of resuming them", async () => {
+    const store = makeStore();
+    const valid = {
+      id: "park-ok",
+      pageId: "s-page",
+      contextId: "ctx",
+      tabId: 7,
+      mode: "get",
+      conditional: true,
+      origin: "https://rp.example",
+      rpId: "rp.example",
+      requiresUv: false,
+      options: { challenge: "Y2g", rpId: "rp.example" },
+      expiresAt: Date.now() + 60000,
+    };
+    store.map.set("pkParked", [
+      { ...valid, id: "park-old", expiresAt: Date.now() - 1000 },
+      "garbage",
+      { ...valid, id: "park-create", mode: "create" },
+      { ...valid, id: "park-insecure", origin: "http://insecure.example" },
+      { ...valid, id: "park-noopts", options: null },
+      valid,
+    ]);
+    const { client } = makeClient({ sendScript: vi.fn(), sessionStore: store });
+    expect(await client.restoreParked()).toBe(1);
+    const live = client.activeSessions();
+    expect(live).toHaveLength(1);
+    expect(live[0].id).toBe("park-ok");
+    expect(live[0].rpId).toBe("rp.example");
+    // Storage is rewritten to the cleaned list.
+    expect(store.map.get("pkParked")).toHaveLength(1);
+    expect(store.map.get("pkParked")[0].id).toBe("park-ok");
   });
 });

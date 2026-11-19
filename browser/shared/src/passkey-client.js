@@ -34,6 +34,126 @@ function pageErrorName(daemonMessage) {
 export function createPasskeyClient(send, opts = {}) {
   const focusTab = opts.focusTab || defaultFocusTab;
 
+  // storage.session seam for tests; undefined outside a browser (the
+  // persistence helpers no-op then, matching the trail() idiom).
+  const sessionStore = () => {
+    if (opts.sessionStore) return opts.sessionStore;
+    try {
+      return chrome.storage.session;
+    } catch {
+      return null;
+    }
+  };
+
+  // ── parked-session persistence ──
+  // MV3 idles the SW away mid-parked conditional get; sessions.session
+  // (memory-only, browser-lifetime, extension-private) lets a woke SW
+  // resume them. Only page-known ceremony fields persist: no vault rows,
+  // no handles, no post-pick state. Undecided conditional sessions only.
+  const PARK_KEY = "pkParked";
+  const PARK_FIELDS = [
+    "id",
+    "pageId",
+    "contextId",
+    "tabId",
+    "mode",
+    "conditional",
+    "origin",
+    "rpId",
+    "requiresUv",
+    "options",
+  ];
+
+  async function persistParked() {
+    const store = sessionStore();
+    if (!store) return;
+    try {
+      const parked = Array.from(sessions.values())
+        .filter((s) => s.conditional && !s.decided)
+        .map((s) => {
+          const out = { expiresAt: s.expiresAt };
+          for (const f of PARK_FIELDS) out[f] = s[f];
+          return out;
+        })
+        .filter((entry) => {
+          // A page-controlled options blob can be huge; drop oversized
+          // entries individually instead of failing the whole write (a
+          // failed write would strand finished sessions in storage).
+          try {
+            return JSON.stringify(entry).length <= 8192;
+          } catch {
+            return false;
+          }
+        });
+      await store.set({ [PARK_KEY]: parked });
+    } catch {}
+  }
+
+  // Absolute expiry, so a resume never extends the RP-declared clock.
+  function expireConditional(session) {
+    if (!sessions.has(session.id)) return;
+    sessions.delete(session.id);
+    persistParked();
+  }
+
+  async function restoreParked() {
+    const store = sessionStore();
+    if (!store) return 0;
+    let parked;
+    try {
+      const got = await store.get(PARK_KEY);
+      parked = got && Array.isArray(got[PARK_KEY]) ? got[PARK_KEY] : [];
+    } catch {
+      return 0;
+    }
+    const now = Date.now();
+    let restored = 0;
+    for (const e of parked) {
+      // Fail closed on junk: every field is re-validated as if the entry
+      // came off the wire, and anything not resumable is dropped.
+      if (!e || typeof e !== "object") continue;
+      if (typeof e.id !== "string" || !e.id || sessions.has(e.id)) continue;
+      if (e.mode !== "get" || e.conditional !== true) continue;
+      if (typeof e.tabId !== "number" || typeof e.origin !== "string") continue;
+      if (!isValidWebAuthnOrigin(e.origin)) continue;
+      if (typeof e.rpId !== "string" || !e.rpId) continue;
+      if (typeof e.requiresUv !== "boolean") continue;
+      if (!e.options || typeof e.options !== "object") continue;
+      if (typeof e.expiresAt !== "number" || e.expiresAt <= now) continue;
+      const session = {
+        id: e.id,
+        pageId: typeof e.pageId === "string" ? e.pageId : undefined,
+        contextId: typeof e.contextId === "string" ? e.contextId : undefined,
+        tabId: e.tabId,
+        mode: "get",
+        conditional: true,
+        decided: null,
+        options: e.options,
+        origin: e.origin,
+        rpId: e.rpId,
+        requiresUv: e.requiresUv,
+        expiresAt: e.expiresAt,
+        rows: [],
+      };
+      sessions.set(session.id, session);
+      session.timer = setTimeout(() => expireConditional(session), Math.max(0, e.expiresAt - now));
+      restored += 1;
+    }
+    if (restored > 0) trail(`parked: resumed ${restored} after SW restart`);
+    // Rewrite the cleaned list so dropped entries cannot come back.
+    await persistParked();
+    return restored;
+  }
+
+  // Boot-order gate: every ceremony entry point awaits the restore so a
+  // waking SW never answers from an empty map. storage.session.get is an
+  // in-memory read; the promise memoizes so late calls pay nothing.
+  let restoreReady = null;
+  function awaitingRestore() {
+    if (!restoreReady) restoreReady = restoreParked().catch(() => {});
+    return restoreReady;
+  }
+
   // SW-side breadcrumb trail: content-script consoles are invisible to
   // page-level capture and Playwright's worker console events proved
   // unreliable, so ceremony decisions also land in storage.session where
@@ -111,6 +231,7 @@ export function createPasskeyClient(send, opts = {}) {
     sessions.delete(session.id);
     closeSessionWindow(session);
     focusTab(session.tabId);
+    persistParked();
   }
 
   // ── daemon plumbing ──
@@ -224,6 +345,7 @@ export function createPasskeyClient(send, opts = {}) {
     supersedeTabSessions(session.tabId, session.id);
     sessions.set(session.id, session);
     armTimeout(session);
+    persistParked();
     return session;
   }
 
@@ -247,6 +369,7 @@ export function createPasskeyClient(send, opts = {}) {
       });
       closeSessionWindow(other);
     }
+    persistParked();
   }
 
   // The RP-declared timeout is clamped at normalization time; enforce it
@@ -257,10 +380,11 @@ export function createPasskeyClient(send, opts = {}) {
     const ms =
       Number(session.options && session.options.timeout) ||
       (session.requiresUv ? 300_000 : 120_000);
+    session.expiresAt = Date.now() + ms;
     session.timer = setTimeout(() => {
       if (!sessions.has(session.id)) return;
       if (session.conditional) {
-        sessions.delete(session.id);
+        expireConditional(session);
         return;
       }
       pushError(session, ErrName.NOT_ALLOWED, "timed out");
@@ -275,6 +399,7 @@ export function createPasskeyClient(send, opts = {}) {
 
   // ── registration ──
   async function handleCreateRequest(sender, payload) {
+    await awaitingRestore();
     let session;
     try {
       session = validateRequest(sender, payload, "create");
@@ -356,6 +481,7 @@ export function createPasskeyClient(send, opts = {}) {
 
   // ── assertion ──
   async function handleGetRequest(sender, payload) {
+    await awaitingRestore();
     let session;
     try {
       session = validateRequest(sender, payload, "get");
@@ -369,6 +495,7 @@ export function createPasskeyClient(send, opts = {}) {
       // while the list is still in flight, so the fetch rides the session
       // as a promise the inline reader can await.
       session.conditional = true;
+      persistParked();
       session.rowsPromise = (async () => {
         try {
           const rows = await listPasskeys(session.rpId);
@@ -445,15 +572,24 @@ export function createPasskeyClient(send, opts = {}) {
   }
 
   // ── conditional continuation (inline dropdown) ──
-  function activeConditionalForTab(tabId) {
+  // Conditional continuation (inline dropdown). The session's parked
+  // origin must match the asking document: tab ids survive navigation, so
+  // a restored session must never surface to a page it was not parked for.
+  function activeConditionalForTab(sender) {
+    const tabId = sender && sender.tab && sender.tab.id;
+    const origin =
+      typeof sender?.origin === "string" && sender.origin !== "" && sender.origin !== "null"
+        ? sender.origin
+        : originOf(senderUrlOf(sender));
     for (const s of sessions.values()) {
-      if (s.conditional && s.tabId === tabId && !s.decided) return s;
+      if (s.conditional && s.tabId === tabId && !s.decided && s.origin === origin) return s;
     }
     return null;
   }
 
   async function handleInlinePasskeys(sender) {
-    const session = activeConditionalForTab(sender && sender.tab && sender.tab.id);
+    await awaitingRestore();
+    const session = activeConditionalForTab(sender);
     if (!session) return { rows: [] };
     // The candidate list may still be in flight; wait for it rather than
     // rendering a menu without the passkey rows the user is waiting for.
@@ -475,8 +611,9 @@ export function createPasskeyClient(send, opts = {}) {
   }
 
   async function handleInlinePick(sender, credentialId) {
+    await awaitingRestore();
     trail(`pick: tab=${sender && sender.tab && sender.tab.id} cred=${credentialId}`);
-    const session = activeConditionalForTab(sender && sender.tab && sender.tab.id);
+    const session = activeConditionalForTab(sender);
     if (!session) {
       trail("pick: no active conditional session");
       return { error: "no session" };
@@ -488,6 +625,9 @@ export function createPasskeyClient(send, opts = {}) {
     }
     trail(`pick: session ok, asserting uv=${session.requiresUv}`);
     session.decided = "inline";
+    // Decide-point persist: a pick in flight must not resurrect as an
+    // undecided parked session if the SW dies mid-assertion.
+    persistParked();
     const pushed = await runAssertion(session, row, session.requiresUv);
     trail(`pick: done pushed=${pushed !== false}`);
     // Report the outcome on a second channel: the runtime-port push can
@@ -677,35 +817,47 @@ export function createPasskeyClient(send, opts = {}) {
       }
     }
     tabPorts.delete(tabId);
+    persistParked();
   }
 
-  // Test seam + window.onRemoved wiring.
+  // Test seam + window.onRemoved wiring. Awaiting the restore here stops
+  // a queued tab-removed event from resurrecting a dead tab's entry.
+  async function cleanupTabAfterRestore(tabId) {
+    await awaitingRestore();
+    cleanupTab(tabId);
+  }
+
   function activeSessions() {
     return Array.from(sessions.values());
+  }
+
+  async function handleAbortRequest(sender, sessionId) {
+    await awaitingRestore();
+    // The bridge aborts with the page-chosen id; match within the tab.
+    const s = Array.from(sessions.values()).find(
+      (x) => x.pageId === sessionId && (!sender || !sender.tab || x.tabId === sender.tab.id)
+    );
+    if (s) {
+      if (s.timer) clearTimeout(s.timer);
+      sessions.delete(s.id);
+      closeSessionWindow(s);
+      persistParked();
+    }
+    return { ok: true };
   }
 
   return {
     onBridgePort,
     handleCreateRequest,
     handleGetRequest,
-    handleAbortRequest: (sender, sessionId) => {
-      // The bridge aborts with the page-chosen id; match within the tab.
-      const s = Array.from(sessions.values()).find(
-        (x) => x.pageId === sessionId && (!sender || !sender.tab || x.tabId === sender.tab.id)
-      );
-      if (s) {
-        if (s.timer) clearTimeout(s.timer);
-        sessions.delete(s.id);
-        closeSessionWindow(s);
-      }
-      return { ok: true };
-    },
+    handleAbortRequest,
     handleInlinePasskeys,
     handleInlinePick,
     uiState,
     uiDecide,
     popoutClosed,
-    cleanupTab,
+    cleanupTab: cleanupTabAfterRestore,
+    restoreParked,
     hasTabPort: (tabId) => tabPorts.has(tabId),
     activeSessions,
   };

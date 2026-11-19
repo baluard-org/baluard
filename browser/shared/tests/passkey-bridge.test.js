@@ -374,6 +374,37 @@ describe("SW disconnect lifecycle", () => {
     expect(env.__posted.filter((p) => p.msg.type === MsgType.DESTROY).length).toBe(destroysBefore);
   });
 
+  it("drops a delayed reconnect timer when the port was replaced", async () => {
+    const { env, api, onSwDisconnect, onRuntimeMessage, posted } = start();
+    // Attempt 0 reconnects immediately; attempt 1 schedules the 500ms
+    // backoff timer capturing the port of THIS pipeline.
+    onSwDisconnect();
+    onSwDisconnect();
+    const afterScheduling = env.chrome.runtime.connect.mock.calls.length;
+    // A destroy + ceremony reset replaces the port before the timer fires.
+    onRuntimeMessage({ type: "baluard-passkey-destroy" });
+    onSwDisconnect();
+    const fresh = {
+      onMessage: { addListener: vi.fn() },
+      onDisconnect: { addListener: vi.fn() },
+      postMessage: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    env.chrome.runtime.connect.mockImplementationOnce(() => fresh);
+    const { event } = pageRequest();
+    event.source = env.window;
+    await api.onPageMessage(event);
+    const afterReset = env.chrome.runtime.connect.mock.calls.length;
+    expect(afterReset).toBeGreaterThan(afterScheduling);
+    // Past the first backoff slot: the stale timer must drop out on the
+    // port-generation check instead of reconnecting over the fresh port
+    // (and no new destroy may appear from the stale pipeline either).
+    const destroysBefore = posted.filter((p) => p.msg.type === MsgType.DESTROY).length;
+    await new Promise((r) => setTimeout(r, 600));
+    expect(env.chrome.runtime.connect.mock.calls.length).toBe(afterReset);
+    expect(posted.filter((p) => p.msg.type === MsgType.DESTROY).length).toBe(destroysBefore);
+  });
+
   it("caps reconnect attempts and destroys instead of spinning forever", () => {
     const { onSwDisconnect, posted } = start();
     // Five attempts are scheduled, then the sixth disconnect converges on
