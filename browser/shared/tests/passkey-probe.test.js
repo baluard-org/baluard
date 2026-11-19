@@ -62,6 +62,20 @@ describe("probePasskeyPageState", () => {
     expect(probePasskeyPageState()).toMatchObject({ shadow: false });
   });
 
+  it("does not flag Baluard's own instance-level wrap as a shadow", () => {
+    const createFn = () => {};
+    const getFn = () => {};
+    createFn.__baluard = true;
+    getFn.__baluard = true;
+    stageCredentials({ create: createFn, get: getFn });
+    window.__baluardPasskey = true;
+    try {
+      expect(probePasskeyPageState()).toEqual({ wrap: true, shadow: false, supported: true });
+    } finally {
+      delete window.__baluardPasskey;
+    }
+  });
+
   it("reports unsupported when the page exposes no credentials container", () => {
     stageCredentials(undefined);
     expect(probePasskeyPageState()).toEqual({

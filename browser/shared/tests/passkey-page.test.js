@@ -327,3 +327,48 @@ describe("rebuild", () => {
     expect(cred.response.getTransports()).toEqual([]);
   });
 });
+
+describe("competing configurable instance hooks", () => {
+  it("wraps configurable own-property create/get on credentials and restores them on destroy", async () => {
+    const env = makeEnv();
+    const otherCreate = vi.fn(() => new Promise(() => {}));
+    const otherGet = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__credentials, "create", {
+      get: () => otherCreate,
+      configurable: true,
+    });
+    Object.defineProperty(env.__credentials, "get", {
+      value: otherGet,
+      writable: true,
+      configurable: true,
+    });
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(true);
+    expect(env.__credentials.create.__baluard).toBe(true);
+    expect(env.__credentials.get.__baluard).toBe(true);
+
+    const p = env.__credentials.get(getOpts());
+    expect(env.__posted.some((m) => m.msg.type === MsgType.GET)).toBe(true);
+    expect(otherGet).not.toHaveBeenCalled();
+
+    api.destroy();
+    await expect(p).rejects.toMatchObject({ name: "NotAllowedError" });
+    expect(env.__credentials.create).toBe(otherCreate);
+    expect(env.__credentials.get).toBe(otherGet);
+  });
+
+  it("fails closed and rolls back when an own property is non-configurable", () => {
+    const env = makeEnv();
+    const lockedGet = vi.fn(() => new Promise(() => {}));
+    Object.defineProperty(env.__credentials, "get", {
+      value: lockedGet,
+      configurable: false,
+    });
+
+    const api = createPageInterception(env);
+    expect(api.install()).toBe(false);
+    expect(env.window.__baluardPasskey).toBe(false);
+    expect(env.__wrapProto.create).toBe(env.__nativeCreate);
+  });
+});

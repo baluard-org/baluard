@@ -73,6 +73,7 @@ export function createPageInterception(env) {
   const nativeCreate = nativeCredentials.create.bind(nativeCredentials);
   const nativeGet = nativeCredentials.get.bind(nativeCredentials);
   const wrapProto = Object.getPrototypeOf(nativeCredentials);
+  const installedTargets = [];
   let nativesRestored = false;
 
   // Per-ceremony state: sessionId -> {port, resolve, reject, conditional,
@@ -94,18 +95,19 @@ export function createPageInterception(env) {
   const restoreNatives = () => {
     if (nativesRestored) return;
     nativesRestored = true;
-    try {
-      Object.defineProperty(wrapProto, "create", {
-        value: nativeCreate,
-        writable: true,
-        configurable: true,
-      });
-      Object.defineProperty(wrapProto, "get", {
-        value: nativeGet,
-        writable: true,
-        configurable: true,
-      });
-    } catch {}
+    for (const { target, prop, prevDesc, fallbackValue } of installedTargets) {
+      try {
+        if (prevDesc) {
+          Object.defineProperty(target, prop, prevDesc);
+        } else {
+          Object.defineProperty(target, prop, {
+            value: fallbackValue,
+            writable: true,
+            configurable: true,
+          });
+        }
+      } catch {}
+    }
   };
 
   function settle(sessionId, fn) {
@@ -384,25 +386,33 @@ export function createPageInterception(env) {
     );
   }
 
+  function wrapMethod(prop, mode, fallbackValue) {
+    const ownDesc = Object.getOwnPropertyDescriptor(nativeCredentials, prop);
+    // An own property on navigator.credentials (e.g. another manager's
+    // passthrough hook) shadows CredentialsContainer.prototype, so wrap
+    // directly on the instance when an own property is present.
+    const target = ownDesc ? nativeCredentials : wrapProto;
+    const prevDesc = ownDesc || Object.getOwnPropertyDescriptor(wrapProto, prop) || null;
+    const fn = function (options) {
+      return request(mode, options);
+    };
+    fn.__baluard = true;
+    Object.defineProperty(target, prop, {
+      value: fn,
+      writable: true,
+      configurable: true,
+    });
+    installedTargets.push({ target, prop, prevDesc, fallbackValue });
+  }
+
   function install() {
     try {
-      Object.defineProperty(wrapProto, "create", {
-        value: function (options) {
-          return request("create", options);
-        },
-        writable: true,
-        configurable: true,
-      });
-      Object.defineProperty(wrapProto, "get", {
-        value: function (options) {
-          return request("get", options);
-        },
-        writable: true,
-        configurable: true,
-      });
+      wrapMethod("create", "create", nativeCreate);
+      wrapMethod("get", "get", nativeGet);
       return true;
     } catch {
-      // Cannot wrap safely: stay invisible rather than half-wrap.
+      // Cannot wrap safely: roll back any partial wrap and stay invisible.
+      restoreNatives();
       win.__baluardPasskey = false;
       return false;
     }

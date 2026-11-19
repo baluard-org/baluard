@@ -10,9 +10,16 @@ export function probePasskeyPageState() {
   try {
     const creds = window.navigator && window.navigator.credentials;
     if (!creds) return { wrap: false, shadow: false, supported: false };
-    const shadow =
-      Object.prototype.hasOwnProperty.call(creds, "create") ||
-      Object.prototype.hasOwnProperty.call(creds, "get");
+    const isShadowed = (prop) => {
+      if (!Object.prototype.hasOwnProperty.call(creds, prop)) return false;
+      try {
+        const fn = creds[prop];
+        return !(fn && fn.__baluard === true);
+      } catch {
+        return true;
+      }
+    };
+    const shadow = isShadowed("create") || isShadowed("get");
     return {
       wrap: window.__baluardPasskey === true,
       shadow,
