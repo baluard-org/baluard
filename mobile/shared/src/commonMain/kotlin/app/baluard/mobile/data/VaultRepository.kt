@@ -1053,6 +1053,16 @@ class VaultRepository {
     suspend fun setupSyncCustom(vault: MobileVault, cloneUrl: String): String =
         vault.setupSyncCustom(cloneUrl)
 
+    /** Local folder sync (ADR 0112): bare repo inside a SAF/iCloud mirror. */
+    suspend fun setupSyncFolder(vault: MobileVault, folderPath: String): String =
+        vault.setupSyncFolder(folderPath)
+
+    /** P2P sync (ADR 0113): status, enable, disable, and peer sync. */
+    suspend fun p2pStatus(vault: MobileVault): String = vault.p2pStatus()
+    suspend fun p2pEnable(vault: MobileVault): String = vault.p2pEnable()
+    suspend fun p2pDisable(vault: MobileVault) = vault.p2pDisable()
+    suspend fun p2pSync(vault: MobileVault, peerNodeId: String): String = vault.p2pSync(peerNodeId)
+
     /** Store the custom remote's credentials (device-local, 0600). */
     suspend fun gitCredentialsSet(vault: MobileVault, payload: String): String =
         vault.gitCredentialsSet(payload)

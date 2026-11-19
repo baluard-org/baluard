@@ -647,7 +647,18 @@
     "folderSync": "Sync to a folder",
     "folderSyncHint": "Use Dropbox, Google Drive, iCloud Drive, or Syncthing with no account.",
     "folderSyncAction": "Select folder",
-    "folderSyncSuccess": "Folder sync enabled."
+    "folderSyncSuccess": "Folder sync enabled.",
+    "p2pTitle": "Direct peer-to-peer sync",
+    "p2pHint": "Sync directly between your enrolled devices with no cloud account.",
+    "p2pEnable": "Enable P2P",
+    "p2pDisable": "Disable P2P",
+    "p2pEnabledToast": "P2P sync enabled.",
+    "p2pDisabledToast": "P2P sync disabled.",
+    "p2pSyncedToast": "Synced with peer.",
+    "p2pNoRecoveryWarn": "P2P-only has no off-device backup: losing all enrolled devices loses your vault unless paired with a Git or folder backup.",
+    "p2pNodeIdLabel": "This device address",
+    "p2pPeerPlaceholder": "Peer device address",
+    "p2pSyncNow": "Sync peer"
   },
   "autosync": {
     "upToDate": "All changes synced",

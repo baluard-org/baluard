@@ -47,6 +47,7 @@ import app.baluard.mobile.MobileVault
 import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.i18n.t
 import app.baluard.mobile.platform.openUrl
+import app.baluard.mobile.platform.rememberFolderSyncBridge
 import app.baluard.mobile.ui.components.BaluardDivider
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
@@ -70,6 +71,19 @@ fun GitBackupScreen(
     onSyncNudge: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val folderBridge = rememberFolderSyncBridge()
+    var p2pRunning by remember { mutableStateOf(false) }
+    var p2pNodeId by remember { mutableStateOf<String?>(null) }
+    var p2pPeer by remember { mutableStateOf("") }
+    var p2pBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(vault) {
+        runCatching {
+            val raw = repo.p2pStatus(vault)
+            val obj = Json.parseToJsonElement(raw) as? JsonObject
+            p2pRunning = obj?.get("running")?.jsonPrimitive?.content == "true"
+            p2pNodeId = (obj?.get("node_id") as? JsonPrimitive)?.takeIf { it.isString }?.content
+        }
+    }
     var gitProvider by remember { mutableStateOf(MobileProvider.GIT_HUB) }
     var gitPat by remember { mutableStateOf("") }
     var gitRepo by remember { mutableStateOf("") }
@@ -736,6 +750,126 @@ fun GitBackupScreen(
                 loading = gitBusy,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            SectionCard(title = t("settings.folderSync")) {
+                Text(
+                    t("settings.folderSyncHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                BaluardOutlinedButton(
+                    text = t("settings.folderSyncAction"),
+                    onClick = {
+                        folderBridge.pickAndMirrorFolder { mirrorPath ->
+                            if (mirrorPath != null) {
+                                scope.launch {
+                                    gitBusy = true
+                                    try {
+                                        repo.setupSyncFolder(vault, mirrorPath)
+                                        folderBridge.pushMirrorToRemote(mirrorPath)
+                                        Toast.success(t("settings.folderSyncDone"))
+                                        onSyncNudge()
+                                        onBack()
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        val raw = e.message ?: ""
+                                        Toast.error(
+                                            raw.removePrefix("detail=").ifBlank { t("settings.gitBackupFailed") },
+                                        )
+                                    } finally {
+                                        gitBusy = false
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    enabled = !gitBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            SectionCard(title = t("settings.p2pTitle")) {
+                Text(
+                    t("settings.p2pHint"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                BaluardOutlinedButton(
+                    text = if (p2pRunning) t("settings.p2pDisable") else t("settings.p2pEnable"),
+                    onClick = {
+                        scope.launch {
+                            p2pBusy = true
+                            try {
+                                if (p2pRunning) {
+                                    repo.p2pDisable(vault)
+                                    p2pRunning = false
+                                    p2pNodeId = null
+                                } else {
+                                    p2pNodeId = repo.p2pEnable(vault)
+                                    p2pRunning = true
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.error((e.message ?: "").removePrefix("detail="))
+                            } finally {
+                                p2pBusy = false
+                            }
+                        }
+                    },
+                    enabled = !p2pBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (p2pRunning) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        t("settings.p2pNoRecoveryWarn"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    p2pNodeId?.let { nid ->
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "${t("settings.p2pNodeIdLabel")}: $nid",
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    BaluardTextField(
+                        value = p2pPeer,
+                        onValueChange = { p2pPeer = it },
+                        label = t("settings.p2pPeerPlaceholder"),
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    BaluardOutlinedButton(
+                        text = t("settings.p2pSyncNow"),
+                        onClick = {
+                            scope.launch {
+                                p2pBusy = true
+                                try {
+                                    repo.p2pSync(vault, p2pPeer.trim())
+                                    Toast.success(t("settings.p2pSynced"))
+                                    p2pPeer = ""
+                                    onSyncNudge()
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    Toast.error((e.message ?: "").removePrefix("detail="))
+                                } finally {
+                                    p2pBusy = false
+                                }
+                            }
+                        },
+                        enabled = !p2pBusy && p2pPeer.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
     }
 }

@@ -115,7 +115,7 @@ test-cheap-kdf = []
 fido2 = ["dep:ctap-hid-fido2", "dep:hidapi", "ctap-client"]
 ctap-client = ["dep:aes", "dep:cbc"]
 default = ["full"]
-full = ["git-sync", "passkey-ceremony", "uri-match"]
+full = ["git-sync", "passkey-ceremony", "uri-match", "p2p"]
 passkey-ceremony = ["dep:passkey", "dep:passkey-types", "passkey-types/serialize_bytes_as_base64_string", "dep:url", "dep:public-suffix", "dep:coset", "dep:tokio"]
 # Autofill URI matching (Phase 6): reuses the url + public-suffix deps already
 # pulled by passkey-ceremony; regex-lite is matcher-only.

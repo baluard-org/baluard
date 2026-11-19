@@ -57,7 +57,7 @@ name = "e2e"
 required-features = ["e2e-hooks"]
 
 [features]
-default = ["git-sync"]
+default = ["git-sync", "p2p"]
 git-sync = ["baluard-core/git-sync"]
 p2p = ["baluard-core/p2p"]
 e2e-hooks = ["baluard-core/e2e-hooks"]

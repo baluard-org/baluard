@@ -3905,6 +3905,11 @@ pub fn handle_sync_p2p(
     if !resp.success {
         return Err(resp.error_message.into());
     }
+    if op == "enable" {
+        eprintln!(
+            "Warning: P2P-only has no off-device backup: losing all enrolled devices loses your vault unless paired with a Git or folder backup."
+        );
+    }
     println!("{}", resp.payload);
     Ok(())
 }
@@ -4145,7 +4150,8 @@ fn poll_clone_job(
 pub fn handle_sync_clone_url(
     mode: ConnectMode,
     socket: Option<&str>,
-    url: &str,
+    url: Option<&str>,
+    folder: Option<&std::path::Path>,
     slug_override: Option<&str>,
     provider_override: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -4154,6 +4160,30 @@ pub fn handle_sync_clone_url(
             "Clone requires the daemon (it registers a new vault). Run without --direct.".into(),
         );
     }
+    if let Some(folder_path) = folder {
+        let slug = slug_override
+            .map(str::to_string)
+            .or_else(|| {
+                folder_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.strip_suffix(".git").unwrap_or(n).to_string())
+            })
+            .unwrap_or_else(|| "vault".to_string());
+        let bare = baluard_core::sync::folder::folder_bare_repo_path(folder_path, &slug)
+            .map_err(|e| format!("Invalid folder path: {e}"))?;
+        let canonical = std::fs::canonicalize(&bare)
+            .map_err(|e| format!("Folder repo not found at {}: {e}", bare.display()))?;
+        let folder_url = baluard_core::sync::folder::folder_url_from_path(&canonical)?;
+        let job_id = start_clone_job(&folder_url, Some("folder"), &slug, &slug, socket)?;
+        let (out_slug, _path) = poll_clone_job(&job_id, socket)?;
+        println!("Unlock with: baluard unlock --vault {out_slug}");
+        println!(
+            "If this device was never enrolled, run: baluard devices enroll-with-phrase --vault {out_slug}"
+        );
+        return Ok(());
+    }
+    let url = url.ok_or("Missing clone URL or --folder path")?;
     if let Some(p) = provider_override {
         if !matches!(p, "github" | "gitlab" | "codeberg") {
             return Err(format!("Unknown provider: {p}").into());

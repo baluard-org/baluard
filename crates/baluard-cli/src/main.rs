@@ -1289,7 +1289,11 @@ enum SyncAction {
     /// token or BALUARD_GIT_TOKEN for https) — Baluard stores nothing.
     CloneUrl {
         /// Git clone URL (https://, ssh://, or git@host:path).
-        url: String,
+        #[arg(required_unless_present = "folder")]
+        url: Option<String>,
+        /// Local folder path containing a bare `<slug>.git` repo (ADR 0112).
+        #[arg(long, conflicts_with_all = ["url", "provider"])]
+        folder: Option<std::path::PathBuf>,
         /// Override the local slug (default: last URL path segment).
         #[arg(long)]
         slug: Option<String>,
@@ -2179,12 +2183,14 @@ fn main() {
             ),
             SyncAction::CloneUrl {
                 url,
+                folder,
                 slug,
                 provider,
             } => commands::handle_sync_clone_url(
                 mode,
                 cli.socket.as_deref(),
-                &url,
+                url.as_deref(),
+                folder.as_deref(),
                 slug.as_deref(),
                 provider.as_deref(),
             ),

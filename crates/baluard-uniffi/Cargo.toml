@@ -18,6 +18,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync", "macr
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
+iroh = { workspace = true, optional = true }
 base64 = { workspace = true }
 uuid = { workspace = true }
 
@@ -39,5 +40,5 @@ serde_json = { workspace = true }
 baluard-core = { path = "../baluard-core", features = ["test-cheap-kdf"] }
 
 [features]
-default = []
-p2p = ["baluard-core/p2p", "baluard-runtime/p2p"]
+default = ["p2p"]
+p2p = ["baluard-core/p2p", "baluard-runtime/p2p", "dep:iroh"]

@@ -71,6 +71,7 @@ kotlin {
             // Opt-in background sync (plan §3.5): WorkManager periodic job
             // running the Rust locked fetch (objects only, no unlock).
             implementation("androidx.work:work-runtime-ktx:2.9.1")
+            implementation("androidx.documentfile:documentfile:1.0.1")
         }
     }
 }

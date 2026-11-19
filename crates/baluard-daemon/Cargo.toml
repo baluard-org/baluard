@@ -44,7 +44,7 @@ prost-build = "0.13"
 libc = "0.2"
 
 [features]
-default = ["git-sync"]
+default = ["git-sync", "p2p"]
 git-sync = ["baluard-core/git-sync"]
 p2p = ["baluard-core/p2p", "baluard-runtime/p2p", "dep:iroh"]
 e2e-hooks = ["baluard-core/e2e-hooks"]

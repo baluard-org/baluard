@@ -430,6 +430,10 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "sync.pull",
     "sync.push",
     "sync.status_json",
+    "sync.p2p.status",
+    "sync.p2p.enable",
+    "sync.p2p.disable",
+    "sync.p2p.sync",
     // providers (connect flows are desktop UI features: device flow,
     // web sign-in, Advanced-Options PAT, repo picking on clone)
     "provider.connect_start",

@@ -62,6 +62,9 @@ export default function SyncTab() {
   // and pushes the history; every device follows on its next sync.
   const [migUrl, setMigUrl] = createSignal("");
   const [migBusy, setMigBusy] = createSignal(false);
+  const [p2pStatus, setP2pStatus] = createSignal({ enabled: false, running: false, node_id: null });
+  const [p2pBusy, setP2pBusy] = createSignal(false);
+  const [p2pPeer, setP2pPeer] = createSignal("");
   const [migConfirm, setMigConfirm] = createSignal(false);
   const [isManager, setIsManager] = createSignal(false);
   // Advanced Options: power users override the OAuth client_id (independence
@@ -165,15 +168,23 @@ const [customError, setCustomError] = createSignal(null);
     setLoading(true);
     setError(null);
     try {
-      const [statusRaw, providersRaw, remoteRaw] = await Promise.all([
+      const [statusRaw, providersRaw, remoteRaw, p2pRaw] = await Promise.all([
         daemon("sync.status_json"),
         daemon("provider.list"),
         daemon("space.remote").catch(() => null),
+        daemon("sync.p2p.status").catch(() => null),
       ]);
       const status = JSON.parse(statusRaw);
       const providers = JSON.parse(providersRaw);
       setSyncStatus(status);
       setProviderList(providers);
+      if (p2pRaw) {
+        try {
+          setP2pStatus(JSON.parse(p2pRaw));
+        } catch {
+          // keep prior status
+        }
+      }
       if (remoteRaw) {
         try {
           const r = JSON.parse(remoteRaw);
@@ -562,6 +573,38 @@ const [customError, setCustomError] = createSignal(null);
     }
   }
 
+  async function toggleP2p() {
+    setP2pBusy(true);
+    setCustomError(null);
+    try {
+      const route = p2pStatus().running ? "sync.p2p.disable" : "sync.p2p.enable";
+      const res = JSON.parse(await daemon(route));
+      setP2pStatus(res);
+      toastSuccess(res.running ? t("sync.p2pEnabledToast") : t("sync.p2pDisabledToast"));
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+    } finally {
+      setP2pBusy(false);
+    }
+  }
+
+  async function syncP2pPeer() {
+    const peer = p2pPeer().trim();
+    if (!peer) return;
+    setP2pBusy(true);
+    setCustomError(null);
+    try {
+      await daemon("sync.p2p.sync", peer);
+      toastSuccess(t("sync.p2pSyncedToast"));
+      setP2pPeer("");
+      await loadState();
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+    } finally {
+      setP2pBusy(false);
+    }
+  }
+
   async function doPush() {
     setSubState("syncing");
     setError(null);
@@ -813,6 +856,52 @@ const [customError, setCustomError] = createSignal(null);
                   >
                     {t("sync.folderSyncAction")}
                   </Button>
+                </div>
+
+                {/* Direct P2P sync (ADR 0113): iroh QUIC between enrolled devices. */}
+                <div class="border-t border-[var(--color-border)] pt-3 space-y-2" data-testid="p2p-sync-section">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="text-xs font-medium text-[var(--color-text)]">{t("sync.p2pTitle")}</div>
+                      <div class="text-[10px] text-[var(--color-muted)]">{t("sync.p2pHint")}</div>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={p2pBusy()}
+                      onClick={toggleP2p}
+                      data-testid="p2p-toggle-btn"
+                    >
+                      {p2pStatus().running ? t("sync.p2pDisable") : t("sync.p2pEnable")}
+                    </Button>
+                  </div>
+                  <Show when={p2pStatus().running}>
+                    <div class="rounded-lg border border-[var(--color-warning)] bg-[var(--color-surface)] p-2 text-[10px] text-[var(--color-text)]">
+                      {t("sync.p2pNoRecoveryWarn")}
+                    </div>
+                    <Show when={p2pStatus().node_id}>
+                      <div class="text-[10px] font-mono text-[var(--color-muted)] break-all">
+                        {t("sync.p2pNodeIdLabel")}: {p2pStatus().node_id}
+                      </div>
+                    </Show>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={p2pPeer()}
+                        onInput={(e) => setP2pPeer(e.target.value)}
+                        placeholder={t("sync.p2pPeerPlaceholder")}
+                        class="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs font-mono text-[var(--color-text)]"
+                      />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={p2pBusy() || !p2pPeer().trim()}
+                        onClick={syncP2pPeer}
+                      >
+                        {t("sync.p2pSyncNow")}
+                      </Button>
+                    </div>
+                  </Show>
                 </div>
 
                 {/* Custom remote: power users pointing at their own Git server. */}

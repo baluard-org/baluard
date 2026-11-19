@@ -535,7 +535,18 @@
     "folderSync": "Synchroniser vers un dossier",
     "folderSyncHint": "Utilisez Dropbox, Google Drive, iCloud Drive ou Syncthing sans compte.",
     "folderSyncAction": "Choisir un dossier",
-    "folderSyncSuccess": "Synchronisation par dossier activée."
+    "folderSyncSuccess": "Synchronisation par dossier activée.",
+    "p2pTitle": "Synchronisation pair-à-pair directe",
+    "p2pHint": "Synchronisez directement entre vos appareils inscrits sans compte cloud.",
+    "p2pEnable": "Activer P2P",
+    "p2pDisable": "Désactiver P2P",
+    "p2pEnabledToast": "Synchronisation P2P activée.",
+    "p2pDisabledToast": "Synchronisation P2P désactivée.",
+    "p2pSyncedToast": "Synchronisé avec le pair.",
+    "p2pNoRecoveryWarn": "Le mode P2P seul n’offre aucune sauvegarde hors appareil : perdre tous vos appareils entraîne la perte du coffre, sauf avec une sauvegarde Git ou dossier.",
+    "p2pNodeIdLabel": "Adresse de cet appareil",
+    "p2pPeerPlaceholder": "Adresse de l’appareil pair",
+    "p2pSyncNow": "Synchroniser"
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

@@ -647,7 +647,18 @@
     "folderSync": "Sincronizar com uma pasta",
     "folderSyncHint": "Use Dropbox, Google Drive, iCloud Drive ou Syncthing sem conta.",
     "folderSyncAction": "Selecionar pasta",
-    "folderSyncSuccess": "Sincronização por pasta ativada."
+    "folderSyncSuccess": "Sincronização por pasta ativada.",
+    "p2pTitle": "Sincronização direta entre dispositivos",
+    "p2pHint": "Sincronize diretamente entre seus dispositivos vinculados sem conta na nuvem.",
+    "p2pEnable": "Ativar P2P",
+    "p2pDisable": "Desativar P2P",
+    "p2pEnabledToast": "Sincronização P2P ativada.",
+    "p2pDisabledToast": "Sincronização P2P desativada.",
+    "p2pSyncedToast": "Sincronizado com o dispositivo.",
+    "p2pNoRecoveryWarn": "Apenas P2P não tem cópia fora do dispositivo: perder todos os dispositivos apaga seu cofre, a menos que combine com backup Git ou pasta.",
+    "p2pNodeIdLabel": "Endereço deste dispositivo",
+    "p2pPeerPlaceholder": "Endereço do outro dispositivo",
+    "p2pSyncNow": "Sincronizar"
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",

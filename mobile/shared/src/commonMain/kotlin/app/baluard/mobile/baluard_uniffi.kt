@@ -1382,6 +1382,17 @@ internal interface UniffiLib : Library {
     `revealB64`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_p2p_disable(`ptr`: Pointer): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_p2p_enable(`ptr`: Pointer): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_p2p_status(`ptr`: Pointer): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_p2p_sync(
+    `ptr`: Pointer,
+    `peerNodeId`: RustBuffer.ByValue,
+  ): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_passkey_consume_assertion(
     `ptr`: Pointer,
     `ceremonyId`: RustBuffer.ByValue,
@@ -1468,6 +1479,11 @@ internal interface UniffiLib : Library {
   fun uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync_custom(
     `ptr`: Pointer,
     `cloneUrl`: RustBuffer.ByValue,
+  ): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync_folder(
+    `ptr`: Pointer,
+    `folderPath`: RustBuffer.ByValue,
   ): Long
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_should_auto_lock(`ptr`: Pointer): Long
@@ -2164,6 +2180,14 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_disable(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_enable(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_status(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_sync(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_consume_assertion(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_provider_assert(): Short
@@ -2195,6 +2219,8 @@ internal interface UniffiLib : Library {
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync_custom(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync_folder(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock(): Short
 
@@ -2678,6 +2704,18 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_open_shared_contact() != 22263.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_disable() != 26874.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_enable() != 55634.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_status() != 16786.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_p2p_sync() != 37468.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_passkey_consume_assertion() != 28749.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
@@ -2724,6 +2762,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync_custom() != 32129.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_setup_sync_folder() != 62981.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_should_auto_lock() != 5891.toShort()) {
@@ -4897,6 +4938,26 @@ public interface MobileVaultInterface {
   suspend fun `openSharedContact`(`revealB64`: kotlin.String): kotlin.String
 
   /**
+   * Disable P2P sync and stop the mobile endpoint.
+   */
+  suspend fun `p2pDisable`()
+
+  /**
+   * Enable foreground P2P sync on mobile using the enrolled device signing key.
+   */
+  suspend fun `p2pEnable`(): kotlin.String
+
+  /**
+   * P2P sync status JSON (ADR 0113); returns disabled when built without `p2p`.
+   */
+  suspend fun `p2pStatus`(): kotlin.String
+
+  /**
+   * Sync directly with an enrolled peer NodeId (ADR 0113).
+   */
+  suspend fun `p2pSync`(`peerNodeId`: kotlin.String): kotlin.String
+
+  /**
    * Consume a pending provider assertion (records a nonzero counter;
    * synced-model counters stay zero).
    */
@@ -5031,6 +5092,12 @@ public interface MobileVaultInterface {
    * first push signs a commit).
    */
   suspend fun `setupSyncCustom`(`cloneUrl`: kotlin.String): kotlin.String
+
+  /**
+   * Local-folder sync setup (ADR 0112): initialize or open a bare repo
+   * inside `folder_path` (or an app-private SAF / iCloud mirror) and push.
+   */
+  suspend fun `setupSyncFolder`(`folderPath`: kotlin.String): kotlin.String
 
   /**
    * Whether the vault should auto-lock NOW (idle >= the vault's
@@ -8229,6 +8296,107 @@ open class MobileVault :
     )
 
   /**
+   * Disable P2P sync and stop the mobile endpoint.
+   */
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `p2pDisable`() =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_p2p_disable(
+          thisPtr,
+        )
+      },
+      { future, callback, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_void(future, callback, continuation) },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_void(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
+      // lift function
+      { Unit },
+      // Error FFI converter
+      UniffiNullRustCallStatusErrorHandler,
+    )
+
+  /**
+   * Enable foreground P2P sync on mobile using the enrolled device signing key.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `p2pEnable`(): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_p2p_enable(
+          thisPtr,
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * P2P sync status JSON (ADR 0113); returns disabled when built without `p2p`.
+   */
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `p2pStatus`(): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_p2p_status(
+          thisPtr,
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      UniffiNullRustCallStatusErrorHandler,
+    )
+
+  /**
+   * Sync directly with an enrolled peer NodeId (ADR 0113).
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `p2pSync`(`peerNodeId`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_p2p_sync(
+          thisPtr,
+          FfiConverterString.lower(`peerNodeId`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
    * Consume a pending provider assertion (records a nonzero counter;
    * synced-model counters stay zero).
    */
@@ -8689,6 +8857,35 @@ open class MobileVault :
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync_custom(
           thisPtr,
           FfiConverterString.lower(`cloneUrl`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Local-folder sync setup (ADR 0112): initialize or open a bare repo
+   * inside `folder_path` (or an app-private SAF / iCloud mirror) and push.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `setupSyncFolder`(`folderPath`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_setup_sync_folder(
+          thisPtr,
+          FfiConverterString.lower(`folderPath`),
         )
       },
       {

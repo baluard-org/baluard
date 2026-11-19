@@ -1203,6 +1203,48 @@ impl MobileVault {
         }
     }
 
+    /// Sync directly with an enrolled peer NodeId (ADR 0113).
+    pub async fn p2p_sync(&self, peer_node_id: String) -> Result<String, BaluardError> {
+        #[cfg(feature = "p2p")]
+        {
+            if !self.state.is_unlocked().await {
+                return Err(BaluardError::Vault {
+                    detail: "Vault is locked. Unlock first.".into(),
+                });
+            }
+            let peer: iroh::NodeId =
+                peer_node_id
+                    .trim()
+                    .parse()
+                    .map_err(|e| BaluardError::Vault {
+                        detail: format!("Invalid peer NodeId: {e}"),
+                    })?;
+            let _cycle = self.state.autosync.cycle_lock_guard().await;
+            let seal = self.state.devkey_seal().await;
+            let device_id = self.device_id().await;
+            let vp = self.state.vault_path.clone();
+            let pubkeys = baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(&vp);
+            self.state.p2p.update_roster_pubkeys(&pubkeys).await;
+            let res = self
+                .state
+                .p2p
+                .sync_peer(peer, "main", &vp, &device_id, seal.as_deref().copied())
+                .await
+                .map_err(|detail| BaluardError::Vault { detail })?;
+            let pubkeys_after =
+                baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(&vp);
+            self.state.p2p.update_roster_pubkeys(&pubkeys_after).await;
+            Ok(format!("{res:?}"))
+        }
+        #[cfg(not(feature = "p2p"))]
+        {
+            let _ = peer_node_id;
+            Err(BaluardError::Vault {
+                detail: "P2P sync is not enabled in this build".into(),
+            })
+        }
+    }
+
     /// User pull-to-refresh / "Sync now". Returns the pull report tag
     /// (pulled, up_to_date, kept_local, idle, paused, busy, skipped,
     /// offline, access_denied, error) plus a scrubbed human-readable

@@ -274,6 +274,11 @@ override suspend fun `myRole`(): String = err()
     override suspend fun `gitCredentialsSet`(payload: String): String = err()
     override suspend fun `gitRemoteUrl`(): String = err()
     override suspend fun `setupSyncCustom`(cloneUrl: String): String = err()
+    override suspend fun `setupSyncFolder`(folderPath: String): String = err()
+    override suspend fun `p2pStatus`(): String = "{\"enabled\":false,\"running\":false}"
+    override suspend fun `p2pEnable`(): String = err()
+    override suspend fun `p2pDisable`() {}
+    override suspend fun `p2pSync`(peerNodeId: String): String = err()
     override suspend fun `devicesList`(): String = err()
     override suspend fun `deviceRevoke`(deviceId: String): String = err()
     override suspend fun `spaceKitStatus`(): String = err()
