@@ -657,6 +657,109 @@ pub async fn setup_sync_remote_custom(
     Ok(remote_url)
 }
 
+/// Configure a local-folder bare repository as the vault's `origin` remote
+/// (ADR 0112), commit any pending worktree state, push, and record in the
+/// vault registry.
+#[cfg(feature = "git-sync")]
+pub async fn setup_sync_remote_folder(
+    vault_path: &Path,
+    devkey_seal: Option<zeroize::Zeroizing<[u8; 32]>>,
+    folder_path: &Path,
+    device_id: &str,
+) -> Result<String, String> {
+    if !folder_path.is_absolute() {
+        return Err("Folder path must be absolute".to_string());
+    }
+    let git_path = vault_path.to_path_buf();
+    let folder = folder_path.to_path_buf();
+    let seal = devkey_seal;
+    let device_id = device_id.to_string();
+    let slug_hint = baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+        .ok()
+        .flatten()
+        .map(|m| m.slug)
+        .or_else(|| {
+            vault_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "baluard-vault".to_string());
+
+    let remote_url = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let engine = SyncEngine::new(&git_path, &device_id, seal.as_deref());
+        let git_repo = match engine.open_repo() {
+            Ok(r) => r,
+            Err(open_err) => {
+                if git_path.join(".git").exists() {
+                    return Err(format!(
+                        "Git open failed (vault repo already initialized): {open_err}"
+                    ));
+                }
+                engine
+                    .init_repo()
+                    .map_err(|e| format!("Git init failed: {e}"))?
+            }
+        };
+        let url = engine
+            .add_folder_remote(&git_repo, "origin", &folder, &slug_hint)
+            .map_err(|e| format!("Failed to add folder remote: {e}"))?;
+        let status = engine
+            .status(&git_repo)
+            .map_err(|e| format!("Status check failed: {e}"))?;
+        if status.is_dirty() {
+            engine
+                .commit_all(&git_repo, "")
+                .map_err(|e| format!("Commit failed: {e}"))?;
+        }
+        // Keep commit -> pull -> push when joining a folder that already has history.
+        let bare_has_commits =
+            baluard_core::sync::folder::folder_bare_repo_path(&folder, &slug_hint)
+                .ok()
+                .and_then(|p| git2::Repository::open_bare(&p).ok())
+                .and_then(|r| {
+                    r.references()
+                        .ok()
+                        .and_then(|mut refs| refs.next().transpose().ok().flatten())
+                        .map(|_| ())
+                })
+                .is_some();
+        if bare_has_commits {
+            engine
+                .pull(&git_repo, "origin")
+                .map_err(|e| format!("Pull failed: {e}"))?;
+        }
+        engine
+            .push(&git_repo, "origin")
+            .map_err(|e| format!("First push failed: {e}"))?;
+        Ok(url)
+    })
+    .await
+    .map_err(|e| format!("Task join: {e}"))??;
+
+    if let Ok(Some(marker)) =
+        baluard_core::vault::registry::BaluardMarker::read_from_vault(vault_path)
+    {
+        let mut reg = baluard_core::vault::registry::VaultRegistry::load_locked().map_err(|e| {
+            format!("Sync completed but the vault registry could not be loaded: {e}")
+        })?;
+        if let Some(entry) = reg.get_mut(&marker.slug) {
+            entry.provider = Some("folder".to_string());
+            entry.remote_url = Some(remote_url.clone());
+            entry.last_synced = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+        }
+        reg.save_locked().map_err(|e| {
+            format!("Sync completed but the vault registry could not be updated: {e}")
+        })?;
+    }
+    Ok(remote_url)
+}
+
 /// Disconnect a provider.
 pub async fn disconnect(provider: Provider) -> Result<(), BaluardError> {
     revoke_and_disconnect(provider)

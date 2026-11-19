@@ -643,7 +643,11 @@
     "cleanupBusy": "Getting updates…",
     "cleanupDone": "Updates received. {count} stale file copies removed.",
     "cleanupDoneNone": "Updates received. Nothing to clean up on this device.",
-    "cleanupBar": "Updates required — changes paused"
+    "cleanupBar": "Updates required — changes paused",
+    "folderSync": "Sync to a folder",
+    "folderSyncHint": "Use Dropbox, Google Drive, iCloud Drive, or Syncthing with no account.",
+    "folderSyncAction": "Select folder",
+    "folderSyncSuccess": "Folder sync enabled."
   },
   "autosync": {
     "upToDate": "All changes synced",

@@ -3815,8 +3815,27 @@ pub fn handle_sync_remote(
     mode: ConnectMode,
     vault_path: &str,
     socket: Option<&str>,
-    url: &str,
+    url: Option<&str>,
+    folder: Option<&std::path::Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(folder_path) = folder {
+        return match mode {
+            ConnectMode::Daemon => {
+                let payload = serde_json::json!({
+                    "provider": "folder",
+                    "folder_path": folder_path.to_string_lossy(),
+                });
+                let resp = client::request_to("vault.setup_sync", &payload.to_string(), socket)?;
+                if !resp.success {
+                    return Err(resp.error_message.into());
+                }
+                println!("{}", resp.payload);
+                Ok(())
+            }
+            ConnectMode::Direct => sync_remote_folder_direct(vault_path, folder_path),
+        };
+    }
+    let url = url.ok_or("Missing remote URL or --folder path")?;
     match mode {
         ConnectMode::Daemon => {
             let resp = client::request_to("sync.remote", url, socket)?;
@@ -3828,6 +3847,24 @@ pub fn handle_sync_remote(
         }
         ConnectMode::Direct => sync_remote_direct(vault_path, url),
     }
+}
+
+fn sync_remote_folder_direct(
+    vault_path: &str,
+    folder_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let vp = std::path::Path::new(vault_path);
+    let slug = baluard_core::vault::registry::BaluardMarker::read_from_vault(vp)
+        .ok()
+        .flatten()
+        .map(|m| m.slug)
+        .or_else(|| vp.file_name().and_then(|n| n.to_str()).map(str::to_string))
+        .unwrap_or_else(|| "baluard-vault".to_string());
+    let engine = baluard_core::sync::engine::SyncEngine::new(vp, "cli", None);
+    let repo = engine.open_repo()?;
+    let url = engine.add_folder_remote(&repo, "origin", folder_path, &slug)?;
+    println!("Folder remote configured: {url}");
+    Ok(())
 }
 
 pub fn handle_sync_push(

@@ -643,7 +643,11 @@
     "cleanupBusy": "Obtendo atualizações…",
     "cleanupDone": "Atualizações recebidas. {count} cópias obsoletas removidas.",
     "cleanupDoneNone": "Atualizações recebidas. Nada a limpar neste dispositivo.",
-    "cleanupBar": "Atualizações necessárias — alterações pausadas"
+    "cleanupBar": "Atualizações necessárias — alterações pausadas",
+    "folderSync": "Sincronizar com uma pasta",
+    "folderSyncHint": "Use Dropbox, Google Drive, iCloud Drive ou Syncthing sem conta.",
+    "folderSyncAction": "Selecionar pasta",
+    "folderSyncSuccess": "Sincronização por pasta ativada."
   },
   "autosync": {
     "upToDate": "Todas as alterações sincronizadas",

@@ -1206,7 +1206,11 @@ enum SyncAction {
     /// Set remote URL.
     Remote {
         /// Remote URL (HTTPS or SSH).
-        url: String,
+        #[arg(required_unless_present = "folder")]
+        url: Option<String>,
+        /// Local folder path for zero-config folder sync (ADR 0112).
+        #[arg(long, conflicts_with = "url")]
+        folder: Option<std::path::PathBuf>,
     },
     /// Push local changes to remote.
     Push,
@@ -2079,9 +2083,13 @@ fn main() {
             SyncAction::Init => {
                 commands::handle_sync_init(mode, &vault_path, cli.socket.as_deref())
             }
-            SyncAction::Remote { url } => {
-                commands::handle_sync_remote(mode, &vault_path, cli.socket.as_deref(), &url)
-            }
+            SyncAction::Remote { url, folder } => commands::handle_sync_remote(
+                mode,
+                &vault_path,
+                cli.socket.as_deref(),
+                url.as_deref(),
+                folder.as_deref(),
+            ),
             SyncAction::Push => {
                 commands::handle_sync_push(mode, &vault_path, cli.socket.as_deref())
             }

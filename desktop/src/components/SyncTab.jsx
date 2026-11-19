@@ -1,4 +1,5 @@
 import { createSignal, Show, For, onSettled, onCleanup, createEffect } from "solid-js";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -545,6 +546,22 @@ const [customError, setCustomError] = createSignal(null);
     }
   }
 
+  async function doFolderSetup() {
+    const selected = await open({ directory: true, multiple: false });
+    if (!selected) return;
+    setCustomBusy("folder");
+    setCustomError(null);
+    try {
+      await daemon("vault.setup_sync", JSON.stringify({ provider: "folder", folder_path: selected }));
+      toastSuccess(t("sync.folderSyncSuccess"));
+      await loadState();
+    } catch (e) {
+      setCustomError(sanitizeError(e, t));
+    } finally {
+      setCustomBusy(null);
+    }
+  }
+
   async function doPush() {
     setSubState("syncing");
     setError(null);
@@ -780,6 +797,22 @@ const [customError, setCustomError] = createSignal(null);
                       );
                     }}
                   </For>
+                </div>
+
+                {/* Local folder sync (ADR 0112): Dropbox, Drive, iCloud, Syncthing. */}
+                <div class="border-t border-[var(--color-border)] pt-3 flex items-center justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-xs font-medium text-[var(--color-text)]">{t("sync.folderSync")}</div>
+                    <div class="text-[10px] text-[var(--color-muted)]">{t("sync.folderSyncHint")}</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={customBusy() !== null}
+                    onClick={doFolderSetup}
+                  >
+                    {t("sync.folderSyncAction")}
+                  </Button>
                 </div>
 
                 {/* Custom remote: power users pointing at their own Git server. */}

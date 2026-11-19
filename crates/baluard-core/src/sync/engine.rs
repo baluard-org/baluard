@@ -1402,6 +1402,50 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Configure a local-folder bare repository as remote `name` (ADR 0112).
+    pub fn add_folder_remote(
+        &self,
+        repo: &Repository,
+        name: &str,
+        folder_path: &Path,
+        vault_slug: &str,
+    ) -> Result<String, BaluardError> {
+        let bare_path = crate::sync::folder::init_or_open_folder_remote(folder_path, vault_slug)?;
+        let url = crate::sync::folder::folder_url_from_path(&bare_path)?;
+        Self::pin_remote_url(repo, &url)?;
+        if repo.find_remote(name).is_ok() {
+            Self::set_remote_url(repo, name, &url)?;
+        } else {
+            repo.remote(name, &url)
+                .map_err(|e| SyncError::Git(format!("remote add: {e}")))?;
+        }
+        Ok(url)
+    }
+
+    fn with_folder_remote_guard<T>(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+        op: impl FnOnce() -> Result<T, BaluardError>,
+    ) -> Result<T, BaluardError> {
+        let Some(bare_dir) = Self::raw_remote_url(repo, remote_name)
+            .as_deref()
+            .and_then(crate::sync::folder::path_from_file_url)
+        else {
+            return op();
+        };
+        if !bare_dir.is_dir() {
+            return op();
+        }
+        let mut inner_out: Option<Result<T, BaluardError>> = None;
+        crate::sync::folder::with_folder_lock(&bare_dir, || {
+            crate::sync::folder::sanitize_folder_remote_conflicts(&bare_dir)?;
+            inner_out = Some(op());
+            Ok(())
+        })?;
+        inner_out.expect("closure executed")
+    }
+
     /// Resolve the default branch name for the local repo.
     /// Tries HEAD symref first, falls back to "main".
     pub fn resolve_default_branch(repo: &Repository) -> String {
@@ -1878,7 +1922,8 @@ impl SyncEngine {
 
     /// Push to remote. Uses "origin" by default.
     pub fn push(&self, repo: &Repository, remote_name: &str) -> Result<(), BaluardError> {
-        let out = self.push_inner(repo, remote_name);
+        let out =
+            self.with_folder_remote_guard(repo, remote_name, || self.push_inner(repo, remote_name));
         if out.is_ok() && self.signing_is_recovery {
             // Family-spaces §7: the first successful push published this
             // device into the remote roster (its registry entry rode the
@@ -4578,7 +4623,8 @@ impl SyncEngine {
         // State: Idle → Pulling
         self.transition_state(SyncState::Pulling)?;
 
-        let result = self.pull_inner(repo, remote_name);
+        let result =
+            self.with_folder_remote_guard(repo, remote_name, || self.pull_inner(repo, remote_name));
         if result.is_err() {
             // Reset state machine on any error to avoid stuck non-Idle state
             let mut sm = self.state_machine.borrow_mut();

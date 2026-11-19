@@ -531,7 +531,11 @@
     "cleanupBusy": "Obtention des mises a jour…",
     "cleanupDone": "Mises a jour recues. {count} copies perimees supprimees.",
     "cleanupDoneNone": "Mises a jour recues. Rien a nettoyer sur cet appareil.",
-    "cleanupBar": "Mises a jour requises — modifications en pause"
+    "cleanupBar": "Mises a jour requises — modifications en pause",
+    "folderSync": "Synchroniser vers un dossier",
+    "folderSyncHint": "Utilisez Dropbox, Google Drive, iCloud Drive ou Syncthing sans compte.",
+    "folderSyncAction": "Choisir un dossier",
+    "folderSyncSuccess": "Synchronisation par dossier activée."
   },
   "settings": {
     "faviconLabel": "Afficher les icônes des sites web",

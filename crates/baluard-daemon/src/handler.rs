@@ -7638,8 +7638,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let existing_clone_url = payload["clone_url"].as_str().map(|s| s.to_string());
 
             let is_custom = provider == "custom";
+            let is_folder = provider == "folder";
+            let folder_path = payload["folder_path"]
+                .as_str()
+                .map(std::path::PathBuf::from);
             if is_custom && existing_clone_url.is_none() {
                 return err_response("A custom remote needs the full repository URL (clone URL)");
+            }
+            if is_folder && folder_path.is_none() {
+                return err_response("A folder remote needs folder_path");
             }
 
             // C5: the device UUID keys commit signing and roster roles.
@@ -7648,7 +7655,15 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             let vault_path = state.vault_path.clone();
 
             #[cfg(feature = "git-sync")]
-            let sync_result = if is_custom {
+            let sync_result = if is_folder {
+                baluard_runtime::providers::setup_sync_remote_folder(
+                    &vault_path,
+                    devkey_seal,
+                    folder_path.as_deref().expect("checked above"),
+                    &device_id,
+                )
+                .await
+            } else if is_custom {
                 baluard_runtime::providers::setup_sync_remote_custom(
                     &vault_path,
                     devkey_seal,
