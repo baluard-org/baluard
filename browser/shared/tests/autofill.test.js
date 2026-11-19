@@ -438,9 +438,9 @@ describe("fill flash feedback", () => {
     setNativeValue(el, "octocat");
     expect(el.classList.contains("baluard-fill-flash")).toBe(true);
     expect(document.querySelectorAll("#baluard-fill-flash-style").length).toBe(1);
-    vi.advanceTimersByTime(2200);
+    vi.advanceTimersByTime(1000);
     expect(el.classList.contains("baluard-fill-flash")).toBe(true);
-    vi.advanceTimersByTime(1400);
+    vi.advanceTimersByTime(1000);
     expect(el.classList.contains("baluard-fill-flash")).toBe(false);
   });
 
@@ -451,7 +451,7 @@ describe("fill flash feedback", () => {
     const css = document.getElementById("baluard-fill-flash-style").textContent;
     const peaks = (css.match(/0 0 12px 0/g) || []).length;
     expect(peaks).toBe(3);
-    expect(css).toContain("animation:baluard-fill-glow 3.3s ease-in-out");
+    expect(css).toContain("animation:baluard-fill-glow 1.65s ease-in-out");
     expect(css).toContain("10%{box-shadow:0 0 0 4px rgba(179,229,92,.75)}");
     expect(css).toContain("100%{box-shadow:0 0 0 0 rgba(179,229,92,0)}");
   });

@@ -112,9 +112,9 @@ export function setNativeValue(el, value) {
 }
 
 // Visual fill confirmation: the brand-lime ring pops once, then the field
-// breathes a neon halo three times (~1s per bright-dim-bright cycle, 50%
-// faster than the 2s reference) and the final frame lands back on
-// transparent so the field returns to its normal look with no glow. One
+// breathes a neon halo three times (~0.55s per bright-dim-bright cycle) and
+// the final frame lands back on transparent so the field returns to its
+// normal look with no glow. One
 // keyframe timeline rather than two animations because both effects paint
 // box-shadow and the last animation on a property wins. Implemented as a
 // class + injected keyframes (NOT inline styles) so the field's own
@@ -138,7 +138,7 @@ export function flashFilledField(el) {
       "70%{box-shadow:0 0 3px -1px rgba(179,229,92,.4)}" +
       "85%{box-shadow:0 0 12px 0 rgba(179,229,92,.7)}" +
       "100%{box-shadow:0 0 0 0 rgba(179,229,92,0)}}" +
-      `.${FLASH_CLASS}{animation:baluard-fill-glow 3.3s ease-in-out}`;
+      `.${FLASH_CLASS}{animation:baluard-fill-glow 1.65s ease-in-out}`;
     (doc.head || doc.documentElement).appendChild(style);
   }
   // Restart the animation on repeat fills of the same field.
@@ -149,7 +149,7 @@ export function flashFilledField(el) {
   el.__baluardFlashTimer = setTimeout(() => {
     el.classList.remove(FLASH_CLASS);
     delete el.__baluardFlashTimer;
-  }, 3400);
+  }, 1700);
 }
 
 // ── TOTP field detection ──
