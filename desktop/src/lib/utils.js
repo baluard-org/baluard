@@ -208,3 +208,14 @@ export function isHardwareError(raw) {
   const str = typeof raw === "string" ? raw : (raw?.message || String(raw || ""));
   return /hardware unavailable|hardware seal|security chip|security key|secure enclave|tpm/i.test(str);
 }
+
+/// True when an unlock/reprompt failure was NOT caused by a wrong master
+/// password (transport, timeout, FIDO/security-key, or pairing/hardware errors),
+/// so the caller should keep the typed password for a retry.
+export function isNonAuthUnlockError(raw) {
+  if (isHardwareError(raw)) return true;
+  const str = typeof raw === "string" ? raw : (raw?.message || String(raw || ""));
+  return /Cannot connect|connection refused|timeout|timed out|Frame too large|error sending request|not tapped in time|touch was cancelled|security key is busy|not the security key|uv-forced|pin-required|requires its PIN|no security key is plugged|connect a compatible security key|no longer paired with this vault|identity mismatch/i.test(
+    str,
+  );
+}

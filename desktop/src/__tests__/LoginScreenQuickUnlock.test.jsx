@@ -231,6 +231,19 @@ describe("LoginScreen wrong-password failure", () => {
 
     await waitFor(() => expect(pw.value).toBe(""));
   });
+
+  test("a transport failure keeps the password field", async () => {
+    authMock.unlock.mockResolvedValue(false);
+    authState.lastUnlockError = "Cannot connect to daemon";
+    render(() => <LoginScreen />);
+    const pw = await screen.findByTestId("login-password");
+    fireEvent.input(pw, { target: { value: "master-pw" } });
+    await Promise.resolve();
+    fireEvent.click(screen.getAllByTestId("login-unlock")[0]);
+
+    await waitFor(() => expect(authMock.unlock).toHaveBeenCalled());
+    expect(pw.value).toBe("master-pw");
+  });
 });
 
 describe("LoginScreen downloaded-vault enrollment", () => {

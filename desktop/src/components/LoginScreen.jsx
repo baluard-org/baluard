@@ -6,7 +6,7 @@ import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
 import { daemon, getRenderState, getPendingAgentSummary } from "../lib/daemon.js";
 import { biometryAvailable, biometryPrompt } from "../lib/biometry.js";
 import { toastError } from "../context/toastSignal.js";
-import { sanitizeError, isHardwareError } from "../lib/utils.js";
+import { sanitizeError, isNonAuthUnlockError } from "../lib/utils.js";
 import {
   IconLock,
   IconFingerprint,
@@ -279,9 +279,9 @@ export default function LoginScreen() {
     if (bruteLock() || auth.status() === "unlocking") return;
     const success = await auth.unlock(t);
     if (!success) {
-      // A hardware-seal failure is not a wrong password: no red shake,
-      // no lockout timer. The toast from unlock() explains the chip.
-      if (isHardwareError(auth.lastUnlockError())) return;
+      // A hardware-seal, security-key, or transport failure is not a wrong
+      // password: no red shake, no lockout timer, keep the typed password.
+      if (isNonAuthUnlockError(auth.lastUnlockError())) return;
       // Neither is a downloaded vault: the daemon's typed refusal means the
       // clone carries no device key (it never syncs), so the phrase flow
       // takes over. Retry loops would only burn attempts.

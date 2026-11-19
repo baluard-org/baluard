@@ -180,8 +180,8 @@ fun UnlockScreen(
                         state = AuthState.Unlocking
                         scope.launch {
                             val result = authViewModel.openAndUnlock(vaultPath, password)
-                            if (result !is UnlockResult.Success) {
-                                // A rejected attempt must not leave a guess
+                            if (result is UnlockResult.WrongPassword) {
+                                // A rejected password must not leave a guess
                                 // sitting in the field for the next try.
                                 password = ""
                             }

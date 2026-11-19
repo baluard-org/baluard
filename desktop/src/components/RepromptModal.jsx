@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
+import { isNonAuthUnlockError } from "../lib/utils.js";
 import ConsolePanel from "./ConsolePanel.jsx";
 import { Button, Input } from "./Primitives.jsx";
 
@@ -38,11 +39,11 @@ export default function RepromptModal(props) {
       setPassword("");
       setFailed(false);
       if (cb) cb(pw);
-    } catch {
+    } catch (e) {
       setFailed(true);
-      // The wrong guess must not survive the field (no delay gates this
-      // retry loop, so a leftover guess is pure brute-force aid).
-      setPassword("");
+      // Clear only on auth failures so a transport/security-key hiccup does
+      // not force retyping a valid password.
+      if (!isNonAuthUnlockError(e)) setPassword("");
     }
   }
 

@@ -40,9 +40,9 @@ object AutofillSaveToken {
     }
 
     /**
-     * Payload for [candidate], or null. The file is deleted only after the
-     * token matches: a spurious launch with a guessed extra must not wipe a
-     * pending save, and expired entries are dropped on the next read.
+     * Payload for [candidate], or null. Expired entries are swept on any read
+     * regardless of token match; a valid non-expired entry is deleted only
+     * when the token matches.
      */
     fun consume(candidate: String): AutofillSavePrefill? {
         val dir = AppContextHolder.get()?.filesDir ?: return null
@@ -50,12 +50,12 @@ object AutofillSaveToken {
         val stored = runCatching { file.readText() }.getOrNull()
         if (stored.isNullOrBlank()) return null
         val obj = runCatching { org.json.JSONObject(stored) }.getOrNull() ?: return null
-        if (obj.optString("token") != candidate) return null
         val age = System.currentTimeMillis() - obj.optLong("created_at_ms", 0L)
         if (age > TTL_MS) {
             runCatching { file.delete() }
             return null
         }
+        if (obj.optString("token") != candidate) return null
         runCatching { file.delete() }
         val username = obj.optString("username").ifBlank { null }
         val password = obj.optString("password").ifBlank { null }
