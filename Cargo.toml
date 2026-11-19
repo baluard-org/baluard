@@ -124,3 +124,10 @@ dotenvy = "0.15"
 
 # Optional P2P sync transport (ADR 0113)
 iroh = "0.35"
+
+# netwatch 0.5.0 (required by iroh 0.35) cannot compile its macOS route
+# monitor as published: it calls socket2 0.6-only APIs against socket2
+# 0.5.x. Vendored with create_socket rewritten on raw libc; no newer
+# netwatch satisfies iroh 0.35 (API break) and iroh pins MSRV 1.81.
+[patch.crates-io]
+netwatch = { path = "vendor/netwatch" }
