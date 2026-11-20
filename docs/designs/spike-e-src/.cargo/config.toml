@@ -1,0 +1,7 @@
+# getrandom 0.3 on wasm32-unknown-unknown uses the `custom` backend: the
+# crate defines __getrandom_v03_custom, which forwards to ONE plain
+# `env`-module import (spike_js_random_fill) that the hand-written JS glue
+# backs with crypto.getRandomValues. This keeps the module free of the
+# wasm-bindgen runtime (which the wasm_js backend would drag in).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="custom"']

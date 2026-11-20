@@ -1,0 +1,17 @@
+[package]
+name = "tether-responder"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+snow-spike = { path = "../core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
+tokio-tungstenite = "0.30"
+# default-features=false: tokio-rustls' default enables rustls' aws-lc-rs
+# feature, which (combined with our rustls "ring" feature) leaves two
+# providers and rustls refuses to auto-select. We pin ring (pure-Rust build,
+# no cmake) via rustls' own features.
+tokio-rustls = { version = "0.26", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

@@ -1,0 +1,31 @@
+[package]
+name = "snow-spike"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+# NOTE: snow 0.10.0's "std" feature enables "ring/std", which activates the
+# optional ring dependency (and through it getrandom 0.2, which does NOT
+# compile for wasm32-unknown-unknown without its own "js" feature). For a
+# lean wasm build we use default-features = false and pick the pure-Rust
+# default resolver primitives explicitly (verified via `cargo tree`).
+snow = { version = "0.10", default-features = false, features = [
+    "default-resolver",
+    "use-curve25519",
+    "use-chacha20poly1305",
+    "use-blake2",
+    "use-getrandom",
+] }
+# NOTE: no feature flag for the custom backend — it is purely cfg-driven
+# (getrandom_backend="custom" in .cargo/config.toml).
+getrandom = { version = "0.3" }
+
+[build-dependencies]
+sha2 = "0.10"
+x25519-dalek.workspace = true
+
+[dev-dependencies]
+x25519-dalek.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
