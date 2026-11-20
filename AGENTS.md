@@ -11,7 +11,7 @@ Platforms: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Browser:
 ## STATUS
 Baluard is public beta 0.1.x, bug fixing releases. **No breaking changes.** Assume users already operate with Baluard.
 * **Security can push format breaks, with a migration path.** If a security fix requires breaking a format, route, or storage layout, do it, with a migration path for existing users.
-* **DO NOT break:** Crypto and security invariants (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating).
+* **DO NOT break:** Crypto and security invariants (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating; ChaCha20-Poly1305 exception for the ADR 0114 tether channel — see the Security line).
 
 ## STRUCTURE
 For the detailed source tree, see [Software Architecture](docs/dev/software-architecture.md#1-monorepo-structure).

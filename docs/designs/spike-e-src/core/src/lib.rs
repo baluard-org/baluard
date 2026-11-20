@@ -6,7 +6,7 @@
 //! IK:  <- s            (initiator pre-knows responder static: pinned)
 //!      ...
 //!      -> e, es, s, ss  msg1: payload = PROTOCOL_LABEL
-//!      <- e, es, ss     msg2: payload = fresh 32-byte responder nonce
+//!      <- e, ee, se     msg2: payload = fresh 32-byte responder nonce
 //!      -> transport frame #1: payload = echoed nonce  (replay defense)
 //!      ... 2 encrypted transport frames both directions
 //! ```
@@ -109,7 +109,7 @@ impl Initiator {
         Ok(buf)
     }
 
-    /// msg2: `<- e, es, ss`, payload = responder nonce. Returns the nonce the
+    /// msg2: `<- e, ee, se`, payload = responder nonce. Returns the nonce the
     /// initiator must echo in its first transport frame. Verifies the
     /// authenticated responder static against the pinned key before finishing.
     pub fn read_msg2(&mut self, msg2: &[u8]) -> Result<[u8; NONCE_LEN]> {
