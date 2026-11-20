@@ -16,6 +16,7 @@ import { AgentApprovalProvider } from "./context/AgentApprovalContext.jsx";
 
 import LoginScreen from "./components/LoginScreen.jsx";
 import RecoveryScreen from "./components/RecoveryScreen.jsx";
+import RecoverVaultScreen from "./components/RecoverVaultScreen.jsx";
 import CreateVaultScreen from "./components/CreateVaultScreen.jsx";
 import SetupScreen from "./components/SetupScreen.jsx";
 import WelcomeScreen from "./components/WelcomeScreen.jsx";
@@ -212,9 +213,13 @@ export default function App() {
             <Show when={auth.status() === "welcome"} fallback={
               <Show when={auth.status() === "setup"} fallback={
                 <Show when={auth.status() === "recovery"} fallback={
-                  <Show when={auth.status() === "init" || auth.status() === "creating"}
-                    fallback={<LoginScreen />}>
-                    <CreateVaultScreen />
+                  <Show when={auth.status() === "recover"} fallback={
+                    <Show when={auth.status() === "init" || auth.status() === "creating"}
+                      fallback={<LoginScreen />}>
+                      <CreateVaultScreen />
+                    </Show>
+                  }>
+                    <RecoverVaultScreen />
                   </Show>
                 }>
                   <RecoveryScreen />

@@ -1315,7 +1315,7 @@
     "policyDone": "Recommendations published.",
     "policyCleared": "Recommendations cleared.",
     "kitLabel": "Recovery kit",
-    "kitDesc": "A 24-word phrase that can re-open this vault if every admin device is lost. The phrase works even without this app.",
+    "kitDesc": "A 24-word phrase that re-opens this vault when every admin device is lost — or when the master password is forgotten. The phrase works even without this app.",
     "kitEnable": "Set up kit",
     "kitDisable": "Remove kit",
     "kitEnabled": "Recovery kit set up.",
@@ -1478,5 +1478,28 @@
     "expired": "Expired",
     "expiresSoon": "Expires soon",
     "noKey": "No key material stored yet"
+  },
+  "recover": {
+    "title": "Recover your vault",
+    "subtitle": "Use your 24-word recovery phrase to get back in. You will set a new master password; the old one is not needed.",
+    "noVaults": "This device has no vault registered yet. Add the vault folder (or clone it from your git provider) first, then recover.",
+    "cloneHint": "Tip: \"Download from provider\" on the main screen clones the vault for you.",
+    "vault": "Vault",
+    "pickVault": "Pick the vault to recover.",
+    "phrase": "Recovery phrase (24 words)",
+    "phrasePlaceholder": "word one word two … — paste or type all 24 words",
+    "badPhrase": "The phrase has 24 words — count them.",
+    "newPassword": "New master password",
+    "confirm": "Confirm new password",
+    "shortPassword": "The password needs at least 8 characters.",
+    "passwordMismatch": "The passwords do not match.",
+    "deviceName": "Device name",
+    "deviceNameRequired": "Give this device a name.",
+    "freshInstallNote": "Recovery works on a fresh install only — on a device that already holds this vault's keys, remove the vault and add it again first.",
+    "submit": "Recover vault",
+    "done": "Vault recovered. Unlock with your new password.",
+    "back": "Back",
+    "loginLink": "Forgot your master password?",
+    "welcomeLink": "Recover a vault with your phrase"
   }
 }

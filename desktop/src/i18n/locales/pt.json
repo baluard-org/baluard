@@ -1315,7 +1315,7 @@
     "policyDone": "Recomendações publicadas.",
     "policyCleared": "Recomendações limpas.",
     "kitLabel": "Kit de recuperação",
-    "kitDesc": "Uma frase de 24 palavras que pode reabrir este cofre se todos os equipamentos de administração se perderem. A frase funciona mesmo sem esta app.",
+    "kitDesc": "Uma frase de 24 palavras que reabre este cofre quando todos os dispositivos de administração se perdem — ou quando a senha mestra é esquecida. A frase funciona mesmo sem este app.",
     "kitEnable": "Configurar kit",
     "kitDisable": "Remover kit",
     "kitEnabled": "Kit de recuperação configurado.",
@@ -1478,5 +1478,28 @@
     "expired": "Expirado",
     "expiresSoon": "Expira em breve",
     "noKey": "Ainda não há chave salva"
+  },
+  "recover": {
+    "title": "Recupere seu cofre",
+    "subtitle": "Use sua frase de recuperação de 24 palavras para voltar. Você escolherá uma nova senha mestra; a antiga não é necessária.",
+    "noVaults": "Este dispositivo ainda não tem nenhum cofre registrado. Adicione a pasta do cofre (ou clone do seu provedor git) e depois recupere.",
+    "cloneHint": "Dica: «Baixar do provedor» na tela principal clona o cofre para você.",
+    "vault": "Cofre",
+    "pickVault": "Escolha o cofre a recuperar.",
+    "phrase": "Frase de recuperação (24 palavras)",
+    "phrasePlaceholder": "palavra um palavra dois … — cole ou digite as 24 palavras",
+    "badPhrase": "A frase tem 24 palavras — conte-as.",
+    "newPassword": "Nova senha mestra",
+    "confirm": "Confirme a nova senha",
+    "shortPassword": "A senha precisa de pelo menos 8 caracteres.",
+    "passwordMismatch": "As senhas não coincidem.",
+    "deviceName": "Nome do dispositivo",
+    "deviceNameRequired": "Dê um nome a este dispositivo.",
+    "freshInstallNote": "A recuperação funciona só em uma instalação nova — se este dispositivo já tem as chaves do cofre, remova-o e adicione-o de novo antes.",
+    "submit": "Recuperar cofre",
+    "done": "Cofre recuperado. Entre com sua nova senha.",
+    "back": "Voltar",
+    "loginLink": "Esqueceu sua senha mestra?",
+    "welcomeLink": "Recuperar um cofre com sua frase"
   }
 }

@@ -17,14 +17,15 @@ const AuthContext = createContext(null);
 const VALID_AUTH_TRANSITIONS = {
   // "unlocked": biometric/PIN quick unlock flips directly (no unlocking
   // intermediate — the credential prompt IS the unlocking state).
-  locked:    ["unlocking", "unlocked", "init", "welcome"],
+  locked:    ["unlocking", "unlocked", "init", "welcome", "recover"],
   unlocking: ["unlocked", "locked"],
   unlocked:  ["locked"],
   init:      ["creating", "locked"],
   creating:  ["recovery", "init"],
   recovery:  ["setup", "init", "locked"],
   setup:     ["unlocked", "locked"],
-  welcome:   ["init", "locked"],
+  welcome:   ["init", "locked", "recover"],
+  recover:   ["locked", "welcome"],
 };
 
 // DEV-only diagnostics; the state write always runs (see transitionGuard.js).

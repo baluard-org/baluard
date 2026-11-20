@@ -771,6 +771,13 @@ export default function LoginScreen() {
               >
                 {t("legacy.openKit")}
               </button>
+              <button
+                onClick={() => auth.setStatus("recover")}
+                class="login-screen__create-btn block w-full text-sm font-medium text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                data-testid="login-recover-link"
+              >
+                {t("recover.loginLink")}
+              </button>
             </div>
             <Show when={showOpenShared()}>
               <OpenSharedModal guest onClose={() => setShowOpenShared(false)} />

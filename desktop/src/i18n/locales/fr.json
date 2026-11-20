@@ -1315,7 +1315,7 @@
     "policyDone": "Recommandations publiées.",
     "policyCleared": "Recommandations effacées.",
     "kitLabel": "Kit de récupération",
-    "kitDesc": "Une phrase de 24 mots permettant de rouvrir ce coffre si tous les appareils d'administration sont perdus. La phrase fonctionne même sans cette application.",
+    "kitDesc": "Une phrase de 24 mots qui rouvre ce coffre quand tous les appareils administrateurs sont perdus — ou quand le mot de passe maître est oublié. La phrase fonctionne même sans cette app.",
     "kitEnable": "Configurer le kit",
     "kitDisable": "Supprimer le kit",
     "kitEnabled": "Kit de récupération configuré.",
@@ -1478,5 +1478,28 @@
     "expired": "Expiré",
     "expiresSoon": "Expire bientôt",
     "noKey": "Aucune clé enregistrée pour le moment"
+  },
+  "recover": {
+    "title": "Récupérez votre coffre",
+    "subtitle": "Utilisez votre phrase de récupération de 24 mots pour revenir. Vous choisirez un nouveau mot de passe maître ; l'ancien n'est pas nécessaire.",
+    "noVaults": "Cet appareil n'a pas encore de coffre enregistré. Ajoutez d'abord le dossier du coffre (ou clonez-le depuis votre fournisseur git), puis récupérez.",
+    "cloneHint": "Astuce : « Télécharger depuis le fournisseur » sur l'écran principal clone le coffre pour vous.",
+    "vault": "Coffre",
+    "pickVault": "Choisissez le coffre à récupérer.",
+    "phrase": "Phrase de récupération (24 mots)",
+    "phrasePlaceholder": "mot un mot deux … — collez ou tapez les 24 mots",
+    "badPhrase": "La phrase compte 24 mots — vérifiez-les.",
+    "newPassword": "Nouveau mot de passe maître",
+    "confirm": "Confirmez le nouveau mot de passe",
+    "shortPassword": "Le mot de passe demande au moins 8 caractères.",
+    "passwordMismatch": "Les mots de passe ne correspondent pas.",
+    "deviceName": "Nom de l'appareil",
+    "deviceNameRequired": "Donnez un nom à cet appareil.",
+    "freshInstallNote": "La récupération ne marche que sur une installation neuve — si cet appareil détient déjà les clés du coffre, retirez-le et ajoutez-le à nouveau d'abord.",
+    "submit": "Récupérer le coffre",
+    "done": "Coffre récupéré. Ouvrez avec votre nouveau mot de passe.",
+    "back": "Retour",
+    "loginLink": "Mot de passe maître oublié ?",
+    "welcomeLink": "Récupérer un coffre avec votre phrase"
   }
 }

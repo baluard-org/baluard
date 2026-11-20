@@ -1315,7 +1315,7 @@
     "policyDone": "Recomendaciones publicadas.",
     "policyCleared": "Recomendaciones borradas.",
     "kitLabel": "Kit de recuperación",
-    "kitDesc": "Una frase de 24 palabras que puede reabrir esta bóveda si se pierden todos los equipos de administración. La frase funciona incluso sin esta app.",
+    "kitDesc": "Una frase de 24 palabras que vuelve a abrir esta bóveda cuando se pierden todos los dispositivos de administración — o cuando se olvida la contraseña maestra. La frase funciona incluso sin esta app.",
     "kitEnable": "Configurar kit",
     "kitDisable": "Quitar kit",
     "kitEnabled": "Kit de recuperación configurado.",
@@ -1478,5 +1478,28 @@
     "expired": "Caducado",
     "expiresSoon": "Caduca pronto",
     "noKey": "Aún no hay clave guardada"
+  },
+  "recover": {
+    "title": "Recupera tu bóveda",
+    "subtitle": "Usa tu frase de recuperación de 24 palabras para volver a entrar. Elegirás una nueva contraseña maestra; la antigua no hace falta.",
+    "noVaults": "Este dispositivo aún no tiene ninguna bóveda registrada. Añade la carpeta de la bóveda (o clónala desde tu proveedor git) y después recupera.",
+    "cloneHint": "Consejo: «Descargar del proveedor» en la pantalla principal clona la bóveda por ti.",
+    "vault": "Bóveda",
+    "pickVault": "Elige la bóveda a recuperar.",
+    "phrase": "Frase de recuperación (24 palabras)",
+    "phrasePlaceholder": "palabra uno palabra dos … — pega o escribe las 24 palabras",
+    "badPhrase": "La frase tiene 24 palabras — cuéntalas.",
+    "newPassword": "Nueva contraseña maestra",
+    "confirm": "Confirma la nueva contraseña",
+    "shortPassword": "La contraseña necesita al menos 8 caracteres.",
+    "passwordMismatch": "Las contraseñas no coinciden.",
+    "deviceName": "Nombre del dispositivo",
+    "deviceNameRequired": "Ponle nombre a este dispositivo.",
+    "freshInstallNote": "La recuperación funciona solo en una instalación nueva — si este dispositivo ya tiene las claves de la bóveda, quítala y añádela otra vez antes.",
+    "submit": "Recuperar bóveda",
+    "done": "Bóveda recuperada. Entra con tu nueva contraseña.",
+    "back": "Volver",
+    "loginLink": "¿Olvidaste tu contraseña maestra?",
+    "welcomeLink": "Recuperar una bóveda con tu frase"
   }
 }

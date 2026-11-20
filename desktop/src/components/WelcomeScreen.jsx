@@ -86,6 +86,15 @@ export default function WelcomeScreen() {
 								<IconFolder class="w-5 h-5" />
 								<span>{t("welcome.openLocal")}</span>
 							</button>
+
+							<button
+								type="button"
+								onClick={() => auth.setStatus("recover")}
+								class="text-sm text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+								data-testid="welcome-recover-link"
+							>
+								{t("recover.welcomeLink")}
+							</button>
 						</div>
 
 						<Show when={auth.activeVault()}>
