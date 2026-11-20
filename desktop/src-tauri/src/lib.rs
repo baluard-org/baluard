@@ -21,6 +21,7 @@ use zeroize::Zeroize;
 
 mod daemon_ctl;
 mod deep_link;
+mod portable_update;
 #[cfg(target_os = "linux")]
 mod tray_linux;
 mod updater;

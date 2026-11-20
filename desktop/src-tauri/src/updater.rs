@@ -14,6 +14,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State, Url};
 use tauri_plugin_updater::UpdaterExt;
 
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{
+    CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+};
+
 pub const PUBKEY_PLACEHOLDER: &str = "REPLACE_WITH_UPDATER_PUBLIC_KEY";
 
 const RELEASES_BASE: &str = "https://github.com/baluard-org/baluard/releases";
@@ -55,11 +60,12 @@ fn channel_endpoint(channel: &str) -> Result<Url, String> {
 }
 
 fn configured(app: &AppHandle) -> bool {
-    // Portable runs (BALUARD_PORTABLE, e.g. the pendrive zip) live outside
-    // any installer: the updater would run the NSIS setup over the stick
-    // copy. Updates are manual zip replacement.
+    // Portable runs (BALUARD_PORTABLE, e.g. the pendrive zip) cannot run
+    // the NSIS installer, so the plugin updater is never configured there;
+    // the portable flow (verified release zip swapped by the launcher) is
+    // the configured path instead.
     if std::env::var_os("BALUARD_PORTABLE").is_some() {
-        return false;
+        return crate::portable_update::is_portable();
     }
     // D79: only the AppImage self-updates. On deb/rpm/Flatpak/Snap the
     // package manager owns updates; the embedded pubkey would otherwise
@@ -119,6 +125,9 @@ pub(crate) async fn updater_check(app: AppHandle) -> Result<Option<UpdateInfo>, 
     if !configured(&app) {
         return Err("Updates are not configured in this build.".into());
     }
+    if crate::portable_update::is_portable() {
+        return crate::portable_update::check(&app_version(&app)).await;
+    }
     let updater = builder(&app)?.build().map_err(|e| e.to_string())?;
     let update = updater.check().await.map_err(|e| e.to_string())?;
     Ok(update.as_ref().map(update_info))
@@ -157,6 +166,12 @@ async fn install_inner(
     daemon: State<'_, std::sync::Mutex<Option<crate::Daemon>>>,
 ) -> Result<(), String> {
     if !configured(&app) {
+        return Err("Updates are not configured in this build.".into());
+    }
+    if crate::portable_update::is_portable() {
+        #[cfg(windows)]
+        return portable_install(app, daemon).await;
+        #[cfg(not(windows))]
         return Err("Updates are not configured in this build.".into());
     }
     let updater = builder(&app)?.build().map_err(|e| e.to_string())?;
@@ -238,6 +253,56 @@ async fn install_inner(
 
     log::info!("update to {version} installed; restarting");
     app.restart();
+}
+
+/// Portable update: stage a verified release zip while the daemon still
+/// runs, then stop the daemon and hand the swap to the launcher, which
+/// waits out this process, replaces the files (keeping data\), and starts
+/// the new desktop. Success never returns Ok from here: the process exits
+/// and the NEW binary takes over.
+#[cfg(windows)]
+async fn portable_install(
+    app: AppHandle,
+    daemon: State<'_, std::sync::Mutex<Option<crate::Daemon>>>,
+) -> Result<(), String> {
+    let current = app_version(&app);
+    let staging = crate::portable_update::stage_update(&app, &current).await?;
+
+    // Drain, lock, and stop the daemon: identical safety gate as the
+    // installed flow.
+    crate::send_request("system.prepare_update", "").map_err(|e| {
+        if !crate::daemon_ctl::daemon_is_adopted() {
+            let _ = crate::daemon_ctl::restart_daemon(&app);
+        }
+        format!("Cannot prepare for the update: {e}")
+    })?;
+    crate::daemon_ctl::suppress_respawn();
+    if let Err(e) = crate::daemon_ctl::stop_daemon_and_wait(daemon.inner()) {
+        crate::daemon_ctl::clear_respawn_suppression();
+        return Err(format!("The security service could not be stopped: {e}"));
+    }
+
+    let launcher = std::env::current_exe()
+        .map_err(|e| format!("current_exe: {e}"))?
+        .parent()
+        .map(|dir| dir.join("baluard-portable.exe"))
+        .ok_or("executable has no parent directory")?;
+    let mut command = std::process::Command::new(&launcher);
+    command.args(["--apply-update"]);
+    command.arg(&staging);
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    if let Err(e) = command.spawn() {
+        crate::daemon_ctl::clear_respawn_suppression();
+        let _ = crate::daemon_ctl::restart_daemon(&app);
+        return Err(format!("could not start the updater: {e}"));
+    }
+
+    log::info!("portable update staged; handing over to the launcher");
+    // exit(0) skips Tauri's Drop paths: run the plugin cleanup first or
+    // the tray icon ghosts and the geometry save is lost.
+    app.cleanup_before_exit();
+    std::process::exit(0);
 }
 
 #[cfg(test)]

@@ -46,6 +46,19 @@ anyhow = "1"
 libc = "0.2"
 zeroize = { version = "1", features = ["derive"] }
 baluard-core = { path = "../../crates/baluard-core" }
+# Portable in-app updates (BALUARD_PORTABLE): verify + fetch the release
+# zip and hand the swap to the launcher. Pinned EXACT per the D10 rule:
+# these crates verify and materialize update bytes, so bumps are
+# conscious. Versions match the graph the tauri plugins already pull, so
+# no new compile weight.
+reqwest = { version = "=0.12.28", default-features = false, features = [
+    "rustls-tls",
+] }
+zip = { version = "=2.6.1", default-features = false, features = ["deflate"] }
+sha2 = "=0.10.9"
+minisign-verify = "=0.2.5"
+base64 = "=0.22.1"
+semver = "=1.0.28"
 
 # D4: pasteboard concealment marker. objc2-app-kit is already in the graph
 # via wry/tao; declaring it direct only adds the NSPasteboard module.
