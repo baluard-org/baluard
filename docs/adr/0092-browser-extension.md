@@ -1,12 +1,12 @@
 # ADR 0092. Browser Extension
 
-> Status: Accepted (2026-09-30). Phases 0 and 1 are implemented: native messaging host, bridge module, paired-companion pairing flow, allowlist, and the Chromium and Firefox MV3 clients. Since the original plan the extension also gained the in-field dropdown (amendment of 2026-07-19) and merged multi-vault matching with unlock requests (ADR 0098). Passkeys in the browser, capture of new or changed logins, the generator view, the sync badge, keyboard-shortcut fill, browser code-signature verification, and the Flatpak and Snap installer are not shipped and remain open (see "Open items").
+> Status: Accepted (2026-09-30). Phases 0 and 1 are implemented: native messaging host, bridge module, paired-companion pairing flow, allowlist, and the Chromium and Firefox MV3 clients. Since the original plan the extension also gained the in-field dropdown (amendment of 2026-07-19) and merged multi-vault matching with unlock requests (ADR 0098). Passkeys in the browser, capture of new or changed logins, the generator view, the sync badge, keyboard-shortcut fill, browser code-signature verification, and the Flatpak and Snap installer are not shipped and remain open (see "Open items"). Amended by ADR 0114 (browser tethered to the mobile app, Proposed): the phone-tether statements are marked inline below where they supersede this record for tethered sessions; the desktop-daemon path remains the default.
 
 This record is the full design. The short record is ADR 0024; this ADR carries the constraints that record condenses. Where the original plan text and the code disagree, the code wins and the difference is stated below.
 
 ## Context
 
-Baluard has no application server. The Git remote is the vault's synchronization endpoint, so the Bitwarden and 1Password model (extension talks to a company API) does not apply. Browser access must use the unlocked desktop daemon. A 0600 Unix socket cannot be opened by a WebExtension, because MV3 has no raw-socket API. The reference architecture is KeePassXC-Browser: extension, native messaging host over stdio, local socket, desktop application, with the desktop holding the unlock and the extension riding it.
+Baluard has no application server (amended by ADR 0114: reads, after that ADR, as **no Baluard-operated server sees vault data** — the optional tether relay is metadata-only infrastructure, and the self-hosted CLI relay keeps the stance testable). The Git remote is the vault's synchronization endpoint, so the Bitwarden and 1Password model (extension talks to a company API) does not apply. Browser access must use the unlocked desktop daemon (superseded for tethered sessions by ADR 0114: the phone holds the unlock). A 0600 Unix socket cannot be opened by a WebExtension, because MV3 has no raw-socket API. The reference architecture is KeePassXC-Browser: extension, native messaging host over stdio, local socket, desktop application, with the desktop holding the unlock and the extension riding it.
 
 The extension, service worker, content script, page, and native messaging host are outside the desktop process trust boundary. They must not receive master passwords, vault session tokens, keys, KDF output, TOTP seeds, or passkey private keys.
 
@@ -14,10 +14,10 @@ The goal is a bridge client that lets the project be used daily against the open
 
 ### Non-goals for v1
 
-- No communication with any remote service from the extension.
+- No communication with any remote service from the extension (superseded for tethered sessions by ADR 0114: the tethered extension talks to exactly one rendezvous relay of the user's choice).
 - No standalone vault in the extension. The daemon stays the source of truth, as for the CLI and desktop.
 - No passkey or WebAuthn ceremony in the browser. That is the untrusted-ceremony work tracked as SEC-1 in ADR 0095.
-- No mobile client and no Safari (MV3 Safari is optional and immature).
+- No mobile client (superseded for tethered sessions by ADR 0114, which makes the phone app the unlock authority) and no Safari (MV3 Safari is optional and immature).
 - No browser code-signature verification (the 1Password-style hardening). This is a documented gap.
 - No change to the crypto and security invariants: AES-256-GCM, Argon2id, the 0600 socket, token gating, zeroize on drop, peer credential verification.
 
@@ -52,9 +52,9 @@ baluard-core   crypto, vault, sync, bridge module
 
 ### Auth model: paired companion
 
-The extension is not an unlock client. It is paired once with an already-unlocked daemon and then rides that unlock state, as KeePassXC-Browser does. The daemon's existing auto-lock walker covers the extension for free: there is no second Argon2id and no master password in browser memory. When the desktop locks, the extension is inert.
+The extension is not an unlock client. It is paired once with an already-unlocked daemon and then rides that unlock state, as KeePassXC-Browser does. The daemon's existing auto-lock walker covers the extension for free: there is no second Argon2id and no master password in browser memory. When the desktop locks, the extension is inert. Superseded for tethered sessions by ADR 0114: there the phone initiates consent and holds the unlock state.
 
-The vault session token is never held by the extension or by browser storage. The extension to NMH link is authenticated only by `allowed_origins` or `allowed_extensions` pinning. The NMH to daemon link carries a scoped bridge token. Extension JavaScript touches no secrets.
+The vault session token is never held by the extension or by browser storage. The extension to NMH link is authenticated only by `allowed_origins` or `allowed_extensions` pinning. The NMH to daemon link carries a scoped bridge token. Extension JavaScript touches no secrets (amended by ADR 0114: extension JavaScript touches no **vault** secrets — for tethered sessions it holds the credential pair of that ADR's decision 5, which is sensitive, remote-capable, and valid until revoked; this wording must not be read as *the browser holds nothing sensitive*. See threat-model T17).
 
 ### NMH lifecycle: stateless with a durable pairing file
 
@@ -69,7 +69,7 @@ Standard native messaging spawns a fresh NMH per `connectNative` call and kills 
 
 ### Pairing ceremony: desktop-initiated, approve do not type
 
-The first design used a typed 6-digit code with a 5-strike vault nuke. It was replaced. A code adds a read-then-type step under a timer and a lockout path, and the nuke was a denial-of-service hazard for a non-technical user, borrowed from the PIN policy for a lower-stakes ceremony where it did not fit. Approve-only has no code and therefore nothing to brute-force.
+The first design used a typed 6-digit code with a 5-strike vault nuke. It was replaced. A code adds a read-then-type step under a timer and a lockout path, and the nuke was a denial-of-service hazard for a non-technical user, borrowed from the PIN policy for a lower-stakes ceremony where it did not fit. Approve-only has no code and therefore nothing to brute-force. Desktop-initiated pairing is superseded for tethered sessions by ADR 0114: pairing is phone-initiated there, and the QR carries a one-time secret the desktop displays.
 
 1. The user clicks "Add browser extension" in the desktop. `bridge.pair_start` is desktop-token-gated and sets a one-shot pending-approval flag with a short TTL (120 seconds, the daemon's pending TTL). No code is minted.
 2. The extension calls `bridge.pair_complete`, which is not token-gated. The daemon holds the request pending. The NMH runs each request on its own thread so a blocked `pair_complete` does not freeze badge updates and other popup actions for the ceremony TTL.
@@ -262,12 +262,13 @@ Threats introduced by the extension and their treatment:
 4. Bridge token in NMH memory only (see lifecycle).
 5. NMH as confused deputy (see the NMH section).
 6. Clipboard exfiltration. A copy leaks to any application, clipboard managers, and possibly cloud clipboard sync. The extension clears the clipboard after about 20 seconds, matching the desktop policy.
+7. Phone-tethered sessions (ADR 0114, Proposed; threat-model T17). The tether stores a non-extractable WebCrypto credential pair in extension storage: remote-capable, valid until revoked, and exposed to profile-directory copies (Firefox Bugzilla 1556794), a posture this record's desktop-daemon path deliberately avoids. Bounded by the per-pairing daily caps, pairing revocation, and per-action phone consent.
 
 Several review findings were examined and overturned or downgraded; the record is kept for honesty. `favicon.get` is not an SSRF (fixed endpoint, size cap, magic-byte check, default off), though it stays off the bridge as an unneeded side effect. The `generator.history_list` leak is real but subordinate to the `vault.list_full` baseline; both are excluded.
 
 ### Dependency on the desktop
 
-The extension needs the desktop running and unlocked. NMH auto-starting the daemon is deferred, and the Add browser extension button assumes the extension is already installed.
+The extension needs the desktop running and unlocked (superseded for tethered sessions by ADR 0114: the phone holds the unlock and the desktop daemon is not required). NMH auto-starting the daemon is deferred, and the Add browser extension button assumes the extension is already installed.
 
 ## Consequences
 
@@ -298,6 +299,7 @@ Source was preferred over the original plan text. Differences found: the read ca
 - ADR 0098, merged multi-vault search and `bridge.request_unlock`: `docs/adr/0098-merged-search.md`.
 - ADR 0095, passkey support and the browser ceremony trust model: `docs/adr/0095-passkey-support.md`.
 - ADR 0022, multi-vault switching and the active pointer: `docs/adr/0022-phase-6-multi-vault-switching.md`.
+- ADR 0114, browser tethered to the mobile app (phone-tether amendments, marked inline above): `docs/adr/0114-browser-tethered-to-mobile.md`.
 - ADR 0007, Single-String Protobuf Gateway: `docs/adr/0007-single-string-protobuf-gateway.md`.
 - `docs/security/threat-model.md`, scoped bridge token entry.
 - `crates/baluard-core/src/bridge/`

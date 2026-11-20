@@ -40,6 +40,8 @@ MV3 extensions talk to `baluard-daemon` through a new native messaging host, `ba
 
 The same wave shipped `ensure_access_accepted` (sharing plan §4.5) through the notices transport check. Expired GitHub invitations (status `None`) are healed by a permission-matched re-invite and surfaced per member. For GitLab and Codeberg, `None` is reported only, because their grants are immediate and `None` may be a deliberate out-of-band removal that auto re-adding would resurrect.
 
+**Phone-tether credential (2026-11-20, ADR 0114, Proposed).** ADR 0114 adds a tether path where the phone app is the unlock authority over a user-hosted relay. That path makes one deliberate deviation from the never-holds-anything model above: for tethered sessions the extension stores a non-extractable WebCrypto credential pair, remote-capable and valid until the phone revokes the pairing (threat-model T17). ADR 0114 also reads the no-server statement as **no Baluard-operated server sees vault data**: the optional relay is metadata-only infrastructure. The desktop-daemon path of this record is unchanged and remains the default.
+
 ## Consequences
 
 The extension sees metadata and one credential at a time. A direct `vault.list_full` for the extension was rejected because it returns the entire decrypted vault in one call, which is a de facto export and the real blast radius. The rate cap bounds a browser compromise to a handful of credentials instead of the whole vault.
@@ -55,6 +57,7 @@ A viewer-accepted capture would otherwise wedge at push time, because cipher pat
 ## References
 
 - `docs/adr/0092-browser-extension.md` for the full design
+- `docs/adr/0114-browser-tethered-to-mobile.md` for the phone-tether amendment (Proposed)
 - `crates/baluard-core/src/bridge/{mod,pairing,token}.rs`
 - `crates/baluard-runtime/src/bridge.rs`
 - `crates/baluard-nmh/`

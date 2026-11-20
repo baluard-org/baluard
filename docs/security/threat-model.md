@@ -39,12 +39,13 @@ The client never holds a vault key. It holds a token that *permits the daemon* t
 | Signed passkey assertion (COSE outputs) | Passkey private key | WebAuthn ceremony |
 | Brokered vault unlock (run server-side) | Master password (never returned over IPC) | T10 |
 | Scoped bridge token (allowlist-enforced) | Long-lived daemon session | Browser extension bridge |
+| Tether credential pair (non-extractable WebCrypto, phone-tethered sessions only) | **Deliberate deviation (ADR 0114)**: a remote-capable credential the browser holds until pairing revocation | T17 |
 
 **Invariants**
 
 1. A same-UID process that did not take part in the unlock exchange holds no capability and is refused (T2, R7-2). The CLI stores its session token in the OS keyring (audit C2 closed); a plaintext `baluard.tok` file exists only as a fallback when no keyring service is available.
 2. Authority is **per-vault scoped**: a token minted for vault A is rejected for a vault B operation (multi-vault, Phase 6).
-3. Capabilities are **revocable and short-lived**: tokens die on lock, on close, and on daemon shutdown.
+3. Capabilities are **revocable and short-lived**: tokens die on lock, on close, and on daemon shutdown. One carve-out (ADR 0114, Proposed): the phone-tether credential pair (T17) lives until pairing revocation, not until lock — it must survive daemon restarts to be useful, so the daily caps, phone consent, and revocation carry the bound instead.
 4. The transport is **authenticated**: `0600` socket, peer-credential UID check (SO_PEERCRED on Linux, getpeereid on macOS). Windows has no transport yet (see T2).
 
 The session token is a capability in the object-capability sense: it is the only authority the client holds, it grants a scoped set of operations, and it does not expose the underlying secrets. This is why "token-gated IPC" and "capability-based authorization" name the same mechanism in Baluard.
@@ -150,6 +151,11 @@ The session token is a capability in the object-capability sense: it is the only
   * **Scheme isolation**: `UriMatchStrategy::matches` strictly separates `androidapp://` URIs from web schemes (`https://`). An app cannot harvest credentials for a web domain by declaring an identical package name.
   * **App-to-web phishing protection**: Web credentials never auto-fill into native apps. When `suggest_app_logins` is enabled, package-derived candidate domains are validated against public suffixes and shown only as suggestions alongside an explicit trust confirmation. User decisions are bound per `(package, domain)` pair; package-name lookalikes (`com.mybank.evil`) cannot inherit trust from another app.
   * **Accessibility fill bounds**: the quick-settings tile accessibility service operates strictly on user demand (no background overlay, no continuous screen monitoring), copies TOTP to clipboard instead of typing, and caps retries to 3 attempts per selection.
+
+### T17: Browser-Stored Tether Credential Pair (ADR 0114, Proposed)
+- **Threat**: For phone-tethered sessions (ADR 0114), the extension stores a non-extractable WebCrypto credential pair (Ed25519 signing key + X25519 static; P-256 ECDSA signing fallback on Chrome < 137) in IndexedDB. This is the one deliberate deviation from the brokered-capabilities model above: a remote-capable credential held in the browser, valid until the phone revokes the pairing, authenticating to the tether relay with no per-session daemon involvement. Non-extractable is NOT device-bound: IndexedDB persists unencrypted inside the browser profile directory, so any profile copy (malware with file read, unencrypted backup, disk image) clones a working credential — Firefox Bugzilla 1556794 tracks exactly this exposure — and in-origin script can use the non-extractable key as a signing oracle for the lifetime of the profile.
+- **Control**: Keys are generated at pairing with `extractable: false` (no export path exists; raw bytes never exist as extension data) and mutually pinned during the QR ceremony with proof of possession, so a foreign key cannot pair or re-handshake against a phone that pinned different keys. Every request runs the shared bridge policy (allowlist, slug scope, Decision 7 write fence, origin binding) plus per-action phone consent and the per-pairing daily caps (decision 5a: distinct-domain probe caps throttle; the combined secret-yielding reads cap of 200 per rolling 24 h auto-revokes — the only auto-revoke path). Pairing revocation from the phone is immediate. `chrome.storage.sync` is banned for pairing material.
+- **Residual**: A profile-directory copy carries a usable credential until the phone revokes; the phone's cap trip and notification are the detection path. The residual class is comparable to the accepted browser-compromise threat 2 of ADR 0092, minus desktop-UID adjacency (the credential cannot mint desktop session tokens) and plus network reach (the desktop-daemon pairing secret never left the machine). Users who cannot accept it keep the default desktop-daemon path, which stores no credential in the browser.
 
 ## 2. Platform Trust Boundaries
 
