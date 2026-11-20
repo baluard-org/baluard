@@ -149,13 +149,29 @@ pub fn register_beside_exec(exe_dir: &Path, report: &mut RegistrationReport) {
     }
 }
 
-/// Startup entry point for the daemon. macOS: bundle-only guard, so a
+/// Startup entry point for the daemon (all platforms). Portable builds
+/// (BALUARD_PORTABLE, e.g. the pendrive zip) never register: the stick can
+/// vanish between launches, and the pass must not repoint a guest machine
+/// or an installed copy at a dead path.
+pub fn register_for_current_exec() -> RegistrationReport {
+    register_dispatch(std::env::var_os("BALUARD_PORTABLE").is_some())
+}
+
+fn register_dispatch(portable: bool) -> RegistrationReport {
+    if portable {
+        return RegistrationReport::default();
+    }
+    register_for_current_exec_impl()
+}
+
+/// macOS: bundle-only guard, so a
 /// dev-tree or `cargo run` daemon never repoints the user's manifests at
 /// build artifacts. Windows: manifests beside the executable, no guard
 /// needed (the registry keys point at the install dir, which dev runs do
-/// not touch).
+/// not touch). Reached only when `register_dispatch` saw no
+/// `BALUARD_PORTABLE`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub fn register_for_current_exec() -> RegistrationReport {
+fn register_for_current_exec_impl() -> RegistrationReport {
     let mut report = RegistrationReport::default();
     let Ok(exe) = std::env::current_exe() else {
         report
@@ -213,7 +229,7 @@ fn running_from_installed_bundle(exe: &Path, nmh_path: &Path) -> bool {
 /// must never touch a real user's manifests, the same rule as the
 /// macOS bundle guard (2026-07 stale-manifest incident).
 #[cfg(target_os = "linux")]
-pub fn register_for_current_exec() -> RegistrationReport {
+fn register_for_current_exec_impl() -> RegistrationReport {
     let mut report = RegistrationReport::default();
     let (Some(config), Some(home)) = (dirs::config_dir(), dirs::home_dir()) else {
         report
@@ -502,6 +518,13 @@ mod tests {
     use super::*;
 
     const STORE_ID: &str = CHROME_STORE_ID;
+
+    #[test]
+    fn portable_dispatch_skips_registration() {
+        let report = register_dispatch(true);
+        assert!(report.is_clean(), "{:?}", report.errors);
+        assert_eq!(report.written, 0);
+    }
 
     fn reg(apps: &Path, nmh: &Path) -> RegistrationReport {
         let mut report = RegistrationReport::default();

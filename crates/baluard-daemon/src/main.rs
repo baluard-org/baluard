@@ -414,14 +414,19 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
                 false
             }
         };
+    // The agent pipe name is the machine-canonical openssh-ssh-agent constant,
+    // so a portable daemon must never claim it: it would silence the installed
+    // daemon's agent (or the OpenSSH service) until it exits.
     #[cfg(windows)]
-    if let Err(e) = baluard_daemon::ssh_agent_serve::spawn_listener(
-        &host,
-        &baluard_daemon::ssh_agent_serve::agent_pipe_name(),
-    )
-    .await
-    {
-        log::error!("ssh agent listener disabled: {e}");
+    if std::env::var_os("BALUARD_PORTABLE").is_none() {
+        if let Err(e) = baluard_daemon::ssh_agent_serve::spawn_listener(
+            &host,
+            &baluard_daemon::ssh_agent_serve::agent_pipe_name(),
+        )
+        .await
+        {
+            log::error!("ssh agent listener disabled: {e}");
+        }
     }
 
     // Graceful shutdown on SIGINT or SIGTERM

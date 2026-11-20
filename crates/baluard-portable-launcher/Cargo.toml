@@ -1,0 +1,19 @@
+[package]
+name = "baluard-portable-launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Portable-build entry point for Baluard on Windows"
+
+[[bin]]
+name = "baluard-portable"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+] }

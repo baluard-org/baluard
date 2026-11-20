@@ -55,6 +55,12 @@ fn channel_endpoint(channel: &str) -> Result<Url, String> {
 }
 
 fn configured(app: &AppHandle) -> bool {
+    // Portable runs (BALUARD_PORTABLE, e.g. the pendrive zip) live outside
+    // any installer: the updater would run the NSIS setup over the stick
+    // copy. Updates are manual zip replacement.
+    if std::env::var_os("BALUARD_PORTABLE").is_some() {
+        return false;
+    }
     // D79: only the AppImage self-updates. On deb/rpm/Flatpak/Snap the
     // package manager owns updates; the embedded pubkey would otherwise
     // make updater_status promise an updater that can never resolve its

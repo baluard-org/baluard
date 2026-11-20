@@ -427,6 +427,9 @@ pub fn startup_notice() {
 /// the signed SHA256SUMS, and replace the CLI + daemon binaries in place.
 /// Never downgrades; refuses to fight mise-managed installs.
 pub fn self_update() -> Result<()> {
+    if std::env::var_os("BALUARD_PORTABLE").is_some() {
+        bail!("portable build: replace the folder contents with a new portable zip");
+    }
     let exe = std::env::current_exe().context("cannot locate the running binary")?;
     let exe = fs::canonicalize(exe).context("cannot resolve the running binary path")?;
     if mise_managed(&exe) {
