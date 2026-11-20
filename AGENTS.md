@@ -69,7 +69,7 @@ Linux build dependencies: `protoc`, WebKitGTK/GTK dev headers. Run `just sysdeps
 * **Rust:** Edition 2024, MSRV 1.85 (desktop app: 1.90). Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match`. Use `thiserror` for library errors, `anyhow` for CLI, and `proptest` for property-based tests.
 * **JS/TS:** ES modules, SolidJS, Vite, Tailwind. Use `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf:** proto3, `baluard.vault` package. Compiled via prost in daemon and CLI.
-* **Security:** AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys.
+* **Security:** AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys. Recorded exception: ChaCha20-Poly1305 inside Noise (`Noise_NK_25519_ChaChaPoly_BLAKE2s` via snow) for the ADR 0114 tether channel — Noise's native transport cipher; the AES-256-GCM invariant does not apply to that channel.
 * **WebAuthn/Passkey:** passkey-rs 0.5.x for ceremony. ES256 only. Private key encrypted under item key, never crosses IPC, zeroized on drop. Counter: Synced/provider passkeys pin counter to 0 (W3C L3 multi-device guidance); `max(local, remote)` applies only to device-bound legacy counters on git-sync.
 
 ## DOCUMENTATION REFERENCES
