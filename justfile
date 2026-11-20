@@ -701,6 +701,7 @@ build-windows:
 	just desktop-windows
 	grep -aq "$BALUARD_GITLAB_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-x86_64-pc-windows-msvc.exe
 	grep -aq "$BALUARD_CODEBERG_CLIENT_ID" desktop/src-tauri/binaries/baluard-daemon-x86_64-pc-windows-msvc.exe
+	./scripts/build-windows-portable.sh
 	INNER
 	rm -f /tmp/leg-windows.rc
 	setsid bash -c 'bash -ic "bash /tmp/leg-windows-inner.sh > /tmp/leg-windows.log 2>&1 </dev/null; echo \$? > /tmp/leg-windows.rc"' </dev/null >/dev/null 2>&1 &

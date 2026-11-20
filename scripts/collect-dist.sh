@@ -28,6 +28,12 @@ missing=()
 for b in "${BUNDLES[@]}"; do
   [[ -f "$ROOT/$b" ]] || missing+=("$b")
 done
+# The portable zip is a first-class download (site card links
+# releases/latest/download/...), so a release without it must fail loudly:
+# unlike the bundles it is written straight into dist/ by its own leg.
+if [[ ! -f "$DIST/Baluard_${VERSION}_x64-portable.zip" ]]; then
+  missing+=("$DIST/Baluard_${VERSION}_x64-portable.zip (run scripts/build-windows-portable.sh)")
+fi
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "refusing to touch $DIST: missing bundles (run the build legs first):" >&2
   printf '  %s\n' "${missing[@]}" >&2
