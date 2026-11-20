@@ -767,6 +767,9 @@ async fn route_detach_delete_remote_without_provider_reports_and_detaches() {
 async fn route_detach_delete_remote_on_kitless_vault_names_the_remedy() {
     let (_data_dir, _data_dir_guard) = sandboxed_data_dir().await;
     let (_dir, path, vault_id) = make_real_vault("gate-nokit");
+    // Kit-at-birth gives every new vault a kit; a kitless vault is now a
+    // legacy/armed-off state, so strip the kit file to test that shape.
+    std::fs::remove_file(path.join("meta/recovery-kit.json")).unwrap();
     let entry = make_entry("gate-nokit", &path, vault_id);
     {
         let _guard = GLOBAL_REG.lock().unwrap_or_else(|p| p.into_inner());

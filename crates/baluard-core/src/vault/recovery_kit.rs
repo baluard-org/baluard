@@ -244,6 +244,28 @@ pub fn enable_kit(
 ) -> Result<String, BaluardError> {
     let phrase = RecoveryPhrase::generate()
         .map_err(|e| VaultError::Metadata(format!("phrase generation: {e}")))?;
+    mint_kit(vault_path, root_key, vault_id, &phrase)?;
+    Ok(phrase.phrase())
+}
+
+/// Mint a kit bound to a phrase the caller already generated and showed
+/// (personal creation): the ceremony's phrase becomes the kit phrase, so
+/// the user writes down ONE phrase that actually recovers the vault.
+pub fn enable_kit_with_phrase(
+    vault_path: &Path,
+    root_key: &RootKey,
+    vault_id: Uuid,
+    phrase: &RecoveryPhrase,
+) -> Result<(), BaluardError> {
+    mint_kit(vault_path, root_key, vault_id, phrase)
+}
+
+fn mint_kit(
+    vault_path: &Path,
+    root_key: &RootKey,
+    vault_id: Uuid,
+    phrase: &RecoveryPhrase,
+) -> Result<(), BaluardError> {
     let secret = phrase_to_secret(&phrase);
     let recipient = x25519_dalek::PublicKey::from(&secret);
 
@@ -273,7 +295,7 @@ pub fn enable_kit(
         )?,
     };
     save_kit(vault_path, &kit)?;
-    Ok(phrase.phrase())
+    Ok(())
 }
 
 /// The kit's Ed25519 signing key, derived from the second half of the

@@ -2211,8 +2211,10 @@ pub struct EncryptedBackup {
 pub struct MobileCreateResult {
     pub vault: std::sync::Arc<MobileVault>,
     pub recovery_phrase: MobileRecoveryPhrase,
-    /// Family vaults only: the Space Recovery Kit phrase, shown exactly
-    /// once at creation. Personal vaults carry None.
+    /// Usually None: since kit-at-birth the CEREMONY phrase is the kit
+    /// phrase on every vault, so creation surfaces one phrase only.
+    /// Some only on a family conversion that had to mint a fresh kit for
+    /// a legacy vault (the old phrase shown exactly once, then dead).
     pub kit_phrase: Option<String>,
 }
 
@@ -3971,10 +3973,16 @@ mod tests {
         )
         .await
         .unwrap();
-        // The kit phrase is the words-once recovery for the family vault.
-        let kit = res.kit_phrase.expect("family creation must enable the kit");
-        assert_eq!(kit.split_whitespace().count(), 24);
-        assert_ne!(kit, res.recovery_phrase.phrase, "kit is its own phrase");
+        // One phrase per vault: the ceremony phrase IS the kit phrase, so
+        // creation surfaces no separate kit phrase.
+        assert!(res.kit_phrase.is_none(), "ceremony phrase is the kit");
+        let kit = baluard_core::vault::recovery_kit::recover_root_from_kit(
+            std::path::Path::new(&path),
+            uuid::Uuid::parse_str(&res.vault.vault_id().await.unwrap()).unwrap(),
+            &res.recovery_phrase.phrase,
+        )
+        .expect("the ceremony phrase must unwrap the kit");
+        assert!(!kit.as_bytes().iter().all(|b| *b == 0));
         // Purpose stamped plaintext so classification works before unlock.
         let purpose = std::fs::read_to_string(tmp.path().join("meta/settings-pub.json")).unwrap();
         assert!(purpose.contains("family"), "purpose: {purpose}");

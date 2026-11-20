@@ -246,10 +246,23 @@ mod tests {
         // Sole guardian: the bounded threshold is 1, so replacing and
         // disabling the kit run immediately (no ask, no deadlock).
         let (_temp, mut handle, _pw) = family_vault();
-        let (_shared, first_phrase) = setup_family_vault(&mut handle).unwrap();
-        assert!(first_phrase.is_some(), "creation enables the kit");
+        let (_shared, kept) = setup_family_vault(&mut handle).unwrap();
+        // Kit-at-birth minted the kit from the ceremony phrase; the
+        // conversion KEEPS it (one phrase per vault, already shown and
+        // verified at personal creation).
+        assert!(kept.is_none(), "conversion keeps the ceremony-phrase kit");
+        assert!(crate::vault::recovery_kit::kit_exists(&handle.path).unwrap());
         let second = handle.space_recovery_kit_enable().unwrap();
-        assert_ne!(second, first_phrase.unwrap());
+        {
+            let live_root = handle.unlocked().root().unwrap().clone();
+            let recovered = crate::vault::recovery_kit::recover_root_from_kit(
+                &handle.path,
+                handle.vault_id,
+                &second,
+            )
+            .unwrap();
+            assert_eq!(recovered.as_bytes(), live_root.as_bytes());
+        }
         assert!(handle.space_recovery_kit_disable().unwrap());
         assert!(!handle.space_recovery_kit_disable().unwrap());
         drop(handle);

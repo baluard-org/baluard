@@ -574,6 +574,18 @@ impl<'a> VaultCreator<'a> {
                 super::write_vault_file(&path.join("meta/kek-canary.enc"), &kek_canary)?;
                 super::write_vault_file(&path.join("meta/rk-canary.enc"), &rk_canary)?;
 
+                // Kit at birth for personal vaults too: the ceremony phrase
+                // the user is about to write down becomes the kit phrase, so
+                // it actually recovers the vault instead of feeding only the
+                // legacy recovery.json escrow. Family vaults mint theirs in
+                // setup_family_vault with a dedicated phrase.
+                super::recovery_kit::enable_kit_with_phrase(
+                    &path,
+                    &root_key,
+                    vault_id,
+                    &recovery_phrase,
+                )?;;
+
                 // P1a: per-human identity — generated here, sealed under a
                 // wrapping key that is NEVER the vault KEK (OS keystore random
                 // key, or the WARNED Argon2id fallback on keystore-less
@@ -1485,5 +1497,31 @@ mod tests {
 
         assert!(handle.load_locale().is_none());
         assert!(!path.join("meta/locale").exists());
+    }
+
+    #[test]
+    fn personal_creation_mints_kit_from_the_ceremony_phrase() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, secrets) =
+            VaultCreator::new(dir.path(), "test-master-password", "test-device")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let phrase = secrets.recovery_phrase.phrase();
+
+        // The ceremony phrase IS the kit phrase: it verifies and unwraps
+        // the live Root Key, so the words the user wrote down actually
+        // recover the vault.
+        assert!(crate::vault::recovery_kit::kit_exists(dir.path()).unwrap());
+        crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &phrase).unwrap();
+        handle.unlock("test-master-password").unwrap();
+        let live_root = handle.unlocked().root().unwrap().clone();
+        let recovered =
+            crate::vault::recovery_kit::recover_root_from_kit(dir.path(), handle.vault_id, &phrase)
+                .unwrap();
+        assert_eq!(recovered.as_bytes(), live_root.as_bytes());
+        // No separate kit phrase exists: the ceremony carries one phrase.
+        assert!(secrets.kit_phrase.is_none());
     }
 }

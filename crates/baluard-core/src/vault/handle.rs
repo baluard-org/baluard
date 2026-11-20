@@ -1196,9 +1196,14 @@ impl VaultHandle {
 
         // Resolve the fresh row's role BEFORE any disk mutation: a
         // failure here must not strand a half-written keystore that
-        // trips the brick guard on retry. Owner only when NO live admin
-        // row exists (every guardian gone); otherwise Admin beside the
-        // survivor. Legacy personal vaults (no member directory) refuse.
+        // trips the brick guard on retry. Solo takeover: a vault with
+        // exactly one live admin row (a personal vault whose founder
+        // forgot the password, or a single-guardian Space) hands full
+        // ownership to the recoverer and tombstones the founder with the
+        // reset-successor marker — the same human, a new device. Multi-
+        // admin vaults keep the survivor rule: Owner only when every
+        // guardian is gone, otherwise Admin beside the survivor. Legacy
+        // personal vaults (no member directory) refuse.
         if !vault_path.join(crate::vault::members::MEMBERS_DIR).exists() {
             return Err(VaultError::InvalidOperation(
                 "kit recovery needs a vault with members (shared vaults); this vault has none"
@@ -1206,20 +1211,22 @@ impl VaultHandle {
             )
             .into());
         }
-        let any_live_admin = crate::vault::members::list_members(vault_path)?
+        let live_admins: Vec<_> = crate::vault::members::list_members(vault_path)?
             .into_iter()
-            .any(|m| {
+            .filter(|m| {
                 matches!(
                     m.role,
                     crate::vault::members::MemberRole::Owner
                         | crate::vault::members::MemberRole::Admin
                 ) && m.removed.is_none()
                     && m.reset.is_none()
-            });
-        let role = if any_live_admin {
-            crate::vault::members::MemberRole::Admin
-        } else {
+            })
+            .collect();
+        let solo_takeover = live_admins.len() == 1;
+        let role = if live_admins.is_empty() || solo_takeover {
             crate::vault::members::MemberRole::Owner
+        } else {
+            crate::vault::members::MemberRole::Admin
         };
         let new_member = crate::vault::members::MemberFile {
             id: Uuid::new_v4(),
@@ -1311,8 +1318,18 @@ impl VaultHandle {
         dm.save_to_vault()?;
 
         // The fresh member row + binding: the recovered device is a
-        // first-class member (Owner in the every-guardian-gone case,
-        // Admin beside a survivor), unflagged by construction.
+        // first-class member (Owner on solo takeover / the
+        // every-guardian-gone case, Admin beside a survivor), unflagged
+        // by construction. Solo takeover tombstones the founder row so
+        // the vault keeps exactly one live owner.
+        if solo_takeover {
+            let mut founder = live_admins[0].clone();
+            founder.reset = Some(crate::vault::members::MemberReset {
+                successor: new_member.id,
+                at: crate::vault::collections::now_secs_pub(),
+            });
+            crate::vault::members::write_member(vault_path, &founder)?;
+        }
         crate::vault::members::write_member(vault_path, &new_member)?;
         crate::vault::members::write_device_binding(
             vault_path,
@@ -6146,6 +6163,19 @@ impl VaultHandle {
                     serde_json::to_string_pretty(&escrow).unwrap().as_bytes(),
                 )?;
             }
+        }
+
+        // Personal vaults minted a kit from the ceremony phrase (and
+        // rotation replaces it): the kit must follow the same rotation or
+        // the retired phrase would keep opening the vault. Password canary
+        // already proved ownership above, so no guardian gate applies.
+        if crate::vault::recovery_kit::kit_exists(&self.path)? {
+            crate::vault::recovery_kit::enable_kit_with_phrase(
+                &self.path,
+                &root_key,
+                self.vault_id,
+                &phrase,
+            )?;
         }
 
         Ok(phrase.phrase())
@@ -14071,16 +14101,46 @@ mod tests {
         assert!(!clone_path.join("meta/device-privkey.json").exists());
 
         // Recover: phrase + the recoverer's OWN new master password +
-        // device name -> a fresh member row. The founder Owner row is
-        // alive, so the recovered device lands as Admin beside it
-        // (family-spaces §7); phrase-only, no founding password.
+        // device name -> a fresh member row. Solo takeover: this vault
+        // has exactly one live admin row (the founder), so the recovered
+        // device takes ownership and the founder is tombstoned with the
+        // reset-successor marker — phrase-only, no founding password.
         let device_id =
             VaultHandle::recover_device_with_kit(&clone_path, &phrase, &password, "Recovered Mac")
                 .expect("recovery on a fresh clone");
         assert_eq!(
             crate::vault::members::member_role_for_device(&clone_path, device_id),
-            Some(crate::vault::members::MemberRole::Admin)
+            Some(crate::vault::members::MemberRole::Owner)
         );
+        // Exactly one live admin remains: the founder's tombstone points
+        // at the recovered row.
+        {
+            let members = crate::vault::members::list_members(&clone_path).unwrap();
+            let founder = members
+                .iter()
+                .find(|m| m.reset.is_some())
+                .expect("founder tombstoned on solo takeover");
+            assert_eq!(
+                founder.reset.as_ref().map(|r| r.successor),
+                members
+                    .iter()
+                    .find(|m| m.display_name == "Recovered Mac")
+                    .map(|m| m.id)
+            );
+            assert_eq!(
+                members
+                    .iter()
+                    .filter(|m| m.reset.is_none()
+                        && m.removed.is_none()
+                        && matches!(
+                            m.role,
+                            crate::vault::members::MemberRole::Owner
+                                | crate::vault::members::MemberRole::Admin
+                        ))
+                    .count(),
+                1
+            );
+        }
 
         // The recovered device unlocks through the member path with ITS
         // OWN password and still reaches the Root Key (the keywrap the
@@ -14378,6 +14438,151 @@ mod tests {
         .unwrap();
         assert!(handle.space_recovery_kit_disable().unwrap());
         assert!(!handle.space_recovery_kit_status().unwrap());
+    }
+
+    #[test]
+    fn solo_kit_recovery_binds_owner_and_tombstones_the_founder() {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, secrets) =
+            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let phrase = secrets.recovery_phrase.phrase();
+        drop(handle);
+
+        // Fresh-device simulation: the recoverer's machine has no local
+        // device key (the brick guard must see a clean install).
+        std::fs::remove_file(dir.path().join("meta/device-privkey.json")).unwrap();
+        VaultHandle::recover_device_with_kit(
+            dir.path(),
+            &phrase,
+            "recovered-password",
+            "recovered-device",
+        )
+        .unwrap();
+
+        // Solo takeover: the recovered device owns the vault; the founder
+        // row is tombstoned with the reset-successor marker.
+        let members = crate::vault::members::list_members(dir.path()).unwrap();
+        let founder = members
+            .iter()
+            .find(|m| m.reset.is_some())
+            .expect("founder row must be tombstoned");
+        let successor = members
+            .iter()
+            .find(|m| Some(m.id) == founder.reset.as_ref().map(|r| r.successor))
+            .expect("successor row must exist");
+        assert_eq!(successor.role, crate::vault::members::MemberRole::Owner);
+        assert_eq!(successor.display_name, "recovered-device");
+        let live_admins = members
+            .iter()
+            .filter(|m| {
+                m.reset.is_none()
+                    && m.removed.is_none()
+                    && matches!(
+                        m.role,
+                        crate::vault::members::MemberRole::Owner
+                            | crate::vault::members::MemberRole::Admin
+                    )
+            })
+            .count();
+        assert_eq!(live_admins, 1);
+
+        // The recovered device unlocks with the NEW password.
+        let mut reopened = VaultHandle::open(dir.path()).unwrap();
+        reopened.unlock("recovered-password").unwrap();
+    }
+
+    #[test]
+    fn multi_admin_kit_recovery_stays_admin_beside_survivors() {
+        let dir = tempfile::tempdir().unwrap();
+        let (handle, secrets) =
+            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let phrase = secrets.recovery_phrase.phrase();
+        let founder_id = {
+            let bindings_device = handle.device_id;
+            crate::vault::members::member_id_for_device(dir.path(), bindings_device)
+                .expect("founder member row")
+        };
+        drop(handle);
+
+        // A second live admin (a surviving guardian/device).
+        let survivor_id = uuid::Uuid::new_v4();
+        crate::vault::members::write_member(
+            dir.path(),
+            &crate::vault::members::MemberFile {
+                id: survivor_id,
+                display_name: "survivor".into(),
+                email: None,
+                role: crate::vault::members::MemberRole::Admin,
+                trust: crate::vault::members::TrustLevel::Channel,
+                identity_signing_pubkey: Some(hex::encode([2u8; 32])),
+                identity_signing_pubkey_previous: None,
+                identity_rotation_signature: None,
+                identity_rotated_at: None,
+                reset: None,
+                removed: None,
+                removed_reason: None,
+                transport_username: None,
+                identity_wrap_pubkey: None,
+            },
+        )
+        .unwrap();
+
+        std::fs::remove_file(dir.path().join("meta/device-privkey.json")).unwrap();
+        VaultHandle::recover_device_with_kit(
+            dir.path(),
+            &phrase,
+            "recovered-password",
+            "recovered-device",
+        )
+        .unwrap();
+
+        // With a survivor present the recovered device joins as Admin and
+        // the founder row stays untouched (multi-admin rule unchanged).
+        let members = crate::vault::members::list_members(dir.path()).unwrap();
+        let founder = members
+            .iter()
+            .find(|m| m.id == founder_id)
+            .expect("founder row");
+        assert!(founder.reset.is_none(), "survivor rule keeps the founder row live");
+        let recovered_row = members
+            .iter()
+            .find(|m| m.display_name == "recovered-device")
+            .expect("recovered row");
+        assert_eq!(recovered_row.role, crate::vault::members::MemberRole::Admin);
+    }
+
+    #[test]
+    fn phrase_rotation_replaces_the_kit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut handle, secrets) =
+            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
+                .kdf_profile(KdfProfile::MobileLow)
+                .initialize_git(false)
+                .execute()
+                .unwrap();
+        let old_phrase = secrets.recovery_phrase.phrase();
+        handle.unlock("original-password").unwrap();
+
+        let new_phrase = handle.rotate_recovery_phrase("original-password").unwrap();
+        assert_ne!(old_phrase, new_phrase);
+
+        // The retired phrase opens nothing; the new one recovers the same
+        // live Root Key from BOTH escrows.
+        assert!(crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &old_phrase).is_err());
+        crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &new_phrase).unwrap();
+        let live_root = handle.unlocked().root().unwrap().clone();
+        let recovered =
+            crate::vault::recovery_kit::recover_root_from_kit(dir.path(), handle.vault_id, &new_phrase)
+                .unwrap();
+        assert_eq!(recovered.as_bytes(), live_root.as_bytes());
     }
 
     #[test]
