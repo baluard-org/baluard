@@ -6,7 +6,10 @@
 //! Wire protocol: length-delimited Protobuf (varint prefix).
 
 use crate::host::{SharedVaultHost, SnapshotError, VaultPresence};
-use baluard_runtime::bridge_policy::{merge_fanout_rows, provider_assert_args, provider_register_args, store_registered_args};
+use baluard_runtime::bridge_policy::{
+    after_mutation, first_device_id, merge_fanout_rows, provider_assert_args,
+    provider_register_args, store_registered_args,
+};
 use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::{SharedVaultState, VaultState};
 
@@ -567,120 +570,6 @@ const HOST_ACTIONS: &[&str] = &[
     "vault.recover_kit",
 ];
 
-/// Actions that mutate vault data. Schedule cover commits after these.
-const COVER_MUTATION_ACTIONS: &[&str] = &[
-    // Tracked-file writes outside entries/: attachments live under
-    // entries/<id>/attachments, a password change rewrites the shared
-    // kek canary + keywrap, locale.save and space.set_purpose write
-    // settings-pub.json. Without cover they wait for the 30-min idle
-    // cycle, and a second device would keep the old canary.
-    "vault.attach_upload",
-    "vault.attach_delete",
-    "vault.change_password",
-    "legacy.arm",
-    "legacy.close",
-    "locale.save",
-    "space.set_purpose",
-    "space.migrate",
-    "vault.add",
-    "vault.update",
-    "vault.delete",
-    "vault.archive",
-    "vault.unarchive",
-    "cipher.clone",
-    "packages.import",
-    "vault.import",
-    // Escrow swaps must reach the remote promptly: the ceremony tells the
-    // user the old phrase is dead, which is only true once it syncs.
-    "vault.rotate_recovery",
-    "vault.trash.restore",
-    "vault.trash.purge",
-    "folder.create",
-    "folder.rename",
-    "folder.delete",
-    "members.invite",
-    "members.remove",
-    "members.reset",
-    "members.transfer",
-    "members.claim",
-    "members.set_email",
-    "members.set_minor",
-    "members.set_role",
-    "members.leave",
-    // members.leave_list is a read query: no cover commit, no nudge.
-    "members.leave_approve",
-    "members.contest_cancel",
-    // members.contest_status is a read query: no cover commit.
-    "members.replace_device",
-    "requests.stage",
-    "requests.approve",
-    "requests.deny",
-    "tag.create",
-    "tag.rename",
-    "tag.delete",
-    "cipher.set_collection",
-    "templates.create",
-    "templates.delete",
-    "collections.create",
-    "collections.sweep",
-    "collections.rename",
-    "collections.delete",
-    "collections.grant",
-    "collections.revoke",
-    // S4-2: group management writes git-tracked meta/groups (defs,
-    // gkwraps, ckwraps) and membership removal rotates the group key.
-    "groups.create",
-    "groups.rename",
-    "groups.delete",
-    "groups.member_add",
-    "groups.member_remove",
-    // S3-7a: prepare writes the sealed store + per-member wraps.
-    "space.prepare",
-    "space.flip",
-    // S3-7b completion: the rotation commit must reach the remote
-    // promptly — until it does, pre-flip members' historical keywraps
-    // still unwrap the current root.
-    "space.rotate_root",
-    // S4-7: kit enable/disable write the git-tracked
-    // meta/recovery-kit.json (meta/** Admin row).
-    "space.kit_enable",
-    "space.kit_disable",
-    // S3-9: space settings are git-tracked policy (settings.enc) — ship
-    // tightening promptly.
-    "space.settings_set",
-    // S4-6: publishing advisory policies writes the git-tracked
-    // meta/policies.json (meta/** Admin row).
-    "policies.set",
-    // S3-6: JIT asks write git-tracked request files (own member subtree)
-    // and the catalog; approvals/denials also consume request files.
-    "collections.request_access",
-    "collections.requests_withdraw",
-    "collections.requests_approve",
-    "collections.requests_deny",
-    "collections.catalog_set",
-    // S2 UI: contact-book mutations write the git-tracked contacts.enc.
-    "contacts.import_card",
-    "contacts.mark_verified",
-    "contacts.remove",
-    "tag.rebuild_index",
-    "settings.set",
-    "vault.avatar.set",
-    "device.revoke",
-    // S2 IS-4b: the outbox routes write git-tracked registry files
-    // inside the vault (meta/outbox-owner.enc / outbox-links.enc); the
-    // resync route only touches the outbox folders, but listing it
-    // here keeps its registry-affecting siblings consistent.
-    "outbox.publish",
-    "outbox.unpublish",
-    "outbox.revoke",
-    "outbox.link",
-    "outbox.forget",
-    // Phase 1: passkey mutations
-    "passkey.finish_register",
-    "passkey.delete",
-    "passkey.rename",
-    "passkey.finish_assert",
-];
 
 /// Build a success GatewayResponse. Attaches session token if available.
 pub(crate) fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
@@ -6999,23 +6888,9 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         _ => err_response(format!("Unknown action: {}", req.action)),
     };
 
-    // Schedule cover commit + arm auto-sync after successful vault mutations
-    if resp.success && COVER_MUTATION_ACTIONS.contains(&req.action.as_str()) {
-        state.schedule_cover_after_commit();
-        let dn = first_device_id(&state.vault_path);
-        state.autosync.nudge(dn).await;
-        // S2 IS-4b live mirror: re-publish every outboxed entry from the
-        // current cipher state (vault.delete/archive land as Locked and
-        // unpublish). Best-effort: a mirror failure must never fail the
-        // mutation the user just made.
-        if let Err(e) = state.outbox_resync().await {
-            log::warn!("[daemon] outbox mirror after {}: {e}", req.action);
-        }
-        // The resync writes the git-tracked outbox registry after the
-        // first nudge; a second nudge guarantees a cycle commits it.
-        let dn = first_device_id(&state.vault_path);
-        state.autosync.nudge(dn).await;
-    }
+    // Schedule cover commit + arm auto-sync after successful vault
+    // mutations (shared with the bridge policy's mobile dispatcher).
+    after_mutation(&state, &req.action, &resp).await;
 
     // Zeroize any remaining sensitive data in the request
     req.payload.zeroize();
@@ -7026,10 +6901,6 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
 // ── Sync helpers (git2-rs, CPU-bound) ──
 
-#[cfg(feature = "git-sync")]
-fn first_device_id(vault_path: &std::path::Path) -> String {
-    baluard_core::vault::device_privkey::local_device_id(vault_path)
-}
 
 #[cfg(feature = "git-sync")]
 fn sync_init(

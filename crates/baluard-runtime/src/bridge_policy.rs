@@ -11,6 +11,7 @@
 
 use baluard_proto::{GatewayRequest, GatewayResponse};
 use baluard_core::bridge::PairingId;
+use zeroize::Zeroize;
 
 use crate::host::SharedVaultHost;
 use crate::state::SharedVaultState;
@@ -54,7 +55,7 @@ fn err_response(msg: impl Into<String>) -> GatewayResponse {
 /// actions onto its in-process `VaultState` UniFFI ops. Implementers MUST
 /// keep the response shape identical across transports — the browser
 /// extension parses it without knowing which one answered.
-pub trait BridgeDispatcher {
+pub trait BridgeDispatcher: Sync {
     fn dispatch(
         &self,
         req: GatewayRequest,
@@ -332,6 +333,15 @@ pub async fn route_bridge_request<D: BridgeDispatcher>(
         return err_response("locked");
     }
 
+    // Contact-view fence: the mobile dispatcher has no route_request-level
+    // contact gate, so the bridge policy applies the same default-deny
+    // here. On the bridge allowlist a contact view may only read.
+    if state.is_contact_view()
+        && !matches!(req.action.as_str(), "vault.get" | "cipher.totp_code")
+    {
+        return err_response("This is a read-only view of the vault.");
+    }
+
     // 5b. D21 read scope: every browser-visible vault mutation rides the
     //     desktop session's write scope. On a shared vault a Viewer (or a
     //     half-finished join) must not mint entries — or bump passkey
@@ -414,11 +424,18 @@ pub async fn route_bridge_request<D: BridgeDispatcher>(
                     Err(msg) => return err_response(msg),
                 }
             }
+            // The vault's own session token never leaves the policy; the
+            // extension refreshes its BRIDGE token via reauth, not this.
+            resp.session_token.clear();
             resp
         }
         // vault.add / vault.update / cipher.totp_code /
         // generator.* / sync.autosync_status all reuse the normal path.
-        _ => dispatcher.dispatch(delegated, &state).await,
+        _ => {
+            let mut resp = dispatcher.dispatch(delegated, &state).await;
+            resp.session_token.clear();
+            resp
+        }
     }
 }
 
@@ -750,16 +767,110 @@ pub fn bridge_write_outside_decision_seven(
 }
 
 // ---------------------------------------------------------------------------
+// Post-mutation side effects (moved verbatim from the daemon's route_request
+// tail so the mobile dispatcher schedules cover commits and sync nudges
+// exactly like the socket path).
+
+/// Tracked-file writes outside entries/: attachments live under
+/// entries/<id>/attachments, a password change rewrites the shared
+/// kek canary + keywrap, locale.save and space.set_purpose write
+/// settings-pub.json. Without cover they wait for the 30-min idle
+/// cycle, and a second device would keep the old canary.
+pub const COVER_MUTATION_ACTIONS: &[&str] = &[
+    "vault.attach_upload",
+    "vault.attach_delete",
+    "vault.change_password",
+    "legacy.arm",
+    "legacy.close",
+    "locale.save",
+    "space.set_purpose",
+    "space.migrate",
+    "vault.add",
+    "vault.update",
+    "vault.delete",
+    "vault.archive",
+    "vault.unarchive",
+    "cipher.clone",
+    "packages.import",
+    "vault.import",
+    // Escrow swaps must reach the remote promptly: the ceremony tells the
+    // user the old phrase is dead, which is only true once it syncs.
+    "vault.rotate_recovery",
+    "vault.trash.restore",
+    "vault.trash.purge",
+    "folder.create",
+    "folder.rename",
+    "folder.delete",
+    "members.invite",
+    "members.remove",
+    "members.reset",
+    "members.transfer",
+    "members.claim",
+    "members.set_email",
+    "members.set_minor",
+    "members.set_role",
+    "members.leave",
+    // members.leave_list is a read query: no cover commit, no nudge.
+    "members.leave_approve",
+    "members.contest_cancel",
+];
+
+/// Local device id for autosync nudges (thin wrapper over the core reader).
+pub fn first_device_id(vault_path: &std::path::Path) -> String {
+    baluard_core::vault::device_privkey::local_device_id(vault_path)
+}
+
+/// Schedule a cover commit + arm auto-sync after successful vault mutations.
+pub async fn after_mutation(state: &SharedVaultState, action: &str, resp: &GatewayResponse) {
+    if !(resp.success && COVER_MUTATION_ACTIONS.contains(&action)) {
+        return;
+    }
+    state.schedule_cover_after_commit();
+    let dn = first_device_id(&state.vault_path);
+    state.autosync.nudge(dn).await;
+    // S2 IS-4b live mirror: re-publish every outboxed entry from the
+    // current cipher state (vault.delete/archive land as Locked and
+    // unpublish). Best-effort: a mirror failure must never fail the
+    // mutation the user just made.
+    if let Err(e) = state.outbox_resync().await {
+        log::warn!("[daemon] outbox mirror after {}: {e}", action);
+    }
+    // The resync writes the git-tracked outbox registry after the
+    // first nudge; a second nudge guarantees a cycle commits it.
+    let dn = first_device_id(&state.vault_path);
+    state.autosync.nudge(dn).await;
+}
+
+// ---------------------------------------------------------------------------
 // Mobile dispatcher: the second implementer of the bridge contract
-// (ADR 0114 work item 0, review B1). Maps the allowlisted actions that reach
-// the dispatch step onto the same VaultState methods the daemon's socket
-// router uses. Actions intercepted earlier by the policy (bridge.match,
-// bridge.config, passkey.list, bridge.request_unlock) never arrive here.
+// (ADR 0114 work item 0, review B1). Maps the eleven allowlisted actions that
+// reach the dispatch step onto the same VaultState methods the daemon's
+// socket router uses; the other four allowlisted actions (bridge.match,
+// bridge.config, passkey.list, bridge.request_unlock) are intercepted by the
+// policy above and never arrive here. The mobile host constructs a
+// SharedVaultHost holding its VaultState and registers the vault in
+// VaultRegistry as merge-eligible, so the fan-out routes resolve. Unlike the
+// daemon, dispatch never refreshes the auto-lock timer (touch_activity): a
+// phone that locks mid-browse is the safer default.
 
 pub struct MobileDispatcher;
 
 impl BridgeDispatcher for MobileDispatcher {
-    async fn dispatch(&self, req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
+    async fn dispatch(&self, mut req: GatewayRequest, state: &SharedVaultState) -> GatewayResponse {
+        let resp = self.dispatch_inner(&mut req, state).await;
+        // Bridge payloads carry plaintext credentials (vault.add/update);
+        // mirror the daemon router's exit zeroization.
+        req.payload.zeroize();
+        resp
+    }
+}
+
+impl MobileDispatcher {
+    async fn dispatch_inner(
+        &self,
+        req: &mut GatewayRequest,
+        state: &SharedVaultState,
+    ) -> GatewayResponse {
         match req.action.as_str() {
             "vault.get" => {
                 if req.payload.is_empty() {
@@ -889,14 +1000,16 @@ impl BridgeDispatcher for MobileDispatcher {
                     }
                 }
             }
-            // Status read only: the daemon arm's lazy-activate backstop is a
-            // desktop git concern; mobile arms its coordinator on unlock.
-            "sync.autosync_status" => match state.autosync.status().await {
-                status => match serde_json::to_string(&status) {
+            // Runtime equivalent of the daemon arm's lazy-activate backstop:
+            // idempotent, no-ops when already active, refuses a locked vault.
+            "sync.autosync_status" => {
+                state.activate_autosync_after_remote().await;
+                let status = state.autosync.status().await;
+                match serde_json::to_string(&status) {
                     Ok(json) => ok_resp(json, None),
                     Err(e) => err_response(format!("JSON error: {e}")),
-                },
-            },
+                }
+            }
             other => err_response(format!("Unknown action: {other}")),
         }
     }
@@ -1417,5 +1530,157 @@ mod policy_tests {
         let uriless = serde_json::json!({ "type": "login", "data": { "username": "u" } });
         let omits = serde_json::json!({ "type": "login", "data": { "password": "x" } });
         assert!(kind_omits_or_shrinks_protected(Some(&uriless), Some(&omits)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod mobile_dispatcher_tests {
+    use super::*;
+    use crate::host::VaultHost;
+    use std::sync::Arc;
+
+    /// Records whether the policy let a request through to the dispatcher.
+    struct StubDispatcher {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl StubDispatcher {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn count(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl BridgeDispatcher for StubDispatcher {
+        async fn dispatch(&self, _req: GatewayRequest, _state: &SharedVaultState) -> GatewayResponse {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ok_resp("{}", None)
+        }
+    }
+
+    /// A real unlocked vault under a temp data dir, hosted under `slug`,
+    /// paired to a fresh bridge registry. Returns (host, pairing id).
+    async fn paired_vault(
+        sb: &crate::test_support::EnvGuard,
+    ) -> (Arc<VaultHost>, baluard_core::bridge::PairingId) {
+        let _ = sb;
+        let dir = tempfile::tempdir().unwrap();
+        let vpath = dir.path().join("v");
+        let password = format!("policy-test-pass-{}", std::process::id());
+        let handle = baluard_core::vault::creation::VaultCreator::new(&vpath, &password, "device")
+            .execute()
+            .unwrap()
+            .0;
+        let state = Arc::new(crate::VaultState::new(handle.path.clone()));
+        state.unlock(&password).await.unwrap();
+        let host = Arc::new(VaultHost::new());
+        host.insert("t".to_string(), state.clone()).await;
+        host.switch("t").await.unwrap();
+        let reg = host.bridge();
+        reg.write().await.start_pair("pol");
+        reg.write().await.approve_pending(None).unwrap();
+        let (id, _tok) = reg.write().await.complete_pair("t", "chrome").unwrap();
+        (host, id)
+    }
+
+    // Gate order + dispatcher reach: every refused shape must end with the
+    // stub untouched; an allowed action reaches it exactly once.
+    #[tokio::test]
+    async fn non_allowlisted_action_never_reaches_dispatcher() {
+        let sb = crate::test_support::lock_env();
+        let (host, id) = paired_vault(&sb).await;
+        let stub = StubDispatcher::new();
+        let resp = route_bridge_request(
+            GatewayRequest { action: "vault.notes".into(), payload: "{}".into(), ..Default::default() },
+            &host, id, &stub,
+        ).await;
+        assert!(!resp.success);
+        assert_eq!(stub.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn write_outside_decision_seven_never_reaches_dispatcher() {
+        let sb = crate::test_support::lock_env();
+        let (host, id) = paired_vault(&sb).await;
+        let stub = StubDispatcher::new();
+        let payload = serde_json::json!({
+            "kind": { "type": "login", "data": { "custom_field": "x" } }
+        })
+        .to_string();
+        let resp = route_bridge_request(
+            GatewayRequest { action: "vault.update".into(), payload, ..Default::default() },
+            &host, id, &stub,
+        ).await;
+        assert!(!resp.success);
+        assert_eq!(stub.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn vault_get_reaches_dispatcher_and_strips_session_token() {
+        let sb = crate::test_support::lock_env();
+        let (host, id) = paired_vault(&sb).await;
+        let stub = StubDispatcher::new();
+        let resp = route_bridge_request(
+            GatewayRequest { action: "vault.get".into(), payload: r#"{"id":"x","decrypt":true}"#.into(), ..Default::default() },
+            &host, id, &stub,
+        ).await;
+        // get_cipher on an unknown id fails, but the request REACHED the stub
+        // and the response must not carry the vault session token.
+        assert_eq!(stub.count(), 1);
+        assert!(resp.session_token.is_empty(), "vault token must not leak");
+    }
+
+    // MobileDispatcher parity smoke: same fixtures as the daemon arms, both
+    // transports agree on the response shape.
+    #[tokio::test]
+    async fn mobile_dispatcher_matches_daemon_error_shapes() {
+        let sb = crate::test_support::lock_env();
+        let (host, id) = paired_vault(&sb).await;
+        let state = host.snapshot_target(None).await.unwrap().1;
+        let mobile = MobileDispatcher;
+
+        // Empty payload errors.
+        for action in ["vault.get", "vault.add", "vault.update", "cipher.totp_code"] {
+            let resp = mobile
+                .dispatch(GatewayRequest { action: action.into(), ..Default::default() }, &state)
+                .await;
+            assert!(!resp.success, "{action} empty payload must fail");
+            assert!(!resp.error_message.is_empty());
+        }
+
+        // Unknown action fails closed.
+        let resp = mobile
+            .dispatch(GatewayRequest { action: "vault.notes".into(), ..Default::default() }, &state)
+            .await;
+        assert!(!resp.success && resp.error_message.contains("Unknown action"));
+
+        // Allowlist completeness: every non-intercepted allowlisted action
+        // must not fall into "Unknown action".
+        for action in baluard_core::bridge::BRIDGE_ALLOWED_ACTIONS {
+            if matches!(*action, "bridge.match" | "bridge.config" | "bridge.request_unlock" | "passkey.list") {
+                continue;
+            }
+            let resp = mobile
+                .dispatch(
+                    GatewayRequest { action: (*action).into(), payload: "{}".into(), ..Default::default() },
+                    &state,
+                )
+                .await;
+            assert!(
+                !resp.error_message.contains("Unknown action"),
+                "{action} must be mapped in MobileDispatcher"
+            );
+        }
+
+        // sync.autosync_status activates-then-reads without failing.
+        let resp = mobile
+            .dispatch(GatewayRequest { action: "sync.autosync_status".into(), payload: "{}".into(), ..Default::default() }, &state)
+            .await;
+        assert!(resp.success, "autosync_status must succeed: {:?}", resp.error_message);
+        let _ = id;
     }
 }
