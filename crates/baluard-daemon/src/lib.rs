@@ -29,7 +29,6 @@ pub mod ssh_agent_proto;
 pub mod ssh_agent_serve;
 
 pub mod proto {
-    #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
-    include!(concat!(env!("OUT_DIR"), "/baluard.vault.rs"));
+    pub use baluard_proto::{GatewayRequest, GatewayResponse};
+    pub use baluard_proto::{auth, vault};
 }

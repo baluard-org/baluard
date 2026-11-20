@@ -8,6 +8,7 @@ description = "Baluard vault-session orchestration (host, state, autosync, PIN e
 
 [dependencies]
 baluard-core = { path = "../baluard-core", features = ["git-sync", "passkey-ceremony", "uri-match"] }
+baluard-proto = { path = "../baluard-proto" }
 log = "0.4"
 tokio = { workspace = true }
 serde = { workspace = true }

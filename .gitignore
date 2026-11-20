@@ -98,3 +98,4 @@ mobile/keystore/
 
 # Stable-name release staging output (uploaded to the GitHub release)
 /release-upload/
+/.cargo-home-container/

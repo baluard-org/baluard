@@ -8,6 +8,7 @@ description = "Baluard background IPC daemon (Unix socket / Named Pipes server)"
 
 [dependencies]
 baluard-core = { path = "../baluard-core", features = ["git-sync", "passkey-ceremony"] }
+baluard-proto = { path = "../baluard-proto" }
 baluard-runtime = { path = "../baluard-runtime" }
 log = "0.4"
 env_logger = "0.11"
@@ -38,7 +39,6 @@ rand_core = "0.10"
 signature = "3"
 
 [build-dependencies]
-prost-build = "0.13"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

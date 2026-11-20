@@ -85,8 +85,8 @@ fn dlog(msg: &str) {
 }
 
 mod proto {
-    #![allow(dead_code)] // generated
-    include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
+    #![allow(unused_imports)] // generated
+    pub use baluard_proto::{GatewayRequest, GatewayResponse};
 }
 
 use proto::{GatewayRequest, GatewayResponse};

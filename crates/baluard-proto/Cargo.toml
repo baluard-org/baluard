@@ -1,0 +1,10 @@
+[package]
+name = "baluard-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+prost = { workspace = true }
+
+[build-dependencies]
+prost-build = "0.13"

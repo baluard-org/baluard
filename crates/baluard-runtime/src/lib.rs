@@ -24,6 +24,7 @@
 pub mod agents;
 pub mod autosync;
 pub mod bridge;
+pub mod bridge_policy;
 pub mod crypto;
 pub mod founding;
 pub mod host;

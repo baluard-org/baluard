@@ -21,10 +21,10 @@ fn default_socket_path() -> PathBuf {
     baluard_core::paths::socket_path()
 }
 
-/// Generated Protobuf types
+/// Generated Protobuf types (shared crate; see baluard-proto)
 mod proto {
-    #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/baluard.auth.rs"));
+    #![allow(unused_imports)]
+    pub use baluard_proto::{GatewayRequest, GatewayResponse};
 }
 
 use proto::{GatewayRequest, GatewayResponse};

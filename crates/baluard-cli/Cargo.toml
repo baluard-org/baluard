@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 baluard-core = { path = "../baluard-core", features = ["git-sync"] }
+baluard-proto = { path = "../baluard-proto" }
+prost = { workspace = true }
 clap.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -20,7 +22,6 @@ hex.workspace = true
 x25519-dalek.workspace = true
 rpassword = "7"
 chrono = "0.4"
-prost = { workspace = true }
 zeroize = { workspace = true }
 base64 = { workspace = true }
 getrandom = "0.2"
@@ -38,7 +39,6 @@ reqwest = { workspace = true, features = ["blocking"] }
 libc = "0.2"
 
 [build-dependencies]
-prost-build = "0.13"
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

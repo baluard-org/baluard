@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/baluard-core",
+    "crates/baluard-proto",
     "crates/baluard-runtime",
     "crates/baluard-uniffi",
     "crates/baluard-cli",
