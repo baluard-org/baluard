@@ -2,6 +2,11 @@
 
 Notable user-facing changes per release.
 
+## 0.7.6 - 2026-11-19
+
+- Browser: Baluard now offers passkeys on sites where another password manager (1Password) already installed its own hook, even when that manager's passkey offering is turned off. Before this fix, Baluard showed an error instead of offering to sign in or save.
+- Browser: the passkey popout has a refreshed look that matches the app: the Baluard logo, cleaner cards, and the "Use another method" action stays at the bottom.
+
 ## [UNRELEASED]
 
 No user-facing changes yet.

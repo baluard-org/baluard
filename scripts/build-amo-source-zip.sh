@@ -11,7 +11,9 @@ set -euo pipefail
 ROOT="${1:?repo root required}"
 OUT="${2:?out dir required}"
 COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -n 1)"
+# The extension version drives the source package name; browser-only
+# releases move it without touching the workspace version.
+VERSION="$(jq -er '.version' "$ROOT/browser/shared/package.json")"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
