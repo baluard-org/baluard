@@ -117,3 +117,4 @@ Numbered in design chronology. Each record carries its context, decision, and co
 | [0111](0111-agent-serves-imported-rsa.md) | The Agent Serves Imported RSA Keys |
 | [0112](0112-local-folder-sync-transport.md) | Local Folder Sync Transport (Dropbox, Drive, iCloud Drive, Syncthing) |
 | [0113](0113-optional-p2p-sync-transport.md) | Optional P2P Sync Transport Across Desktop, Mobile, and CLI |
+| [0114](0114-browser-tethered-to-mobile.md) | Browser Extension Tethered to the Mobile App (unlock authority over a relay) |

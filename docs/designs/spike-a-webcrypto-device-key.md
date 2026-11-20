@@ -1,0 +1,123 @@
+# Spike A — Non-extractable WebCrypto device key in MV3 extensions (Chrome + Firefox, 2026)
+
+**Status:** answered · **Researched:** 2026-11-19 · **Owner:** spike-a-webcrypto
+**Question:** can a Baluard-style MV3 extension generate a NON-EXTRACTABLE WebCrypto device key, persist it across service-worker (Chrome) / event-page (Firefox) restarts, and use it for signatures or key agreement?
+
+**Method.** Every sub-question was answered from dated primary sources (MDN release notes, chromestatus, Chrome for Developers docs, Bugzilla, WICG/W3C trackers) **plus a live empirical test run on 2026-11-19** against 2026-era stable builds found on the dev machine: **Chromium 156** (`HeadlessChrome/156`) and **Firefox 159.0** (headless, driven over WebDriver BiDi). The test page (`/tmp/spike-a/index.html`, `/tmp/spike-a/diag.html`) generated non-extractable Ed25519/X25519 keys, attempted `exportKey()`, structured-cloned keys, stored them in IndexedDB, reloaded the page, read them back, and signed/derived with the read-back keys (also round-tripped a key through a dedicated Worker via `postMessage`). All claims below marked **[tested]** were verified on that date; version-gating claims are from the cited release notes/trackers.
+
+---
+
+## Verdict table
+
+| # | Sub-question | Verdict | Browser + version | Source (accessed 2026-11-19) |
+|---|---|---|---|---|
+| 1a | Ed25519 `generateKey` + `sign` (Chrome) | **SUPPORTED** — enabled by default in **Chrome 137** (stable 2025-05-27); previously behind the `WebCryptoEd25519` runtime flag (removed from the codebase 2025-06-28) | Chrome ≥ 137 (desktop/Android/iOS/WebView) | [chromestatus feature 4913922408710144](https://chromestatus.com/feature/4913922408710144); [Chrome 137 release notes](https://developer.chrome.com/release-notes/137) (2025-05-27, "Ed25519 in web cryptography" under Web APIs); flag removal commit [chromium 268cffe](https://github.com/chromium/chromium/commit/268cffe88052bc41797d9dde39777d91b4d7e56a) (2025-06-28); Igalia status blog (2025-02-28) confirms Ed25519 was flag-gated until then |
+| 1b | Ed25519 (Firefox) | **SUPPORTED** — enabled by default, no flag, in **Firefox 129** (stable 2024-08-06) | Firefox ≥ 129 | [MDN Firefox 129 release notes](https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/129) (2024-08-06; lists `sign/verify/generateKey/importKey/exportKey`); Bugzilla [1804788](https://bugzilla.mozilla.org/show_bug.cgi?id=1804788) (RESOLVED) |
+| 2a | X25519 key agreement (Chrome) | **SUPPORTED** — enabled by default in **Chrome 133** (stable 2025-02-04) | Chrome ≥ 133 | Igalia blog (2025-02-28: "Chrome 133 release shipped with X25519 enabled by default"); [Intent to Ship: X25519](https://groups.google.com/a/chromium.org/g/blink-dev/c/A7lbRONS1lY) (2024-11-22); ship commit (M133) [chromium 3136845](https://github.com/ronitmevada/Chromium/commit/3136845f1fb5146ca2b608446bd693712011c827) (2024-12-04) |
+| 2b | X25519 (Firefox) | **SUPPORTED** — enabled by default in **Firefox 130** (stable 2024-09-03) | Firefox ≥ 130 | [MDN Firefox 130 release notes](https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/130) (2024-09-03; `deriveKey/deriveBits/generateKey/importKey/exportKey`); Bugzilla [1904836](https://bugzilla.mozilla.org/show_bug.cgi?id=1904836) |
+| 2c | X25519 usable **non-extractable** (`generateKey(…, false, ["deriveKey","deriveBits"])` → `deriveBits`/`deriveKey`) | **SUPPORTED, both** — **[tested]** on Chromium 156 and Firefox 159: non-extractable private key derives a 32-byte shared secret and a non-extractable AES-GCM key; `exportKey` on the private key throws `InvalidAccessError` | Chrome ≥ 133, Firefox ≥ 130 | Empirical 2026-11-19; spec: [WICG webcrypto-secure-curves](https://wicg.github.io/webcrypto-secure-curves/) (CGB draft 2026-01-28) / [w3c/webcrypto PR #362](https://github.com/w3c/webcrypto/pull/362) (merged 2024-12-05). ⚠️ The derive algorithm object must be `{name:"X25519", public: pubKey}` — `publicKey` throws `TypeError` in **both** current browsers **[tested]** (MDN [deriveKey](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey) shows `public`) |
+| 3 | Persist `CryptoKey(extractable:false)` in IndexedDB | **SUPPORTED, both** — **[tested]**: Chromium 156 and Firefox 159 both store a non-extractable Ed25519 private key, read it back as a genuine `CryptoKey` (`[object CryptoKey]`, `extractable === false`), sign with it after a full page reload, and re-clone it. Firefox's historical `DataCloneError` bugs are fixed/obsolete (details below) | Chrome (all modern), Firefox ≥ 91 (EC-key serialization fix); verified on FF 159 | MDN structured-clone spec list includes `CryptoKey` ([structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)); Bugzilla [1719478](https://bugzilla.mozilla.org/show_bug.cgi?id=1719478) → root cause NSS EC export fixed in **FF 91** via [1693206] (2021); Bugzilla [1556794](https://bugzilla.mozilla.org/show_bug.cgi?id=1556794) (open, premise = keys *are* stored in IDB, last updated 2025); in-tree Gecko test `dom/crypto/test/file_indexedDB.html` (main). Empirical 2026-11-19 |
+| 4a | WebCrypto + IndexedDB inside **Chrome MV3 extension service worker** | **SUPPORTED** — `crypto.subtle` works in the extension SW (`self.crypto.subtle`, no `window`); IndexedDB works from extension SWs (same extension origin). No open bug found for `crypto.subtle` in extension SWs | Chrome ≥ 88-ish, all current | Chromium Extensions thread ["Using the WebCrypto api in the service worker MV3"](https://groups.google.com/a/chromium.org/g/chromium-extensions/c/VCXF9rZXr5Y) (2022-11-19); SO ["How to use IndexedDB from Chrome Extension Service Workers"](https://stackoverflow.com/questions/71451848/how-to-use-indexeddb-from-chrome-extension-service-workers) (2022-03); [chrome.storage docs](https://developer.chrome.com/docs/extensions/reference/api/storage) (extension contexts incl. SW; notes extension SWs **cannot** use Web Storage/`localStorage`, use IndexedDB or `chrome.storage`) |
+| 4b | WebCrypto + IndexedDB inside **Firefox MV3 background (event page)** | **SUPPORTED** — Firefox MV3 does not use service workers for background (Bugzilla [1573659], still unsupported); the background is a non-persistent **event page document** with full DOM + Web Crypto (secure context) and IndexedDB. State does not survive event-page unload → persistence must come from IndexedDB (same conclusion MDN gives: "use the storage API") | Firefox MV3 (current) | [MDN `background` manifest key](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/background) (accessed 2026-11-19; `service_worker` not supported in Firefox, event pages unload when idle); [MDN Background scripts](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Background_scripts) |
+| 5 | Fallback if persistence unsupported | **MOOT in 2026** (not needed on either browser). The fallback would be: generate a fresh non-extractable keypair in memory on every SW/event-page wake and re-register/re-bind with the server. **Unusable for device binding** (see below) | — | Chrome SW lifecycle (termination ~30 s idle): [service worker lifecycle docs](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/); memory-only + "lazy re-binding" pattern analyzed in [InfoQ: The DPoP Storage Paradox](https://www.infoq.com/articles/dpop-key-storage-unsolved-problem/) (2026-04-30) |
+| 6 | Export/sync channels for the stored key | **NO KNOWN BYPASS of non-extractability**; `extractable:false` blocks `exportKey`/`wrapKey` by spec (throws `InvalidAccessError` **[tested]**); `JSON.stringify(CryptoKey)` → `{}` **[tested]** (no enumerable key bits); `chrome.storage.sync`/`session` only store **JSON-serializable** values (docs) so a CryptoKey can't even be placed there; Chrome Sync does not sync IndexedDB. **Residual channels (not extraction, but matter):** (a) copying the profile directory copies the IDB key files in both browsers — keys are stored **unencrypted**, not bound to the profile (Bugzilla [1556794](https://bugzilla.mozilla.org/show_bug.cgi?id=1556794), open, demonstrates Chrome; Firefox same); (b) any code running in the extension origin can use the key as a *signing oracle* without extracting bits ([InfoQ 2026-04-30](https://www.infoq.com/articles/dpop-key-storage-unsolved-problem/); RFC 9449 §11.4) | Chrome, Firefox | [chrome.storage docs](https://developer.chrome.com/docs/extensions/reference/api/storage) ("The JSON serializable values are stored as object properties"; `sync` uses Chrome Sync, `session` is memory-only and cleared on browser restart); empirical 2026-11-19 |
+
+---
+
+## Findings per sub-question
+
+### 1. Ed25519
+
+- **Chrome.** Implemented behind the `WebCryptoEd25519` runtime flag (chromestatus entry, flag name recorded in the feature's "Flag name on about://flags" field); as of the Igalia status post (2025-02-28) it was still flag-only because of unresolved spec issues (small-order point rejection, randomized EdDSA signatures). Shipped **enabled by default in Chrome 137 (2025-05-27)** — chromestatus lists "Shipping: 137" for desktop/Android/iOS/WebView and the Chrome 137 release notes list "Ed25519 in web cryptography" among Web API changes; the runtime flag was deleted from the source on 2025-06-28. **[tested]** Chromium 156: `generateKey({name:"Ed25519"}, false, ["sign","verify"])` → non-extractable private key, `sign()` → 64-byte signature, `exportKey("jwk", priv)` → `InvalidAccessError`.
+- **Firefox.** Shipped **enabled by default in Firefox 129 (2024-08-06)**, no flag (MDN FF129 release notes; Bugzilla 1804788 RESOLVED). **[tested]** Firefox 159: same behavior as Chromium, 64-byte signature, `InvalidAccessError` on export.
+
+So on 2026 stable (Chrome 140+, Firefox 140+ per the local 156/159 builds) Ed25519 is a safe baseline; if Baluard must support older Chrome (< 137), Ed25519 is absent by default there and either an `extractable:false` ECDSA P-256 key or a JS/WASM Ed25519 must be used on that population.
+
+### 2. X25519
+
+- Chrome ≥ 133 (2025-02-04), Firefox ≥ 130 (2024-09-03), both enabled by default.
+- **Non-extractable usage works [tested]**: `generateKey({name:"X25519"}, false, ["deriveKey","deriveBits"])` on both browsers yields `privateKey.extractable === false`; `deriveBits({name:"X25519", public: theirPub}, priv, 256)` returns 32 bytes; `deriveKey(…, {name:"AES-GCM", length:256}, false, ["encrypt"])` yields a non-extractable AES key. `exportKey` on the private key throws `InvalidAccessError` in both.
+- **Interop pitfall (2026):** the derive parameter is the `EcdhKeyDeriveParams` dictionary, whose member is **`public`**, not `publicKey`. Passing `{name:"X25519", publicKey: …}` throws `TypeError` in both Chromium 156 ("EcdhKeyDeriveParams: public: Missing required property") and Firefox 159 ("The operation could not be performed"). Older blog posts/specs that say `publicKey` are stale; MDN's current `deriveKey` docs use `public`.
+- Note (spec history, not a blocker): X25519 was integrated into the W3C Web Cryptography Level 2 spec via w3c/webcrypto PR #362 (merged 2024-12-05); the Secure Curves WICG draft remains the normative home for the curve operations (CGB report 2026-01-28).
+
+### 3. IndexedDB persistence of `CryptoKey(extractable:false)`
+
+- **Spec:** `CryptoKey` is a structured-cloneable type (MDN structured-clone list; `[Serializable]` in WebIDL). IndexedDB uses structured clone for values, so `put({key: cryptoKey})` is the spec-blessed key-storage route (WebCrypto spec §"Key storage").
+- **Chrome:** works — long-standing behavior; **[tested]** Chromium 156: store → read back as genuine `CryptoKey` (`[object CryptoKey]`, `extractable:false`) → sign with it → works; **survives a full page reload** (second navigation read the same record and signed/derived successfully).
+- **Firefox:** works on 2026 stable — **[tested]** Firefox 159 end-to-end: store non-extractable Ed25519 private key in IDB, reload, read back a real `CryptoKey` (not a plain object), sign with the deserialized key (64-byte sig), and re-`structuredClone` it. The historical reports the spike question refers to decompose as follows:
+  - Bug **1434898 / 1719478** ("DataCloneError storing ECDH/ECDSA *private* key in IndexedDB", 2018/2021): root cause was NSS lacking EC-private-key export for serialization; fixed via Bug 1693206 landing in **Firefox 91** (confirmed by the reporter in bug 1719478: "I can confirm that this bug has been fixed in Firefox 91"). These are the *curve-specific* DataCloneErrors people remember.
+  - Bug **1348279** ("CryptoKeys cannot be read from IndexedDB: The object could not be cloned", 2017): a Firefox 51→52 storage-format regression affecting AES/HKDF/PBKDF2 keys; **RESOLVED WONTFIX** (2023) as a stale-profile issue. It is *not* evidence that modern Firefox can't store CryptoKeys.
+  - Bug **1556794** ("CryptoKeys stored in IndexedDB should be cryptographically bound to profile", open, P3, activity through 2025): its premise is that keys **are** stored in IDB in Firefox and Chrome and survive profile-directory copies.
+  - Gecko ships an in-tree test storing CryptoKeys in IndexedDB (`dom/crypto/test/file_indexedDB.html`, mozilla-firefox/firefox main branch).
+- **Contradicting secondary source:** the InfoQ article "The DPoP Storage Paradox" (2026-04-30) claims "Firefox cannot store CryptoKey objects in IndexedDB at all; the structured clone algorithm fails with a DOMException (Bugzilla #1348279, RESOLVED WONTFIX)". **This is contradicted by direct testing on Firefox 159 (works, including sign-after-reload) and by the cited bug itself**, which is a 2017 regression bug about AES/HKDF keys, not a claim of general non-support. Treat the InfoQ Firefox claim as an error; the *security-model* parts of that article (signing-oracle risk, memory-only fallback) are sound.
+
+### 4. Extension contexts
+
+- **Chrome MV3 service worker.** No `window`; use `self.crypto.subtle` (confirmed by Chromium Extensions maintainers/peers, 2022-11-19 thread — "crypto.subtle is available in service worker"). IndexedDB is reachable from extension SWs (extension origin; SO 2022-03-12; the chrome.storage docs position IndexedDB as the web-platform storage API for extensions alongside `chrome.storage`). The SW itself is short-lived (terminated ~30 s after idle), which is precisely why the key must live in IndexedDB, not module state. `chrome.storage.session` is memory-only and cleared when the browser restarts, and — like all `chrome.storage` areas — stores only JSON-serializable values, so it can never hold a CryptoKey. No open bug was found for `crypto.subtle` availability in extension SWs (the historical confusion in the 2022 thread was just the `window.` prefix). **[tested]** in a dedicated Worker (not an extension SW): Ed25519 generate + sign works off-main-thread in both browsers, and a non-extractable CryptoKey round-trips into a Worker via `postMessage` and remains usable there (Chromium 156 + Firefox 159).
+- **Firefox MV3 event page.** Firefox does not support `background.service_worker` (Bugzilla 1573659, still open); the MV3 background is an event-page *document* — a full DOM context (has `window`) running in a secure context (`moz-extension://…`), so Web Crypto and IndexedDB are available without SW-specific caveats. MDN's guidance for event pages: listener registrations persist, *other* values do not — persist data via the storage APIs (IndexedDB for a CryptoKey, since `browser.storage` is JSON-only in Firefox too, per WebExtensions `storage` being JSON-based).
+
+### 5. Fallback state (if persistence were unavailable)
+
+Not needed on Chrome or Firefox in 2026 — but for completeness: the fallback is a **memory-only key**: generate a fresh non-extractable keypair per wake, keep it in a module-scoped variable, and re-register the public key with the server each time ("lazy re-binding" — requires the server to support key rotation on re-pairing; multi-context coordination needed). This is **unusable for device binding**: Chrome terminates idle extension SWs after ~30 s and Firefox unloads idle event pages, so the key would be regenerated on effectively every user interaction; the server would re-bind constantly, the "device" identity would be whatever process happened to wake up, and any code running in the extension could register its own key just as easily — the binding would no longer identify a stable device or resist anything beyond a single session. The InfoQ DPoP case study (2026-04-30) documents exactly this trade-off and reserves memory-only keys for non-persistence-tolerant deployments, with CSP as a prerequisite.
+
+### 6. Can anything export the stored key?
+
+- **By API:** `extractable:false` blocks `exportKey()` and `wrapKey()` — spec-level; **[tested]** `InvalidAccessError` on both browsers. The key's raw bits are never exposed to page/extension JS in any form.
+- **By serialization:** `JSON.stringify(cryptoKey)` → `"{}"` **[tested]** (CryptoKey exposes no enumerable key material). DevTools' IndexedDB value viewer / "copy value" operate through in-page JS serialization, so they cannot conjure the bits either; no "copy raw key" DevTools feature exists for non-extractable keys.
+- **By sync:** `chrome.storage.sync` is the only extension surface that uses Chrome Sync, and it stores **JSON-serializable** values only (docs) — a CryptoKey can't be put into it, and Chrome Sync does not sync a page's/extension's IndexedDB data between devices. Firefox Sync likewise doesn't sync extension IndexedDB.
+- **Real residual channels (design-relevant, not extraction bypasses):**
+  1. **Profile copy:** IndexedDB files under the profile directory contain the stored key unencrypted; copying the profile (or `storage/default/…` for Firefox, as demonstrated in Bug 1556794's Chrome reproduction) clones the device key onto another machine. Non-extractable ≠ device-bound. Firefox has an open enhancement (Bug 1556794, depends on OS-keystore work) to bind IDB CryptoKeys to the profile; neither browser does it today.
+  2. **Signing-oracle:** any code executing in the extension origin (compromised dependency, XSS into an extension page, malicious co-extension) can read the key *handle* from IndexedDB and call `sign()` — the attack analyzed in InfoQ (2026-04-30) and RFC 9449 §11.4. Mitigation is CSP/dependency hygiene, not cryptography.
+  3. Chrome's DBSC (Device Bound Session Credentials, TPM-backed) is the only in-browser mechanism that actually binds to hardware, but it is a Chrome server-integrated feature, not an extension API — keep it on the radar, don't depend on it.
+
+---
+
+## Recommendation
+
+**"Non-extractable device key registered at pairing" is viable on BOTH Chrome and Firefox MV3 in 2026 — no degradation is forced on either platform.** Generate the device key at pairing with `crypto.subtle.generateKey({name:"Ed25519"}, false, ["sign","verify"])` (Chrome ≥ 137, Firefox ≥ 129; both 2026 stable far exceed this) and persist the returned `privateKey` object **directly** in IndexedDB on the extension origin; on every SW/event-page wake, open the DB and use the read-back `CryptoKey` — verified to sign correctly after full reloads on Chromium 156 and Firefox 159, with `extractable:false` preserved and `exportKey`/`wrapKey` throwing `InvalidAccessError`. For key agreement, X25519 is likewise non-extractable-usable on both (Chrome ≥ 133, Firefox ≥ 130), but **pass the peer public key as `{name:"X25519", public: pub}`** — the `publicKey` member name throws in both current browsers and older tutorials are wrong. What the design must *not* claim: (1) that a non-extractable IDB key is bound to the device — copying the profile directory clones it (Bug 1556794, both browsers), so pair-time registration should still combine the key with server-side checks (e.g., attestation of at least key stability, not hardware); and (2) that non-extractability stops in-origin code from abusing the key as a signing oracle — the extension's own CSP/dependency security is the control there. If a future requirement demands hardware binding on Chrome, watch DBSC; on Firefox there is no equivalent today (Bug 1556794 / OS-keystore work is the tracked path). Recommended library hygiene: fall back to ECDSA P-256 (non-extractable, supported everywhere since 2017) if `Ed25519` in `generateKey` rejects, purely as a Chrome < 137 compatibility shim.
+
+---
+
+## Appendix — empirical test log (2026-11-19)
+
+Browsers: `Chromium 156.0.8078.47` (headless, via agent-browser) and `Firefox 159.0` (headless, via WebDriver BiDi). Test pages served from `http://127.0.0.1:8123` (secure context). Phase 1: generate non-extractable keys, test ops, store in IDB; Phase 2 (separate navigation): read back from IDB and use.
+
+| Check | Chromium 156 | Firefox 159 |
+|---|---|---|
+| Ed25519 `generateKey(…, false, ["sign","verify"])` → `extractable:false` | ✔ | ✔ |
+| Ed25519 `sign()` → 64-byte sig | ✔ | ✔ |
+| Ed25519 `exportKey("jwk", priv)` | `InvalidAccessError` | `InvalidAccessError` |
+| X25519 `generateKey(…, false)` → `extractable:false` | ✔ | ✔ |
+| X25519 `deriveBits({name:"X25519", public:pub}, priv, 256)` → 32 B | ✔ (`publicKey` member → TypeError) | ✔ (`publicKey` member → TypeError) |
+| X25519 `deriveKey` → non-extractable AES-GCM key | ✔ (with `public` member) | ✔ (with `public` member) |
+| `structuredClone(nonExtractablePrivKey)` → `extractable:false` preserved, usable | ✔ | ✔ |
+| IDB `put`/`get` of non-extractable Ed25519 key (same load) | ✔ real `CryptoKey` back, sign ok | ✔ real `CryptoKey` back, sign ok |
+| **Cross-reload persistence**: phase-2 navigation reads IDB, `ed25519SignAfterReload` and `x25519DeriveAfterReload` | ✔ true / true | ✔ true / true |
+| Key round-trip into dedicated Worker via `postMessage`, sign there | ✔ | ✔ |
+| `JSON.stringify(CryptoKey)` | `"{}"` | `"{}"` |
+
+Key material was never obtainable in any path; every export attempt threw `InvalidAccessError`.
+
+## Source list (accessed 2026-11-19)
+
+- https://chromestatus.com/feature/4913922408710144 — Ed25519 in Web Cryptography (shipping: 137; flag `WebCryptoEd25519`)
+- https://developer.chrome.com/release-notes/137 — Chrome 137 (2025-05-27), Ed25519 listed
+- https://github.com/chromium/chromium/commit/268cffe88052bc41797d9dde39777d91b4d7e56a — WebCryptoEd25519 flag removed (2025-06-28)
+- https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/129 — FF129 (2024-08-06) Ed25519 in WebCrypto
+- https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/130 — FF130 (2024-09-03) X25519 in WebCrypto
+- https://bugzilla.mozilla.org/show_bug.cgi?id=1804788 — Gecko Ed25519 (RESOLVED)
+- https://bugzilla.mozilla.org/show_bug.cgi?id=1904836 — Gecko X25519 (RESOLVED)
+- https://blogs.igalia.com/jfernandez/2025/02/28/can-i-use-secure-curves-in-the-web-platform/ — Chrome 133 X25519 default; Ed25519 flag-gated at that date (2025-02-28)
+- https://groups.google.com/a/chromium.org/g/blink-dev/c/A7lbRONS1lY — Intent to Ship X25519 (2024-11-22)
+- https://github.com/w3c/webcrypto/pull/362 — Curve25519 merged into W3C WebCrypto (2024-12-05)
+- https://wicg.github.io/webcrypto-secure-curves/ — Secure Curves spec (CGB report 2026-01-28)
+- https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey — X25519 derive uses `EcdhKeyDeriveParams` with member `public`
+- https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm — CryptoKey is structured-cloneable
+- https://bugzilla.mozilla.org/show_bug.cgi?id=1434898 / 1719478 / 1348279 / 1556794 — Firefox DataCloneError history; EC-key fix in FF 91; profile-binding enhancement (open)
+- https://github.com/mozilla-firefox/firefox/blob/main/dom/crypto/test/file_indexedDB.html — Gecko in-tree IDB CryptoKey test
+- https://groups.google.com/a/chromium.org/g/chromium-extensions/c/VCXF9rZXr5Y — crypto.subtle in MV3 SW (2022-11-19)
+- https://stackoverflow.com/questions/71451848/how-to-use-indexeddb-from-chrome-extension-service-workers — IDB from extension SW (2022-03)
+- https://developer.chrome.com/docs/extensions/reference/api/storage — chrome.storage JSON-only; sync/session semantics
+- https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/ — SW idle termination
+- https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/background — Firefox MV3 event pages; `service_worker` unsupported (bug 1573659)
+- https://www.infoq.com/articles/dpop-key-storage-unsolved-problem/ — DPoP storage paradox (2026-04-30); Firefox IDB claim contradicted by testing (noted above)

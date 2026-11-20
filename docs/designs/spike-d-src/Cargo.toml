@@ -1,0 +1,14 @@
+[package]
+name = "handshake-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hpke = "0.12"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+
+[dev-dependencies]
