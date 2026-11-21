@@ -110,6 +110,15 @@ open class StubVault(
         calls += "fetchFavicon:$payload"
         return ""
     }
+    override suspend fun faviconBackfillStart(): String {
+        calls += "faviconBackfillStart"
+        return """{"running":false,"finished":false,"total":0,"done":0,"fetched":0,"skipped":0,"error":null}"""
+    }
+    override fun faviconBackfillStatus(): String {
+        calls += "faviconBackfillStatus"
+        return """{"running":false,"finished":false,"total":0,"done":0,"fetched":0,"skipped":0,"error":null}"""
+    }
+    override fun faviconBackfillCancel() { calls += "faviconBackfillCancel" }
     override suspend fun syncOnBackground() { calls += "syncOnBackground" }
 
     override suspend fun hardwareStatus(platformCapable: Boolean): String =

@@ -1174,6 +1174,18 @@ internal interface UniffiLib : Library {
     `includeTotp`: Byte,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_favicon_backfill_cancel(
+    `ptr`: Pointer,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): Unit
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_favicon_backfill_start(`ptr`: Pointer): Long
+
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_favicon_backfill_status(
+    `ptr`: Pointer,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): RustBuffer.ByValue
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_fetch_favicon(
     `ptr`: Pointer,
     `payload`: RustBuffer.ByValue,
@@ -2072,6 +2084,12 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_export_guest_reveal(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_favicon_backfill_cancel(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_favicon_backfill_start(): Short
+
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_favicon_backfill_status(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_generator_history_add(): Short
@@ -2540,6 +2558,15 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_export_guest_reveal() != 38902.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_favicon_backfill_cancel() != 28746.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_favicon_backfill_start() != 5332.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_favicon_backfill_status() != 33593.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_fetch_favicon() != 64896.toShort()) {
@@ -4577,6 +4604,23 @@ public interface MobileVaultInterface {
     `expiresAt`: kotlin.ULong,
     `includeTotp`: kotlin.Boolean,
   ): kotlin.String
+
+  /**
+   * Stop a running backfill; counts keep what completed before the stop.
+   */
+  fun `faviconBackfillCancel`()
+
+  /**
+   * Batch site-icon backfill for imported/legacy entries (desktop
+   * favicon.backfill_start parity). Returns the initial status JSON;
+   * errors when the setting is off or a job already runs.
+   */
+  suspend fun `faviconBackfillStart`(): kotlin.String
+
+  /**
+   * Backfill progress snapshot; same JSON shape start() returns.
+   */
+  fun `faviconBackfillStatus`(): kotlin.String
 
   /**
    * Fetch a favicon for a login's domain. Payload is the URI or bare
@@ -6731,6 +6775,57 @@ open class MobileVault :
       { FfiConverterString.lift(it) },
       // Error FFI converter
       BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Stop a running backfill; counts keep what completed before the stop.
+   */
+  override fun `faviconBackfillCancel`() =
+    callWithPointer {
+      uniffiRustCall { _status ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_favicon_backfill_cancel(it, _status)
+      }
+    }
+
+  /**
+   * Batch site-icon backfill for imported/legacy entries (desktop
+   * favicon.backfill_start parity). Returns the initial status JSON;
+   * errors when the setting is off or a job already runs.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `faviconBackfillStart`(): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_favicon_backfill_start(
+          thisPtr,
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Backfill progress snapshot; same JSON shape start() returns.
+   */
+  override fun `faviconBackfillStatus`(): kotlin.String =
+    FfiConverterString.lift(
+      callWithPointer {
+        uniffiRustCall { _status ->
+          UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_favicon_backfill_status(it, _status)
+        }
+      },
     )
 
   /**

@@ -823,6 +823,7 @@ fun App(
                                     vaultTimeoutToken = autoLockToken,
                                     vaultPath = path,
                                     authViewModel = auth,
+                                    onIconsChanged = { saveRevision++ },
                                     onVaultRemoved = {
                                         scope.launch { auth.forget() }
                                         Toast.success(t("toast.vaultRemoved"))

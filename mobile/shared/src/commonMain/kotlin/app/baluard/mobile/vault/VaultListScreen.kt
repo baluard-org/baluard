@@ -241,6 +241,7 @@ fun EntryListScreen(
                         meta = meta,
                         typeLabel = t(typeLabelKey(normalizeTypeTag(meta.cipherType))),
                         onClick = { onCipherClick(meta.id) },
+                        faviconBytes = rememberCipherFavicon(listViewModel, vault, meta.id),
                         modifier = Modifier
                             .padding(horizontal = 16.dp, vertical = 4.dp)
                             .testTag(E2eTags.LIST_ROW)

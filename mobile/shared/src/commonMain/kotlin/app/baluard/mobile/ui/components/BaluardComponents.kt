@@ -2,6 +2,7 @@ package app.baluard.mobile.ui.components
 
 import androidx.compose.foundation.text.KeyboardOptions
 import app.baluard.mobile.platform.Clock
+import app.baluard.mobile.platform.decodeImageBitmap
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -75,6 +76,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.Image
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -91,7 +93,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -546,16 +550,18 @@ fun CipherAvatar(
     typeTag: String = "login",
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,
+    faviconBytes: ByteArray? = null,
 ) {
     val (icon, gradientBrush) = cipherTypeVisuals(typeTag)
 
     val initials = name.trim().take(2).uppercase().ifEmpty { "?" }
+    val favicon = remember(faviconBytes) { faviconBytes?.let { decodeImageBitmap(it) } }
 
     Box(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape(12.dp))
-            .background(gradientBrush)
+            .background(if (favicon != null) SolidColor(MaterialTheme.colorScheme.surfaceContainer) else gradientBrush)
             .border(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -563,7 +569,14 @@ fun CipherAvatar(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        if (typeTag == "login" || typeTag == "identity") {
+        if (favicon != null) {
+            Image(
+                bitmap = favicon,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(size * 0.6f),
+            )
+        } else if (typeTag == "login" || typeTag == "identity") {
             Text(
                 text = initials,
                 style = MaterialTheme.typography.titleSmall.copy(
@@ -788,6 +801,7 @@ fun CipherRowCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     trailing: @Composable () -> Unit = {},
+    faviconBytes: ByteArray? = null,
 ) {
     Surface(
         modifier = modifier
@@ -808,6 +822,7 @@ fun CipherRowCard(
                 name = meta.name,
                 typeTag = meta.cipherType,
                 size = 42.dp,
+                faviconBytes = faviconBytes,
             )
 
             Spacer(Modifier.width(12.dp))

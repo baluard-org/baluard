@@ -194,6 +194,7 @@ fun CipherDetailScreen(
                         name = s.name,
                         typeTag = s.typeTag,
                         size = 52.dp,
+                        faviconBytes = s.faviconBytes,
                     )
 
                     Spacer(Modifier.width(14.dp))

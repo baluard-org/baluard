@@ -1326,6 +1326,23 @@ impl MobileVault {
         Ok(self.state.fetch_favicon(&payload).await?)
     }
 
+    /// Batch site-icon backfill for imported/legacy entries (desktop
+    /// favicon.backfill_start parity). Returns the initial status JSON;
+    /// errors when the setting is off or a job already runs.
+    pub async fn favicon_backfill_start(&self) -> Result<String, BaluardError> {
+        Ok(baluard_runtime::icon_backfill::start(&self.state).await?)
+    }
+
+    /// Backfill progress snapshot; same JSON shape start() returns.
+    pub fn favicon_backfill_status(&self) -> String {
+        baluard_runtime::icon_backfill::status(&self.state)
+    }
+
+    /// Stop a running backfill; counts keep what completed before the stop.
+    pub fn favicon_backfill_cancel(&self) {
+        baluard_runtime::icon_backfill::cancel(&self.state)
+    }
+
     /// Archive a cipher: hide from the main list, search, and suggestions.
     pub async fn archive_cipher(&self, id: String) -> Result<(), BaluardError> {
         Ok(self.state.archive_cipher(&id).await?)

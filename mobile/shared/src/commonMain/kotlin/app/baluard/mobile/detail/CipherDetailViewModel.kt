@@ -1,6 +1,7 @@
 package app.baluard.mobile.detail
 
 import androidx.compose.runtime.getValue
+import app.baluard.mobile.platform.SiteIcon
 import app.baluard.mobile.platform.platformLogE
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -59,6 +60,7 @@ class CipherDetailViewModel(private val repo: VaultRepository) {
                 passwordHistory = parsePasswordHistory(obj),
                 // G18: re-prompt flag also lives on the wire root.
                 reprompt = (obj["reprompt"] as? JsonPrimitive)?.content == "true",
+                faviconBytes = SiteIcon.fromCipherJson(raw),
             )
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
@@ -184,6 +186,8 @@ data class DetailState(
     /** Per-cipher master-password re-prompt flag (wire root). When set,
      * sensitive rows stay behind a password grant (G18). */
     val reprompt: Boolean = false,
+    /** Stored site icon, decoded-decoder-ready bytes; null renders initials. */
+    val faviconBytes: ByteArray? = null,
 )
 
 data class FieldRow(

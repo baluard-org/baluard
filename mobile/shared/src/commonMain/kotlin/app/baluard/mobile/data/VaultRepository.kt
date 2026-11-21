@@ -386,6 +386,21 @@ class VaultRepository {
     suspend fun fetchFavicon(vault: MobileVault, domainOrUri: String): String =
         vault.fetchFavicon(domainOrUri)
 
+    /** Start the batch site-icon backfill (desktop parity). Returns the
+     * initial status JSON; fails when the setting is off or one is running. */
+    suspend fun faviconBackfillStart(vault: MobileVault): Result<String> {
+        return runCatching { vault.faviconBackfillStart() }
+    }
+
+    /** Backfill progress snapshot JSON (same shape start returns). */
+    fun faviconBackfillStatus(vault: MobileVault): String =
+        runCatching { vault.faviconBackfillStatus() }.getOrDefault("")
+
+    /** Stop a running backfill; what completed before the stop keeps. */
+    fun faviconBackfillCancel(vault: MobileVault) {
+        runCatching { vault.faviconBackfillCancel() }
+    }
+
     /** All known tags (tag index) for autocomplete. */
     suspend fun listTags(vault: MobileVault): List<String> {
         val raw = runCatching { vault.listTags() }.getOrNull() ?: return emptyList()

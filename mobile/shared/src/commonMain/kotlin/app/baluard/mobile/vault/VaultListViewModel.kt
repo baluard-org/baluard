@@ -17,6 +17,7 @@ import app.baluard.mobile.data.MobileFolderInfo
 import app.baluard.mobile.data.MobileAskInfo
 import app.baluard.mobile.data.MobileCollectionInfo
 import app.baluard.mobile.data.VaultRepository
+import app.baluard.mobile.platform.SiteIcon
 import app.baluard.mobile.platform.platformLogE
 
 /**
@@ -90,6 +91,14 @@ class VaultListViewModel(private val repo: VaultRepository) {
     private val contentIndex = mutableMapOf<String, String>()
     private var indexedVault: MobileVault? = null
 
+    /** id -> stored favicon bytes (null marker cached too; containsKey
+     *  distinguishes "loaded, none stored" from "not loaded yet"). Wiped by
+     *  refresh()/clear(); the gen flow tells row recompositions to
+     *  re-request after each wipe. */
+    private val faviconCache = HashMap<String, ByteArray?>()
+    private val _faviconGen = MutableStateFlow(0)
+    val faviconGen: StateFlow<Int> = _faviconGen.asStateFlow()
+
     private val _indexVersion = MutableStateFlow(0)
 
     /** Bumps when the deep-search index rebuilds; screens collect it to re-run search. */
@@ -109,11 +118,26 @@ class VaultListViewModel(private val repo: VaultRepository) {
             _collections.value = emptyList()
             _myAsks.value = emptyList()
             contentIndex.clear()
+            faviconCache.clear()
+            _faviconGen.value += 1
             indexedVault = null
         }
     }
 
     fun setQuery(q: String) { _query.value = q }
+
+    /** Lazily loads one entry's stored site icon through the cache. Rows
+     *  call this only for foreign-vault hits via [vault] = null-safe
+     *  callers; the cache is keyed by id alone, so it is only fed from the
+     *  owning vault's listings. */
+    suspend fun faviconFor(vault: MobileVault, id: String): ByteArray? {
+        if (faviconCache.containsKey(id)) return faviconCache[id]
+        val bytes = runCatching { repo.getCipher(vault, id, decrypt = true) }
+            .getOrNull()
+            ?.let { SiteIcon.fromCipherJson(it) }
+        faviconCache[id] = bytes
+        return bytes
+    }
 
     /** Reload all slices from the runtime. Call after unlock + after mutations. */
     suspend fun refresh(vault: MobileVault) {
@@ -137,6 +161,10 @@ class VaultListViewModel(private val repo: VaultRepository) {
         _collections.value = runCatching { repo.listCollections(vault) }.getOrDefault(emptyList())
         _myAsks.value = runCatching { repo.listMyAsks(vault) }.getOrDefault(emptyList())
         invalidateContentIndex()
+        // Rows keep icons from the previous data state after a mutation;
+        // wiping here makes the next visible row bind re-fetch fresh bytes.
+        faviconCache.clear()
+        _faviconGen.value += 1
         // Rebuild while searching so content matches survive data changes.
         // Owned here (not by screen effects): Compose LaunchedEffects run
         // concurrently, so declaration order cannot guarantee refresh finishes

@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -172,6 +173,7 @@ fun SettingsScreen(
     authViewModel: AuthViewModel,
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
+    onIconsChanged: () -> Unit = {},
     onOpenPeople: () -> Unit = {},
     onSyncNudge: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
@@ -472,6 +474,11 @@ val entitlement by Entitlements.state.collectAsState()
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                if (fetchFavicons) {
+                    Spacer(Modifier.height(8.dp))
+                    SiteIconBackfillSection(vault = vault, repo = repo, onChanged = onIconsChanged)
+                }
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -3294,6 +3301,130 @@ val entitlement by Entitlements.state.collectAsState()
 
             Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+/**
+ * Site-icon backfill (desktop IconBackfillSection parity): imported and
+ * legacy entries only gain icons through this batch job; displaying stored
+ * icons is free and needs none of this. Reattaches to a job already
+ * running when the screen re-enters; completion of a self-started job
+ * shows the summary, completion of a foreign one just leaves progress.
+ */
+@Composable
+private fun SiteIconBackfillSection(vault: MobileVault, repo: VaultRepository, onChanged: () -> Unit) {
+    var status by remember { mutableStateOf<JsonObject?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun snapshot(raw: String?): JsonObject? =
+        raw?.let { runCatching { Json.parseToJsonElement(it) as? JsonObject }.getOrNull() }
+
+    fun summarize(s: JsonObject): String? {
+        val err = s.str("error")
+        if (err == "Cancelled.") return null
+        if (!err.isNullOrBlank()) return err
+        val total = s.str("total")?.toIntOrNull() ?: 0
+        if (total == 0) return t("settings.iconsUpToDate")
+        return t(
+            "settings.iconsDone",
+            s.str("fetched")?.toIntOrNull() ?: 0,
+            s.str("skipped")?.toIntOrNull() ?: 0,
+        )
+    }
+
+    LaunchedEffect(vault) {
+        val first = snapshot(runCatching { repo.faviconBackfillStatus(vault) }.getOrNull()) ?: return@LaunchedEffect
+        if (first.str("running") != "true") return@LaunchedEffect
+        busy = true
+        status = first
+        while (true) {
+            delay(500)
+            val now = snapshot(runCatching { repo.faviconBackfillStatus(vault) }.getOrNull()) ?: continue
+            status = now
+            if (now.str("running") != "true") {
+                busy = false
+                onChanged()
+                break
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = t("settings.iconsTitle"),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            text = t("settings.iconsDesc"),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        status?.takeIf { it.str("running") == "true" }?.let { s ->
+            Text(
+                text = buildString {
+                    append(
+                        t(
+                            "settings.iconsProgress",
+                            s.str("done")?.toIntOrNull() ?: 0,
+                            s.str("total")?.toIntOrNull() ?: 0,
+                            s.str("fetched")?.toIntOrNull() ?: 0,
+                        ),
+                    )
+                    s.str("current_domain")?.takeIf { it.isNotBlank() }?.let {
+                        append(" ")
+                        append(t("settings.iconsFetching", it))
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
+        result?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        BaluardOutlinedButton(
+            text = if (busy) t("settings.iconsStop") else t("settings.iconsStart"),
+            onClick = {
+                if (busy) {
+                    repo.faviconBackfillCancel(vault)
+                } else {
+                    scope.launch {
+                        busy = true
+                        val start = repo.faviconBackfillStart(vault)
+                        val obj = snapshot(start.getOrNull())
+                        if (obj == null || obj.str("running") != "true") {
+                            busy = false
+                            result = obj?.str("error")
+                                ?: start.exceptionOrNull()?.message
+                                ?: return@launch
+                            return@launch
+                        }
+                        status = obj
+                        while (true) {
+                            delay(500)
+                            val now = snapshot(runCatching { repo.faviconBackfillStatus(vault) }.getOrNull()) ?: continue
+                            status = now
+                            if (now.str("running") != "true") {
+                                busy = false
+                                result = summarize(now)
+                                onChanged()
+                                break
+                            }
+                        }
+                    }
+                }
+            },
+        )
     }
 }
 
