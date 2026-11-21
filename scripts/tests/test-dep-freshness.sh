@@ -42,16 +42,16 @@ chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH"
 
 out="$(cd "$SANDBOX" && "$SANDBOX/scripts/dep-freshness.sh")"
-grep -q 'libgit2-sys *repo *0.18.8+1.9.7 *STALE (libgit2 behind)' <<<"$out" \
+grep -q 'libgit2-sys *repo:0.18.1+1.9.0 *0.18.8+1.9.7 *STALE (libgit2 behind)' <<<"$out" \
   || { echo "expected libgit2-sys stale: $out" >&2; exit 1; }
-grep -q 'git2 *repo *0.21.0 *STALE (0.x minor behind)' <<<"$out" \
+grep -q 'git2 *repo:0.20.2 *0.21.0 *STALE (0.x minor behind)' <<<"$out" \
   || { echo "expected git2 0.x-minor stale: $out" >&2; exit 1; }
-grep -q 'zip *repo *9.8.1 *STALE (major behind)' <<<"$out" \
+grep -q 'zip *repo:2.6.1 *9.8.1 *STALE (major behind)' <<<"$out" \
   || { echo "expected zip major stale: $out" >&2; exit 1; }
 # The desktop lock carries its own rows (labelled by its parent dir).
 grep -q 'src-tauri' <<<"$out" || { echo "expected desktop lock rows: $out" >&2; exit 1; }
 # A crate absent from a lock reports, never lies STALE.
-grep -q 'zip *src-tauri *9.8.1 *not in lock' <<<"$out" \
+grep -q 'zip *src-tauri:- *9.8.1 *not in lock' <<<"$out" \
   || { echo "expected desktop zip not-in-lock: $out" >&2; exit 1; }
 
 # Current crate reads ok.

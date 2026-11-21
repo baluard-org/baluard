@@ -71,10 +71,10 @@ if [[ "${BALUARD_RELEASE_PUBLISH_SKIP_VERIFY:-0}" == "1" ]]; then
 fi
 # Pre-republish sweep: only the release-side checks can pass here; the
 # packages/F-Droid/apt/updates-channel gates run after the republish.
-"$ROOT/scripts/verify-release-live.sh" "$TAG" --pre-publish
-exit_code=$?
-if ((exit_code == 0)); then
+rc=0
+"$ROOT/scripts/verify-release-live.sh" "$TAG" --pre-publish || rc=$?
+if ((rc == 0)); then
   echo "release side is green. After the packages repo republish + channel manifest, run:"
   echo "  scripts/verify-release-live.sh $TAG --packages-sha <republish-sha>"
 fi
-exit $exit_code
+exit $rc

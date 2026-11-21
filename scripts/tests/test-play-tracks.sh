@@ -62,7 +62,14 @@ chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH" PLAY_TEST_TRACK_JSON="$TRACK_JSON" PLAY_TEST_TRACK=internal \
   BALUARD_PLAY_SERVICE_ACCOUNT_JSON="$TMP/sa.json"
 
-out="$( (cd "$SANDBOX" && "$SANDBOX/scripts/upload-play-release.sh" --tracks) 2>&1 )"
+# The run must leave no secrets in the temp dir (the SA key, JWT, auth header).
+SCRATCH="$TMP/tmpdir"; mkdir -p "$SCRATCH"
+out="$( (cd "$SANDBOX" && TMPDIR="$SCRATCH" "$SANDBOX/scripts/upload-play-release.sh" --tracks) 2>&1 )"
+if find "$SCRATCH" -name 'privkey.pem' -o -name 'auth-header' -o -name 'assertion' | grep -q .; then
+  echo "secrets survived the run:" >&2
+  find "$SCRATCH" -name 'privkey.pem' -o -name 'auth-header' -o -name 'assertion' >&2
+  exit 1
+fi
 grep -q "play/internal: $CODE" <<<"$out"
 grep -q "play/alpha:    $CODE" <<<"$out"
 grep -q "tracks agree on $CODE" <<<"$out"

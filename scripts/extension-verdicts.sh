@@ -32,9 +32,9 @@ for tool in curl jq openssl python3; do
 done
 
 REFUSALS=()
-CLEANUP_DIR=""
+CLEANUP_DIRS=()
 
-cleanup() { [[ -n "$CLEANUP_DIR" ]] && rm -rf "$CLEANUP_DIR"; return 0; }
+cleanup() { local d; for d in "${CLEANUP_DIRS[@]}"; do rm -rf "$d"; done; }
 trap cleanup EXIT
 
 # ── AMO ─────────────────────────────────────────────────────────────────────
@@ -47,8 +47,8 @@ amo_verdict() {
     echo "amo: not configured"
     return 3
   fi
-  CLEANUP_DIR="$(mktemp -d)"
-  local sec="$CLEANUP_DIR"
+  CLEANUP_DIRS+=("$(mktemp -d)")
+  local sec="${CLEANUP_DIRS[-1]}"
   chmod 700 "$sec"
   local now b64 header payload sig resp version status
   now="$(date +%s)"
@@ -103,8 +103,8 @@ chrome_verdict() {
     echo "chrome: set all of ${missing[*]} together, not some" >&2
     return 1
   fi
-  CLEANUP_DIR="$(mktemp -d)"
-  local sec="$CLEANUP_DIR"
+  CLEANUP_DIRS+=("$(mktemp -d)")
+  local sec="${CLEANUP_DIRS[-1]}"
   chmod 700 "$sec"
   printf '%s' "$BALUARD_CHROME_CLIENT_SECRET" > "$sec/client-secret"
   printf '%s' "$BALUARD_CHROME_REFRESH_TOKEN" > "$sec/refresh-token"

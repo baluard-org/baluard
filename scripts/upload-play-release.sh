@@ -135,7 +135,7 @@ if $TRACKS_MODE; then
   [[ -n "$EDIT" ]] || die "edit creation returned no id"
   # The read edit is a Play-side resource with a lifetime; release it on any
   # exit path, including a mid-read die.
-  trap 'api -X DELETE "$API_BASE/edits/$EDIT" >/dev/null 2>&1 || true' EXIT
+  trap 'api -X DELETE "$API_BASE/edits/$EDIT" >/dev/null 2>&1 || true; rm -rf "$SEC"' EXIT
   read_track() {
     local t="$1"
     if ! api "$API_BASE/edits/$EDIT/tracks/$t" > "$SEC/track-$t.json" 2>"$SEC/track-$t.err"; then

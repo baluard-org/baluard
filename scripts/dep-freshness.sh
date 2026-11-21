@@ -20,12 +20,12 @@ UA="baluard-release-tools (+https://github.com/baluard-org/baluard)"
 command -v curl >/dev/null 2>&1 || { echo "missing tool: curl" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "missing tool: python3" >&2; exit 1; }
 
-printf '%-16s %-26s %-12s %-12s %s\n' CRATE LOCK LATEST VERDICT
+printf '%-16s %-28s %-12s %s\n' CRATE 'LOCK (dir:version)' LATEST VERDICT
 for name in "${CRATES[@]}"; do
   latest="$(curl -fsSL --max-time 20 -A "$UA" "https://crates.io/api/v1/crates/$name" \
     | python3 -c 'import json, sys; print(json.load(sys.stdin).get("crate", {}).get("max_stable_version", ""))' 2>/dev/null || true)"
   if [[ -z "$latest" ]]; then
-    printf '%-16s %-26s %-12s %-12s %s\n' "$name" "-" "?" "lookup failed"
+    printf '%-16s %-28s %-12s %s\n' "$name" "-" "?" "lookup failed"
     continue
   fi
   for lock in "${LOCKS[@]}"; do
@@ -43,7 +43,7 @@ print(",".join(sorted(versions)) or "?")
 PY
   )"
   if [[ "$locked" == "?" ]]; then
-    printf '%-16s %-26s %-12s %-12s %s\n' "$name" "$(basename "$(dirname "$lock")")" "$latest" "not in lock"
+    printf '%-16s %-28s %-12s %s\n' "$name" "$(basename "$(dirname "$lock")"):-" "$latest" "not in lock"
     continue
   fi
   # A lock can hold several lines of one crate; the highest one decides.
@@ -62,6 +62,6 @@ PY
   else
     [[ "${locked_cmp%%.*}" == "${latest%%.*}" ]] || verdict="STALE (major behind)"
   fi
-  printf '%-16s %-26s %-12s %-12s %s\n' "$name" "$(basename "$(dirname "$lock")")" "$latest" "$verdict"
+    printf '%-16s %-28s %-12s %s\n' "$name" "$(basename "$(dirname "$lock")"):$locked" "$latest" "$verdict"
   done
 done
