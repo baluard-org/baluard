@@ -1225,9 +1225,7 @@ impl VaultHandle {
                 // message; only the unwrap failure means "wrong words"
                 // (review S9).
                 match &e {
-                    BaluardError::Vault(
-                        VaultError::Corrupt(_) | VaultError::Metadata(_),
-                    ) => e,
+                    BaluardError::Vault(VaultError::Corrupt(_) | VaultError::Metadata(_)) => e,
                     _ => BaluardError::from(VaultError::InvalidOperation(
                         "That recovery phrase does not open this vault's recovery kit.".into(),
                     )),
@@ -1300,7 +1298,7 @@ impl VaultHandle {
         } else {
             crate::vault::members::MemberRole::Admin
         };
-        let mut new_member = crate::vault::members::MemberFile {
+        let new_member = crate::vault::members::MemberFile {
             id: Uuid::new_v4(),
             display_name: device_name.to_string(),
             email: None,
@@ -1355,7 +1353,8 @@ impl VaultHandle {
         // vault. Best-effort: vaults without an escrow keep the old
         // behavior (identity None).
         let restored_identity = (|| {
-            let escrow_raw = std::fs::read_to_string(vault_path.join("meta/identity-escrow.json")).ok()?;
+            let escrow_raw =
+                std::fs::read_to_string(vault_path.join("meta/identity-escrow.json")).ok()?;
             let escrow: serde_json::Value = serde_json::from_str(&escrow_raw).ok()?;
             let eph = hex::decode(escrow["ephemeral_public"].as_str()?).ok()?;
             let ct = hex::decode(escrow["encrypted_key"].as_str()?).ok()?;
@@ -1368,7 +1367,8 @@ impl VaultHandle {
             let recovery_key = kit_phrase.derive_key();
             let seed32 = <[u8; 32]>::try_from(&recovery_key[..32]).ok()?;
             let rec_secret = x25519_dalek::StaticSecret::from(seed32);
-            let seed = hpke_wrap::unwrap_key(&eph, &ct, &tag, &rec_secret, "identity-escrow").ok()?;
+            let seed =
+                hpke_wrap::unwrap_key(&eph, &ct, &tag, &rec_secret, "identity-escrow").ok()?;
             if seed.len() != 32 {
                 return None;
             }
@@ -1430,25 +1430,26 @@ impl VaultHandle {
                 created.push(p.to_path_buf());
             }
         };
-        let journal_overwrite =
-            |overwrites: &mut Vec<(std::path::PathBuf, Vec<u8>)>, p: &std::path::Path| {
-                if let Ok(old) = std::fs::read(p) {
-                    overwrites.push((p.to_path_buf(), old));
-                }
-            };
-        let rollback = |created: &[std::path::PathBuf],
-                        overwrites: &[(std::path::PathBuf, Vec<u8>)],
-                        renamed: &[(std::path::PathBuf, std::path::PathBuf)]| {
-            for (path, old) in overwrites.iter().rev() {
-                let _ = super::write_vault_file(path, old);
-            }
-            for path in created {
-                let _ = std::fs::remove_file(path);
-            }
-            for (original, backup) in renamed.iter().rev() {
-                let _ = std::fs::rename(backup, original);
+        let journal_overwrite = |overwrites: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+                                 p: &std::path::Path| {
+            if let Ok(old) = std::fs::read(p) {
+                overwrites.push((p.to_path_buf(), old));
             }
         };
+        let rollback =
+            |created: &[std::path::PathBuf],
+             overwrites: &[(std::path::PathBuf, Vec<u8>)],
+             renamed: &[(std::path::PathBuf, std::path::PathBuf)]| {
+                for (path, old) in overwrites.iter().rev() {
+                    let _ = super::write_vault_file(path, old);
+                }
+                for path in created {
+                    let _ = std::fs::remove_file(path);
+                }
+                for (original, backup) in renamed.iter().rev() {
+                    let _ = std::fs::rename(backup, original);
+                }
+            };
 
         let new_member_path = vault_path
             .join(crate::vault::members::MEMBERS_DIR)
@@ -1461,7 +1462,10 @@ impl VaultHandle {
 
         let keywrap_path = vault_path.join(format!("meta/keywrap/{device_id}.json"));
         journal_create(&mut created, &keywrap_path);
-        if let Err(e) = super::write_vault_file(&keywrap_path, serde_json::to_string_pretty(&keywrap).unwrap().as_bytes()) {
+        if let Err(e) = super::write_vault_file(
+            &keywrap_path,
+            serde_json::to_string_pretty(&keywrap).unwrap().as_bytes(),
+        ) {
             rollback(&created, &overwrites, &renamed);
             return Err(e.into());
         }
@@ -6411,15 +6415,18 @@ impl VaultHandle {
             None
         };
         let restore_path = self.path.clone();
-        let restore_snapshots = move |snapshots: &[(std::path::PathBuf, Vec<u8>)],
-                                      kit_snapshot: &Option<Vec<u8>>| {
-            for (p, old) in snapshots {
-                let _ = super::write_vault_file(p, old);
-            }
-            if let Some(old_kit) = kit_snapshot {
-                let _ = super::write_vault_file(&restore_path.join("meta/recovery-kit.json"), old_kit);
-            }
-        };
+        let restore_snapshots =
+            move |snapshots: &[(std::path::PathBuf, Vec<u8>)], kit_snapshot: &Option<Vec<u8>>| {
+                for (p, old) in snapshots {
+                    let _ = super::write_vault_file(p, old);
+                }
+                if let Some(old_kit) = kit_snapshot {
+                    let _ = super::write_vault_file(
+                        &restore_path.join("meta/recovery-kit.json"),
+                        old_kit,
+                    );
+                }
+            };
         let recovery_data = serde_json::json!({
             "ephemeral_public": hex::encode(eph_pub),
             "encrypted_key": hex::encode(ct),
@@ -14759,12 +14766,15 @@ mod tests {
     #[test]
     fn solo_kit_recovery_binds_owner_and_tombstones_the_founder() {
         let dir = tempfile::tempdir().unwrap();
-        let (handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let phrase = secrets.recovery_phrase.phrase();
         drop(handle);
 
@@ -14814,12 +14824,15 @@ mod tests {
     #[test]
     fn multi_admin_kit_recovery_stays_admin_beside_survivors() {
         let dir = tempfile::tempdir().unwrap();
-        let (handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let phrase = secrets.recovery_phrase.phrase();
         let founder_id = {
             let bindings_device = handle.device_id;
@@ -14867,7 +14880,10 @@ mod tests {
             .iter()
             .find(|m| m.id == founder_id)
             .expect("founder row");
-        assert!(founder.reset.is_none(), "survivor rule keeps the founder row live");
+        assert!(
+            founder.reset.is_none(),
+            "survivor rule keeps the founder row live"
+        );
         let recovered_row = members
             .iter()
             .find(|m| m.display_name == "recovered-device")
@@ -14878,12 +14894,15 @@ mod tests {
     #[test]
     fn in_place_recovery_replaces_local_keys_and_restores_identity() {
         let dir = tempfile::tempdir().unwrap();
-        let (handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let phrase = secrets.recovery_phrase.phrase();
         drop(handle);
 
@@ -14917,10 +14936,7 @@ mod tests {
                 // founder identity so collection grant wraps stay
                 // readable (review S3). The row pubkey stays None until
                 // the normal rotation flow publishes it.
-                assert!(
-                    u.identity.is_some(),
-                    "identity restored from escrow"
-                );
+                assert!(u.identity.is_some(), "identity restored from escrow");
             }
             VaultState::Locked => panic!("expected unlocked"),
         }
@@ -14929,31 +14945,40 @@ mod tests {
     #[test]
     fn kit_recovery_refuses_swapped_canary_without_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let (handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let phrase = secrets.recovery_phrase.phrase();
         drop(handle);
 
         let canary_path = dir.path().join("meta/rk-canary.enc");
         std::fs::write(&canary_path, b"swapped").unwrap();
-        let members_before = crate::vault::members::list_members(dir.path()).unwrap().len();
+        let members_before = crate::vault::members::list_members(dir.path())
+            .unwrap()
+            .len();
         let unlock_before = std::fs::read(dir.path().join("meta/member-unlock.json")).ok();
 
-        assert!(VaultHandle::recover_device_with_kit(
-            dir.path(),
-            &phrase,
-            "recovered-password",
-            "recovered-device",
-        )
-        .is_err());
+        assert!(
+            VaultHandle::recover_device_with_kit(
+                dir.path(),
+                &phrase,
+                "recovered-password",
+                "recovered-device",
+            )
+            .is_err()
+        );
 
         assert_eq!(std::fs::read(&canary_path).unwrap(), b"swapped");
         assert_eq!(
-            crate::vault::members::list_members(dir.path()).unwrap().len(),
+            crate::vault::members::list_members(dir.path())
+                .unwrap()
+                .len(),
             members_before
         );
         assert_eq!(
@@ -14965,30 +14990,39 @@ mod tests {
     #[test]
     fn wrong_phrase_recovery_changes_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let (handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let _ = secrets;
         drop(handle);
 
         let wrong = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
-        let members_before = crate::vault::members::list_members(dir.path()).unwrap().len();
+        let members_before = crate::vault::members::list_members(dir.path())
+            .unwrap()
+            .len();
         let unlock_before = std::fs::read(dir.path().join("meta/member-unlock.json")).ok();
         let signer_before = std::fs::read(dir.path().join("meta/recovery-signer.key")).ok();
 
-        assert!(VaultHandle::recover_device_with_kit(
-            dir.path(),
-            wrong,
-            "recovered-password",
-            "recovered-device",
-        )
-        .is_err());
+        assert!(
+            VaultHandle::recover_device_with_kit(
+                dir.path(),
+                wrong,
+                "recovered-password",
+                "recovered-device",
+            )
+            .is_err()
+        );
 
         assert_eq!(
-            crate::vault::members::list_members(dir.path()).unwrap().len(),
+            crate::vault::members::list_members(dir.path())
+                .unwrap()
+                .len(),
             members_before
         );
         assert_eq!(
@@ -15004,12 +15038,15 @@ mod tests {
     #[test]
     fn solo_takeover_requires_a_single_live_row() {
         let dir = tempfile::tempdir().unwrap();
-        let (handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let phrase = secrets.recovery_phrase.phrase();
         drop(handle);
 
@@ -15047,7 +15084,9 @@ mod tests {
         .unwrap();
 
         let members = crate::vault::members::list_members(dir.path()).unwrap();
-        let founder = members.iter().find(|m| m.reset.is_none() && m.role == crate::vault::members::MemberRole::Owner)
+        let founder = members
+            .iter()
+            .find(|m| m.reset.is_none() && m.role == crate::vault::members::MemberRole::Owner)
             .expect("founder owner row stays live");
         assert!(founder.reset.is_none());
         let recovered_row = members
@@ -15060,12 +15099,15 @@ mod tests {
     #[test]
     fn phrase_rotation_replaces_the_kit() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut handle, secrets) =
-            crate::vault::creation::VaultCreator::new(dir.path(), "original-password", "test-device")
-                .kdf_profile(KdfProfile::MobileLow)
-                .initialize_git(false)
-                .execute()
-                .unwrap();
+        let (mut handle, secrets) = crate::vault::creation::VaultCreator::new(
+            dir.path(),
+            "original-password",
+            "test-device",
+        )
+        .kdf_profile(KdfProfile::MobileLow)
+        .initialize_git(false)
+        .execute()
+        .unwrap();
         let old_phrase = secrets.recovery_phrase.phrase();
         handle.unlock("original-password").unwrap();
 
@@ -15074,19 +15116,28 @@ mod tests {
 
         // The retired phrase opens nothing; the new one recovers the same
         // live Root Key from BOTH escrows.
-        assert!(crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &old_phrase).is_err());
+        assert!(
+            crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &old_phrase).is_err()
+        );
         crate::vault::recovery_kit::verify_recovery_phrase(dir.path(), &new_phrase).unwrap();
         let live_root = handle.unlocked().root().unwrap().clone();
-        let recovered =
-            crate::vault::recovery_kit::recover_root_from_kit(dir.path(), handle.vault_id, &new_phrase)
-                .unwrap();
+        let recovered = crate::vault::recovery_kit::recover_root_from_kit(
+            dir.path(),
+            handle.vault_id,
+            &new_phrase,
+        )
+        .unwrap();
         assert_eq!(recovered.as_bytes(), live_root.as_bytes());
         // The kit half specifically must reject the retired phrase (T1):
         // verify_recovery_phrase reads recovery.json, so without this the
         // test would pass even if the kit were never re-wrapped.
         assert!(
-            crate::vault::recovery_kit::recover_root_from_kit(dir.path(), handle.vault_id, &old_phrase)
-                .is_err()
+            crate::vault::recovery_kit::recover_root_from_kit(
+                dir.path(),
+                handle.vault_id,
+                &old_phrase
+            )
+            .is_err()
         );
     }
 
