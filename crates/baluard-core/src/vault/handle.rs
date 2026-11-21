@@ -6769,15 +6769,21 @@ impl VaultHandle {
 
     /// Background timestamp normalization (static, no &self).
     fn normalize_timestamps_bg(vault_path: &std::path::Path, creation_ts: u64) {
-        use filetime::{FileTime, set_file_mtime};
-        let target = FileTime::from_unix_time(creation_ts as i64, 0);
+        let target =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(creation_ts);
 
-        fn normalize_dir(dir: &std::path::Path, target: FileTime) {
+        fn set_mtime(path: &std::path::Path, target: std::time::SystemTime) {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
+                let _ = f.set_times(std::fs::FileTimes::new().set_modified(target));
+            }
+        }
+
+        fn normalize_dir(dir: &std::path::Path, target: std::time::SystemTime) {
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        let _ = set_file_mtime(&path, target);
+                        set_mtime(&path, target);
                     } else if path.is_dir() {
                         normalize_dir(&path, target);
                     }
@@ -6795,7 +6801,7 @@ impl VaultHandle {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|e| e == "enc") {
-                    let _ = set_file_mtime(&path, target);
+                    set_mtime(&path, target);
                 }
             }
         }
@@ -16681,9 +16687,12 @@ mod tests {
         let live = vault_path.join("ciphers/00000000-0000-0000-0000-00000000000y.enc");
         std::fs::write(&live, b"x").unwrap();
 
-        let old = filetime::FileTime::from_unix_time(1_000_000, 0);
-        filetime::set_file_mtime(&trashed, old).unwrap();
-        filetime::set_file_mtime(&live, old).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        for p in [&trashed, &live] {
+            let f = std::fs::OpenOptions::new().write(true).open(p).unwrap();
+            f.set_times(std::fs::FileTimes::new().set_modified(old))
+                .unwrap();
+        }
 
         VaultHandle::normalize_timestamps_bg(&vault_path, 2_000_000);
 

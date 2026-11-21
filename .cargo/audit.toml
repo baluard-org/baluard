@@ -1,0 +1,48 @@
+# cargo-audit advisory policy for the hard release gate (`just audit`).
+# An entry here is an accepted, documented risk with a named ADR - never a
+# silent drop. New advisories NOT listed here fail `just check` immediately.
+#
+# All entries cite ADR 0115 (dependency-advisory backlog), which groups the
+# findings into dependency-major families with unblocking conditions:
+[advisories]
+ignore = [
+    # Family 1: held by the iroh 0.35 pin (hickory 0.25.x + rustls-webpki
+    # 0.102.x); clears when iroh moves and the macOS leg is rerun.
+    "RUSTSEC-2026-0118",
+    "RUSTSEC-2026-0119",
+    "RUSTSEC-2026-0487",
+    "RUSTSEC-2026-0489",
+    "RUSTSEC-2026-0490",
+    "RUSTSEC-2026-0491",
+    "RUSTSEC-2026-0504",
+    "RUSTSEC-2026-0505",
+    "RUSTSEC-2026-0511",
+    "RUSTSEC-2026-0512",
+    "RUSTSEC-2026-0514",
+    "RUSTSEC-2026-0530",
+    "RUSTSEC-2026-0531",
+    "RUSTSEC-2026-0532",
+    "RUSTSEC-2026-0549",
+    "RUSTSEC-2026-0550",
+    "RUSTSEC-2026-0551",
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0382",
+    # Family 2: the zip crate, patched only in 9.x; blocked on the desktop
+    # extraction rewrite. Bounded exposure: signed-bytes + size cap + zipslip
+    # guard before any entry is written.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+    "RUSTSEC-2026-0545",
+    "RUSTSEC-2026-0548",
+    # Family 3: crypto-bigint held by the rsa 0.10-rc pin; same import path
+    # ADR 0111 already accepts for RSA.
+    "RUSTSEC-2026-0387",
+    # The RSA import acceptance itself: Marvin timing side channel, no fixed
+    # release upstream (0.10 rc included) - ADR 0111.
+    "RUSTSEC-2023-0071",
+]

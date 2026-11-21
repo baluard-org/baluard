@@ -248,6 +248,11 @@ test-release-scripts:
 	./scripts/tests/test-sign-updater-sigs.sh
 	./scripts/tests/test-stage-release-assets.sh
 	./scripts/tests/test-upload-play-release.sh
+	./scripts/tests/test-extension-verdicts.sh
+	./scripts/tests/test-refresh-webview2.sh
+	./scripts/tests/test-release-publish.sh
+	./scripts/tests/test-dep-freshness.sh
+	./scripts/tests/test-play-tracks.sh
 	./scripts/tests/test-build-arch-repo.sh
 	./scripts/tests/test-build-apt-repo.sh
 
@@ -434,12 +439,17 @@ lint-fix:
 	{{ linuxbrew_env }} cargo clippy --fix --allow-dirty --all-targets
 
 # L7 fix: Run cargo-audit to check for known security advisories in dependencies.
-# Skipped silently if cargo-audit is not installed.
+# Policy: .cargo/audit.toml (accepted risks carry an ADR citation). The gate
+# is hard: no binary = no audit = fail, with an explicit escape for hosts
+# that must skip it.
 audit:
 	@if command -v cargo-audit >/dev/null 2>&1; then \
-		cargo audit; \
+		cargo audit && cargo audit --file desktop/src-tauri/Cargo.lock; \
+	elif [[ "${BALUARD_SKIP_AUDIT:-0}" == "1" ]]; then \
+		echo "audit skipped (BALUARD_SKIP_AUDIT=1)"; \
 	else \
-		echo "cargo-audit not installed (run: cargo install cargo-audit --locked)"; \
+		echo "cargo-audit not installed; run 'cargo install cargo-audit --locked' or export BALUARD_SKIP_AUDIT=1 to skip" >&2; \
+		exit 1; \
 	fi
 
 # The workspace declares rust-version = 1.85 but the stable-track CI jobs
@@ -883,6 +893,37 @@ smoke-pkg pkg:
 # BALUARD_PLAY_ALLOW_PRODUCTION=1. Track: https://baluard.app docs/dev/google-play.md
 play-submit:
 	./scripts/upload-play-release.sh
+
+# Both pre-release tracks in one command: internal upload, then alpha (the
+# second run assigns the committed bundle instead of re-uploading), then
+# the track-parity read-back gate (release-protocol: both pre-release
+# tracks carry the same version every release).
+play-submit-all:
+	./scripts/upload-play-release.sh
+	BALUARD_PLAY_TRACK=alpha ./scripts/upload-play-release.sh
+	./scripts/upload-play-release.sh --tracks
+
+# Report store verdicts without submitting anything (AMO version status +
+# Chrome item status); with --guard it refuses to let ext-submit stack a
+# new submission on a listing still in review.
+ext-verdicts:
+	./scripts/extension-verdicts.sh
+
+# Freshness table for the crates the release checklist names manually
+# (libgit2-sys and friends): locked version vs the newest crates.io release.
+dep-freshness:
+	./scripts/dep-freshness.sh
+
+# Publish the staged release: notes pre-flight (verbatim approval lives in
+# the notes file), gh release create --latest, stable-set upload, and the
+# live-verify sweep as the final gate.
+release-publish tag notes:
+	./scripts/release-publish.sh {{ tag }} {{ notes }}
+
+# Refresh the portable build's WebView2 fixed-runtime pin (review the hash
+# before committing). --check prints pinned vs available and exits 0.
+wv2-refresh:
+	./scripts/refresh-webview2.sh
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 
