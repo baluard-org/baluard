@@ -119,6 +119,7 @@ ZIP="$DIST/Baluard_${VERSION}_x64-portable.zip"
 mkdir -p "$DIST"
 rm -f "$ZIP"
 (cd "$STAGE" && zip -qr "$ZIP" Baluard/)
+rm -rf "$STAGE"   # staging residue would trip stage-release-assets' unmapped audit
 
 echo "portable zip: $ZIP (WebView2 $WV2_VERSION)"
 ls -lh "$ZIP"

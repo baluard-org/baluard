@@ -10,6 +10,7 @@ STABLE_ASSETS=(
   Baluard-amd64.deb
   Baluard-amd64.rpm
   Baluard-amd64-setup.exe
+  Baluard-amd64-portable.zip
   Baluard-cli-amd64.tar.gz
   Baluard-android.apk
   Baluard-extension-chrome.zip

@@ -93,6 +93,8 @@ while IFS= read -r f; do
     *"${VER}"*aarch64.app.tar.gz)             target="Baluard-arm64.app.tar.gz" ;;
     "Baluard_${VER}_x64-setup.exe")           target="Baluard-amd64-setup.exe" ;;
     "Baluard_${VER}_x64-setup.exe.sig")       target="Baluard-amd64-setup.exe.sig" ;;
+    "Baluard_${VER}_x64-portable.zip")        target="Baluard-amd64-portable.zip" ;;
+    "Baluard_${VER}_x64-portable.zip.sig")    target="Baluard-amd64-portable.zip.sig" ;;
     "baluard-extension-${VER}-chrome.zip")    target="Baluard-extension-chrome.zip" ;;
     "baluard-extension-${VER}-firefox.zip")   target="Baluard-extension-firefox.zip" ;;
     # dev-smoke macOS build: ad-hoc signed, never notarized; published so
@@ -117,8 +119,9 @@ while IFS= read -r f; do
   fi
 # archive-* subtrees hold superseded release artifacts kept for recovery;
 # they are deliberately never staged, so prune them instead of letting the
-# stale-version guard reject every future release for their presence
-done < <(find "$SRC" -path "$SRC/archive-*" -prune -o \( -type f -o -type l \) -print)
+# stale-version guard reject every future release for their presence.
+# portable-staging is the portable build's assembly dir, also never a deliverable.
+done < <(find "$SRC" -path "$SRC/archive-*" -prune -o -path "$SRC/portable-staging" -prune -o \( -type f -o -type l \) -print)
 
 if [[ -n "$APK" ]]; then
   [[ -f "$APK" ]] || die "--apk path not found: $APK"
