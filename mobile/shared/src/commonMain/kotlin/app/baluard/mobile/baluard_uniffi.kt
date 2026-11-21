@@ -9754,8 +9754,10 @@ data class MobileCreateResult(
   var `vault`: MobileVault,
   var `recoveryPhrase`: MobileRecoveryPhrase,
   /**
-   * Family vaults only: the Space Recovery Kit phrase, shown exactly
-   * once at creation. Personal vaults carry None.
+   * Usually None: since kit-at-birth the CEREMONY phrase is the kit
+   * phrase on every vault, so creation surfaces one phrase only.
+   * Some only on a family conversion that had to mint a fresh kit for
+   * a legacy vault (the old phrase shown exactly once, then dead).
    */
   var `kitPhrase`: kotlin.String?,
 ) : Disposable {

@@ -9,8 +9,8 @@
 //! ([`crate::bridge::BridgeRegistry`]) holds the tokens and caps this
 //! module charges.
 
-use baluard_proto::{GatewayRequest, GatewayResponse};
 use baluard_core::bridge::PairingId;
+use baluard_proto::{GatewayRequest, GatewayResponse};
 use zeroize::Zeroize;
 
 use crate::host::SharedVaultHost;
@@ -336,9 +336,7 @@ pub async fn route_bridge_request<D: BridgeDispatcher>(
     // Contact-view fence: the mobile dispatcher has no route_request-level
     // contact gate, so the bridge policy applies the same default-deny
     // here. On the bridge allowlist a contact view may only read.
-    if state.is_contact_view()
-        && !matches!(req.action.as_str(), "vault.get" | "cipher.totp_code")
-    {
+    if state.is_contact_view() && !matches!(req.action.as_str(), "vault.get" | "cipher.totp_code") {
         return err_response("This is a read-only view of the vault.");
     }
 
@@ -1556,7 +1554,11 @@ mod mobile_dispatcher_tests {
     }
 
     impl BridgeDispatcher for StubDispatcher {
-        async fn dispatch(&self, _req: GatewayRequest, _state: &SharedVaultState) -> GatewayResponse {
+        async fn dispatch(
+            &self,
+            _req: GatewayRequest,
+            _state: &SharedVaultState,
+        ) -> GatewayResponse {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             ok_resp("{}", None)
         }
@@ -1595,9 +1597,16 @@ mod mobile_dispatcher_tests {
         let (host, id) = paired_vault(&sb).await;
         let stub = StubDispatcher::new();
         let resp = route_bridge_request(
-            GatewayRequest { action: "vault.notes".into(), payload: "{}".into(), ..Default::default() },
-            &host, id, &stub,
-        ).await;
+            GatewayRequest {
+                action: "vault.notes".into(),
+                payload: "{}".into(),
+                ..Default::default()
+            },
+            &host,
+            id,
+            &stub,
+        )
+        .await;
         assert!(!resp.success);
         assert_eq!(stub.count(), 0);
     }
@@ -1612,9 +1621,16 @@ mod mobile_dispatcher_tests {
         })
         .to_string();
         let resp = route_bridge_request(
-            GatewayRequest { action: "vault.update".into(), payload, ..Default::default() },
-            &host, id, &stub,
-        ).await;
+            GatewayRequest {
+                action: "vault.update".into(),
+                payload,
+                ..Default::default()
+            },
+            &host,
+            id,
+            &stub,
+        )
+        .await;
         assert!(!resp.success);
         assert_eq!(stub.count(), 0);
     }
@@ -1625,9 +1641,16 @@ mod mobile_dispatcher_tests {
         let (host, id) = paired_vault(&sb).await;
         let stub = StubDispatcher::new();
         let resp = route_bridge_request(
-            GatewayRequest { action: "vault.get".into(), payload: r#"{"id":"x","decrypt":true}"#.into(), ..Default::default() },
-            &host, id, &stub,
-        ).await;
+            GatewayRequest {
+                action: "vault.get".into(),
+                payload: r#"{"id":"x","decrypt":true}"#.into(),
+                ..Default::default()
+            },
+            &host,
+            id,
+            &stub,
+        )
+        .await;
         // get_cipher on an unknown id fails, but the request REACHED the stub
         // and the response must not carry the vault session token.
         assert_eq!(stub.count(), 1);
@@ -1646,7 +1669,13 @@ mod mobile_dispatcher_tests {
         // Empty payload errors.
         for action in ["vault.get", "vault.add", "vault.update", "cipher.totp_code"] {
             let resp = mobile
-                .dispatch(GatewayRequest { action: action.into(), ..Default::default() }, &state)
+                .dispatch(
+                    GatewayRequest {
+                        action: action.into(),
+                        ..Default::default()
+                    },
+                    &state,
+                )
                 .await;
             assert!(!resp.success, "{action} empty payload must fail");
             assert!(!resp.error_message.is_empty());
@@ -1654,19 +1683,32 @@ mod mobile_dispatcher_tests {
 
         // Unknown action fails closed.
         let resp = mobile
-            .dispatch(GatewayRequest { action: "vault.notes".into(), ..Default::default() }, &state)
+            .dispatch(
+                GatewayRequest {
+                    action: "vault.notes".into(),
+                    ..Default::default()
+                },
+                &state,
+            )
             .await;
         assert!(!resp.success && resp.error_message.contains("Unknown action"));
 
         // Allowlist completeness: every non-intercepted allowlisted action
         // must not fall into "Unknown action".
         for action in baluard_core::bridge::BRIDGE_ALLOWED_ACTIONS {
-            if matches!(*action, "bridge.match" | "bridge.config" | "bridge.request_unlock" | "passkey.list") {
+            if matches!(
+                *action,
+                "bridge.match" | "bridge.config" | "bridge.request_unlock" | "passkey.list"
+            ) {
                 continue;
             }
             let resp = mobile
                 .dispatch(
-                    GatewayRequest { action: (*action).into(), payload: "{}".into(), ..Default::default() },
+                    GatewayRequest {
+                        action: (*action).into(),
+                        payload: "{}".into(),
+                        ..Default::default()
+                    },
                     &state,
                 )
                 .await;
@@ -1678,9 +1720,20 @@ mod mobile_dispatcher_tests {
 
         // sync.autosync_status activates-then-reads without failing.
         let resp = mobile
-            .dispatch(GatewayRequest { action: "sync.autosync_status".into(), payload: "{}".into(), ..Default::default() }, &state)
+            .dispatch(
+                GatewayRequest {
+                    action: "sync.autosync_status".into(),
+                    payload: "{}".into(),
+                    ..Default::default()
+                },
+                &state,
+            )
             .await;
-        assert!(resp.success, "autosync_status must succeed: {:?}", resp.error_message);
+        assert!(
+            resp.success,
+            "autosync_status must succeed: {:?}",
+            resp.error_message
+        );
         let _ = id;
     }
 }

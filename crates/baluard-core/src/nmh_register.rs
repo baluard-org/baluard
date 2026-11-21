@@ -165,11 +165,7 @@ fn register_dispatch(portable: bool) -> RegistrationReport {
     // never register browser-bridge manifests.
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     let registered = register_for_current_exec_impl();
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     let registered = RegistrationReport::default();
     registered
 }
