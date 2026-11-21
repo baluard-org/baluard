@@ -133,22 +133,42 @@ if $TRACKS_MODE; then
     || die "creating the read edit failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
   EDIT="$(jq -r '.id // empty' "$SEC/resp")"
   [[ -n "$EDIT" ]] || die "edit creation returned no id"
+  # The read edit is a Play-side resource with a lifetime; release it on any
+  # exit path, including a mid-read die.
+  trap 'api -X DELETE "$API_BASE/edits/$EDIT" >/dev/null 2>&1 || true' EXIT
   read_track() {
     local t="$1"
-    api "$API_BASE/edits/$EDIT/tracks/$t" > "$SEC/track-$t.json" 2>"$SEC/track-$t.err" \
-      || { [[ -s "$SEC/track-$t.err" ]] && head -c 200 "$SEC/track-$t.err" >&2; echo "none"; return 0; }
+    if ! api "$API_BASE/edits/$EDIT/tracks/$t" > "$SEC/track-$t.json" 2>"$SEC/track-$t.err"; then
+      # A missing track is legitimate (never published); any other API
+      # failure is a probe error, not a "none" -- failing open here would
+      # let two failures read as agreement.
+      if grep -q ' 404' "$SEC/track-$t.err" 2>/dev/null; then
+        echo "none"
+        return 0
+      fi
+      die "reading track $t failed: $(head -c 200 "$SEC/track-$t.err" 2>/dev/null || echo 'no response')"
+    fi
     jq -r '[.releases[]?.versionCodes[]?] | if length == 0 then "none" else (map(tostring) | join(",")) end' "$SEC/track-$t.json"
   }
   INTERNAL_CODES="$(read_track internal)"
   ALPHA_CODES="$(read_track alpha)"
-  api -X DELETE "$API_BASE/edits/$EDIT" >/dev/null 2>&1 || true
   echo "play/internal: $INTERNAL_CODES"
   echo "play/alpha:    $ALPHA_CODES"
-  if [[ "$INTERNAL_CODES" == "$ALPHA_CODES" ]]; then
-    echo "play: tracks agree"
-  else
+  if [[ "$INTERNAL_CODES" == "none" && "$ALPHA_CODES" == "none" ]]; then
+    die "neither track carries a release; expected the workspace code $CODE"
+  fi
+  # Compare the highest code per track: a multi-release track is not a
+  # divergence, and agreement on an old version is still wrong.
+  max_code() { tr ',' '\n' <<<"$1" | sort -n | tail -1; }
+  INTERNAL_MAX="$(max_code "$INTERNAL_CODES")"
+  ALPHA_MAX="$(max_code "$ALPHA_CODES")"
+  if [[ "$INTERNAL_MAX" != "$ALPHA_MAX" ]]; then
     die "track divergence: internal=$INTERNAL_CODES alpha=$ALPHA_CODES; both pre-release tracks must carry the same version"
   fi
+  if [[ "$INTERNAL_MAX" != "$CODE" ]]; then
+    die "tracks agree on $INTERNAL_MAX but the workspace code is $CODE; upload the current bundle first"
+  fi
+  echo "play: tracks agree on $INTERNAL_MAX"
   exit 0
 fi
 

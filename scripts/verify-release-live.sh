@@ -7,18 +7,23 @@
 # and always exits 0; without it, any FAIL exits 1.
 #
 # usage: verify-release-live.sh <tag> [--report] [--latest <expected-latest>]
-#        [--packages-sha <full-sha>] [--deep [--all | --only] [--checksum <name>]]
+#        [--packages-sha <full-sha>] [--pre-publish]
+#        [--deep [--all | --only] [--checksum <name>]]
+# --pre-publish: run right after the release publish, BEFORE the packages
+# repo republish; the packages/F-Droid/apt/updates-channel checks render
+# WARN (postponed) instead of probing artifacts that cannot exist yet.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=release-common.sh disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/release-common.sh"
 
-TAG="" REPORT=false EXPECTED_LATEST="" PACKAGES_SHA="" DEEP=false DEEP_ALL=false DEEP_ONLY=false
+TAG="" REPORT=false PRE_PUBLISH=false EXPECTED_LATEST="" PACKAGES_SHA="" DEEP=false DEEP_ALL=false DEEP_ONLY=false
 DEEP_EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --report) REPORT=true ;;
+    --pre-publish) PRE_PUBLISH=true ;;
     --latest) EXPECTED_LATEST="$2"; shift ;;
     --packages-sha) PACKAGES_SHA="$2"; shift ;;
     --deep) DEEP=true ;;
@@ -26,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --only) DEEP_ONLY=true ;;
     --checksum)
       [[ -n "${2:-}" ]] || { echo "--checksum wants an asset name" >&2; exit 1; }
+      [[ "$2" != */* && "$2" != *..* ]] || { echo "--checksum wants a bare asset name, got: $2" >&2; exit 1; }
       DEEP_EXTRA+=("$2"); shift ;;
     -*) echo "unknown flag $1" >&2; exit 1 ;;
     *) TAG="$1" ;;
@@ -114,7 +120,7 @@ deploy_detail() {
 if [[ -n "$PACKAGES_SHA" ]]; then
   if retry_ok deploy_ok; then check "packages-deploy" ok
   else check "packages-deploy" fail "$(deploy_detail)"; fi
-elif $REPORT; then
+elif $PRE_PUBLISH || $REPORT; then
   check "packages-deploy" warn "pass --packages-sha <republish-sha> to check the deploy run"
 else
   check "packages-deploy" fail "the deploy run is not gated without --packages-sha <republish-sha>"
@@ -127,13 +133,19 @@ fdroid_ok() {
   fdroid="$(curl -sfL "https://packages.baluard.app/fdroid/repo/index.xml" 2>/dev/null || true)"
   grep -q "<versioncode>$VCODE</versioncode>" <<<"$fdroid"
 }
-if retry_ok fdroid_ok; then
+if $PRE_PUBLISH; then
+  check "fdroid-versioncode" warn "postponed: the packages repo has not been republished yet"
+elif retry_ok fdroid_ok; then
   check "fdroid-versioncode" ok
 else
   check "fdroid-versioncode" fail "served index lacks versioncode $VCODE"
 fi
 
 # 5. apt InRelease and the PascalCase pool deb answer 200.
+if $PRE_PUBLISH; then
+  check "apt-InRelease" warn "postponed: the packages repo has not been republished yet"
+  check "pool-deb" warn "postponed: the packages repo has not been republished yet"
+else
 if retry_ok asset_ok "https://packages.baluard.app/dists/stable/InRelease"; then
   check "apt-InRelease" ok
 else
@@ -144,11 +156,14 @@ if retry_ok asset_ok "https://packages.baluard.app/pool/main/b/baluard/Baluard_$
 else
   check "pool-deb" fail "HTTP $(http_code "https://packages.baluard.app/pool/main/b/baluard/Baluard_${VERSION}_amd64.deb")"
 fi
+fi
 
 # 6. The updates channel serves this release's manifest version.
 # shellcheck disable=SC2329  # invoked via retry_ok
 channel_ok() { [[ "$(served_manifest_version "$REPO" "$CHANNEL")" == "$TAG" ]]; }
-if retry_ok channel_ok; then
+if $PRE_PUBLISH; then
+  check "updates-channel" warn "postponed: run just updates-publish, then re-verify"
+elif retry_ok channel_ok; then
   check "updates-channel" ok
 else
   served="$(served_manifest_version "$REPO" "$CHANNEL")"
@@ -184,15 +199,25 @@ fi
 if $DEEP; then
   command -v rsign >/dev/null 2>&1 \
     || { echo "ERROR: --deep needs rsign (cargo install rsign --locked)" >&2; exit 1; }
+  # --only with no --checksum verifies the signature alone, which is sane;
+  # every other mode pulls the asset set it names.
   DEEP_DIR="$(mktemp -d)"
   # shellcheck disable=SC2064  # we want the trap expanded NOW: $DEEP_DIR is used by the deep checks below
   trap "rm -rf \"$DEEP_DIR\"" EXIT
   sums_url="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
-  deep_dl() { curl -sfL --max-time 600 -o "$DEEP_DIR/$1.part" "$2" && mv "$DEEP_DIR/$1.part" "$DEEP_DIR/$1"; }
+  # CDN lags right after a publish; a single-shot download mid-propagation
+  # fails a good release.
+  deep_dl() { curl -sfL --retry 3 --retry-delay 5 --max-time 600 -o "$DEEP_DIR/$1.part" "$2" && mv "$DEEP_DIR/$1.part" "$DEEP_DIR/$1"; }
+  # Exact-name lookup: SHA256SUMS also lists .sig sidecars, and a substring
+  # grep for "asset" matches "asset.sig" too, feeding sha256sum -c a line
+  # naming a file nobody downloaded.
+  sums_entry() { awk -v n="$1" '{f=$2; sub(/^\*/, "", f); if (f == n) print}' "$DEEP_DIR/SHA256SUMS" | tr -d '\r'; }
+  SUMS_TRUSTED=false
   if deep_dl SHA256SUMS "$sums_url" && deep_dl SHA256SUMS.sig "$sums_url.sig"; then
-    base64 -d < "$DEEP_DIR/SHA256SUMS.sig" > "$DEEP_DIR/SHA256SUMS.sig.minisign"
-    if rsign verify -q -p "$ROOT/updater.pub" -x "$DEEP_DIR/SHA256SUMS.sig.minisign" "$DEEP_DIR/SHA256SUMS"; then
+    if base64 -d < "$DEEP_DIR/SHA256SUMS.sig" > "$DEEP_DIR/SHA256SUMS.sig.minisign" 2>/dev/null \
+      && rsign verify -q -p "$ROOT/updater.pub" -x "$DEEP_DIR/SHA256SUMS.sig.minisign" "$DEEP_DIR/SHA256SUMS"; then
       check "sha256sums-signature" ok
+      SUMS_TRUSTED=true
     else
       check "sha256sums-signature" fail "minisign signature does not verify against updater.pub"
     fi
@@ -207,19 +232,25 @@ if $DEEP; then
     done
   fi
   for n in "${DEEP_EXTRA[@]}"; do deep_want["$n"]=1; done
+  if ! $SUMS_TRUSTED; then
+    for n in "${!deep_want[@]}"; do
+      check "checksum/$n" fail "SHA256SUMS signature did not verify; refusing to checksum against untrusted sums"
+    done
+  else
   for n in "${!deep_want[@]}"; do
-    if grep -qF " $n" "$DEEP_DIR/SHA256SUMS" 2>/dev/null && deep_dl "$n" "https://github.com/$REPO/releases/download/$TAG/$n"; then
-      if ( cd "$DEEP_DIR" && grep -F " $n" SHA256SUMS | sed 's/\r$//' | sha256sum -c - ); then
+    if [[ -n "$(sums_entry "$n")" ]] && deep_dl "$n" "https://github.com/$REPO/releases/download/$TAG/$n"; then
+      if ( cd "$DEEP_DIR" && sums_entry "$n" | sha256sum -c - ); then
         check "checksum/$n" ok
       else
         check "checksum/$n" fail "downloaded bytes do not match the signed SHA256SUMS entry"
       fi
-    elif ! grep -qF " $n" "$DEEP_DIR/SHA256SUMS" 2>/dev/null; then
+    elif [[ -z "$(sums_entry "$n")" ]]; then
       check "checksum/$n" fail "no SHA256SUMS entry for $n"
     else
       check "checksum/$n" fail "download failed"
     fi
   done
+  fi
   if ! $DEEP_ALL && ! $DEEP_ONLY && [[ -z "${deep_want[Baluard-amd64-portable.zip]:-}" ]]; then
     check "checksum/Baluard-amd64-portable.zip" warn "skipped by default; pass --all or --checksum to include"
   fi

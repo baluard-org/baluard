@@ -18,7 +18,12 @@ mkdir -p "$WV2_CACHE"
 PAGE_FILE="$WV2_CACHE/page.html"
 
 CHECK_ONLY=false
-[[ "${1:-}" == "--check" ]] && CHECK_ONLY=true
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK_ONLY=true ;;
+    *) echo "unknown flag $arg" >&2; exit 1 ;;
+  esac
+done
 
 if [[ -n "${BALUARD_WV2_PAGE:-}" ]]; then
   cp "$BALUARD_WV2_PAGE" "$PAGE_FILE"
@@ -28,7 +33,7 @@ fi
 
 CAB_URL="$(python3 "$ROOT/scripts/lib/wv2_cab_url.py" "$PAGE_FILE")"
 [[ -n "$CAB_URL" ]] || { echo "no WebView2 Fixed Version x64 cab URL found on the downloads page" >&2; exit 1; }
-CAB_NAME="$(basename "$CAB_URL")"
+CAB_NAME="$(basename "${CAB_URL%%\?*}")"
 NEW_VERSION="$(sed -E 's/.*FixedVersionRuntime\.([0-9.]+)\.x64\.cab/\1/' <<<"$CAB_NAME")"
 PINNED_VERSION="$(sed -E 's/.*FixedVersionRuntime\.([0-9.]+)\.x64\.cab/\1/' "$PIN" 2>/dev/null | tr -d '\r' || true)"
 PINNED_HASH="$(awk '{print $1}' "$PIN" 2>/dev/null || true)"
@@ -52,24 +57,36 @@ if [[ "$PINNED_VERSION" == "$NEW_VERSION" ]]; then
     exit 0
   fi
   echo "pin says $PINNED_VERSION but the cached cab is missing or does not verify; re-downloading"
+  # The corrupt cache would otherwise be hashed as-is below and its hash
+  # written into the pin -- the trust anchor must only ever hold a hash of
+  # freshly downloaded bytes.
+  rm -f "$CAB" "$CAB.part"
 fi
 
 CAB="$WV2_CACHE/$CAB_NAME"
-if [[ ! -f "$CAB" ]]; then
+[[ -f "$CAB" ]] || {
   echo "Downloading $CAB_NAME..."
   curl -fsSL --max-time 900 -o "$CAB.part" "$CAB_URL" && mv "$CAB.part" "$CAB"
-fi
+}
 [[ -s "$CAB" ]] || { echo "downloaded cab is empty" >&2; exit 1; }
 
 HASH="$(sha256sum "$CAB" | awk '{print $1}')"
+if [[ "$NEW_VERSION" == "$PINNED_VERSION" ]]; then
+  if [[ "$HASH" == "$PINNED_HASH" ]]; then
+    echo "pin is current ($NEW_VERSION); freshly downloaded cab verifies"
+    exit 0
+  fi
+  echo "refusing to rewrite the pin: version $NEW_VERSION matches the pin but the bytes differ; review the page manually" >&2
+  exit 1
+fi
 if [[ "$HASH" == "$PINNED_HASH" ]]; then
   echo "downloaded cab matches the current pin's hash but the version moved; refusing to guess" >&2
   exit 1
 fi
 
-printf '%s  %s\n' "$HASH" "$CAB_NAME" > "$PIN"
-( cd "$WV2_CACHE" && sha256sum -c "$PIN" >/dev/null ) \
-  || { echo "pin rewrite failed verification; the pin file may be inconsistent" >&2; exit 1; }
+PIN_TMP="$(mktemp "$PIN.tmp.XXXXXX")"
+printf '%s  %s\n' "$HASH" "$CAB_NAME" > "$PIN_TMP"
+mv "$PIN_TMP" "$PIN"
 
 echo "pin updated:"
 cat "$PIN"

@@ -251,6 +251,7 @@ test-release-scripts:
 	./scripts/tests/test-extension-verdicts.sh
 	./scripts/tests/test-refresh-webview2.sh
 	./scripts/tests/test-release-publish.sh
+	./scripts/tests/test-verify-release-live.sh
 	./scripts/tests/test-dep-freshness.sh
 	./scripts/tests/test-play-tracks.sh
 	./scripts/tests/test-build-arch-repo.sh
@@ -445,7 +446,7 @@ lint-fix:
 audit:
 	@if command -v cargo-audit >/dev/null 2>&1; then \
 		cargo audit && cargo audit --file desktop/src-tauri/Cargo.lock; \
-	elif [[ "${BALUARD_SKIP_AUDIT:-0}" == "1" ]]; then \
+	elif [ "${BALUARD_SKIP_AUDIT:-0}" = "1" ]; then \
 		echo "audit skipped (BALUARD_SKIP_AUDIT=1)"; \
 	else \
 		echo "cargo-audit not installed; run 'cargo install cargo-audit --locked' or export BALUARD_SKIP_AUDIT=1 to skip" >&2; \
@@ -906,8 +907,8 @@ play-submit-all:
 # Report store verdicts without submitting anything (AMO version status +
 # Chrome item status); with --guard it refuses to let ext-submit stack a
 # new submission on a listing still in review.
-ext-verdicts:
-	./scripts/extension-verdicts.sh
+ext-verdicts *args:
+	./scripts/extension-verdicts.sh {{ args }}
 
 # Freshness table for the crates the release checklist names manually
 # (libgit2-sys and friends): locked version vs the newest crates.io release.
@@ -918,12 +919,12 @@ dep-freshness:
 # the notes file), gh release create --latest, stable-set upload, and the
 # live-verify sweep as the final gate.
 release-publish tag notes:
-	./scripts/release-publish.sh {{ tag }} {{ notes }}
+	./scripts/release-publish.sh "{{ tag }}" "{{ notes }}"
 
 # Refresh the portable build's WebView2 fixed-runtime pin (review the hash
 # before committing). --check prints pinned vs available and exits 0.
-wv2-refresh:
-	./scripts/refresh-webview2.sh
+wv2-refresh *args:
+	./scripts/refresh-webview2.sh {{ args }}
 
 # ── E2E Smoke Test ─────────────────────────────────────────────────────────
 

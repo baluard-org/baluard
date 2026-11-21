@@ -35,13 +35,14 @@ chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH" WV2_TEST_CURL_LOG="$CURL_LOG"
 export WV2_TEST_CAB_FILE="$TMP/new.cab"
 
-# Fixture page: three fixed-version cabs, the newest NOT first, with one
-# \u002F-escaped URL like the real page embeds.
+# Fixture page: three fixed-version cabs, the newest NOT first. The newest
+# URL carries the real page's u002F escape form so the escape path is
+# exercised, not just the backslash form.
 PAGE="$TMP/page.html"
 cat > "$PAGE" <<'EOF'
 {"data":[{"files":["https:\/\/msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/aaa/Microsoft.WebView2.FixedVersionRuntime.158.0.4370.33.x64.cab",
 "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/bbb/Microsoft.WebView2.FixedVersionRuntime.157.0.4100.11.x64.cab",
-"https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/ccc/Microsoft.WebView2.FixedVersionRuntime.159.0.4501.9.x64.cab"]}]}
+"https:\u002F\u002Fmsedge.sf.dl.delivery.mp.microsoft.com\u002Ffilestreamingservice\u002Ffiles\u002Fccc\u002FMicrosoft.WebView2.FixedVersionRuntime.159.0.4501.9.x64.cab"]}]}
 EOF
 
 # Fixture cab with a known hash (content does not matter, only stability).
@@ -78,15 +79,46 @@ grep -q 'pin is already current' <<<"$out"
 # ── Same hash under a new name is refused (hostile page repointing) ────────
 sed 's/159\.0\.4501\.9/160.0.4501.9/g' "$PAGE" > "$TMP/page2.html"
 export BALUARD_WV2_PAGE="$TMP/page2.html"
-sed -i 's/FixedVersionRuntime\.159\.0\.4501\.9\.x64\.cab/FixedVersionRuntime.160.0.4501.9.x64.cab/' \
-  "$SANDBOX/scripts/windows-portable/webview2.sha256"
 if "$SANDBOX/scripts/refresh-webview2.sh" > "$TMP/evil.out" 2>&1; then
   echo 'expected refusal when the new version carries the old hash' >&2
   exit 1
 fi
 grep -q 'refusing to guess' "$TMP/evil.out" || { echo "--- evil.out was:"; cat "$TMP/evil.out"; exit 1; }
 
-# ── Missing cab URL in the page fails loudly ───────────────────────────────
+# ── Corrupt cache: the bad cab is discarded, not hashed into the pin ───────
+sed 's/160\.0\.4501\.9/159.0.4501.9/g' "$TMP/page2.html" > "$TMP/page3.html"
+export BALUARD_WV2_PAGE="$TMP/page3.html"
+printf '%s  Microsoft.WebView2.FixedVersionRuntime.159.0.4501.9.x64.cab\n' "$OLD_HASH" \
+  > "$SANDBOX/scripts/windows-portable/webview2.sha256"
+printf 'corrupt-cached-bytes' > "$SANDBOX/target/wv2-fixed/Microsoft.WebView2.FixedVersionRuntime.159.0.4501.9.x64.cab"
+rm -f "$CURL_LOG"
+cp "$SANDBOX/scripts/windows-portable/webview2.sha256" "$TMP/pin.before"
+if "$SANDBOX/scripts/refresh-webview2.sh" > "$TMP/recache.out" 2>&1; then
+  echo 'expected refusal: fresh bytes differ from the pin at the same version' >&2
+  exit 1
+fi
+grep -q 're-downloading' "$TMP/recache.out"
+grep -q 'files/ccc/' "$CURL_LOG"      # the corrupt cab was actually re-fetched
+grep -q 'matches the pin but the bytes differ' "$TMP/recache.out"
+cmp -s "$TMP/pin.before" "$SANDBOX/scripts/windows-portable/webview2.sha256" \
+  || { echo 'the pin was rewritten despite the refusal' >&2; exit 1; }
+
+# ── Corrupt cache, honest pin: re-download verifies and exits 0 ────────────
+printf '%s  Microsoft.WebView2.FixedVersionRuntime.159.0.4501.9.x64.cab\n' "$NEW_HASH" \
+  > "$SANDBOX/scripts/windows-portable/webview2.sha256"
+printf 'corrupt-again-bytes' > "$SANDBOX/target/wv2-fixed/Microsoft.WebView2.FixedVersionRuntime.159.0.4501.9.x64.cab"
+"$SANDBOX/scripts/refresh-webview2.sh" > "$TMP/recache2.out"
+grep -q 'freshly downloaded cab verifies' "$TMP/recache2.out" \
+  || { echo "--- recache2.out was:"; cat "$TMP/recache2.out"; exit 1; }
+
+# ── Unknown flags are rejected instead of silently mutating ────────────────
+if "$SANDBOX/scripts/refresh-webview2.sh" --chek > "$TMP/flag.out" 2>&1; then
+  echo 'expected unknown flag rejection' >&2
+  exit 1
+fi
+grep -q 'unknown flag' "$TMP/flag.out"
+
+# ── Missing cab URL in the page fails loudly ───────────────────────────────────
 printf '{"data":[]}' > "$TMP/empty.html"
 BALUARD_WV2_PAGE="$TMP/empty.html" "$SANDBOX/scripts/refresh-webview2.sh" > "$TMP/none.out" 2>&1 \
   && { echo 'expected a failure with no cab URL on the page' >&2; exit 1; }
