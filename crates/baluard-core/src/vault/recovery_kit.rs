@@ -1,24 +1,22 @@
 //! Space Recovery Kit: the Root Key escrowed to an offline BIP-39 phrase.
 //!
-//! Power-pack S4-7 / section 10 Q5: an opt-in kit covering sole-admin
-//! total loss. The owner writes the 24-word phrase into a physical safe;
-//! the kit file (`meta/recovery-kit.json`, plaintext, git-tracked under
-//! the meta/** Admin row) carries only an HPKE wrap of the Root Key to a
-//! key derived from that phrase, so the Space can be recovered on a
-//! fresh machine after every admin device is lost. The phrase is shown
-//! exactly once, at enable time.
+//! Since kit-at-birth, EVERY vault mints its kit at creation, and the
+//! kit is bound to the same 24-word ceremony phrase the user already
+//! writes down and verifies — one phrase per vault, and it actually
+//! recovers the vault (password forgotten included). The kit file
+//! (`meta/recovery-kit.json`, plaintext, git-tracked) carries only an
+//! HPKE wrap of the Root Key to a key derived from that phrase, so any
+//! device with the folder and the words can take the vault back. The
+//! phrase is shown exactly once, at creation or rotation.
 //!
 //! Domain separation: `space-recovery-kit` (this file) vs
 //! `recovery-keywrap` (the personal vault's meta/recovery.json) vs
 //! `emergency-escrow` (the trusted-contact flow in crate::emergency).
 //! The kit holds no status machinery on purpose: whoever holds the
-//! phrase can unwrap whenever the file exists. An owner incapacitation
-//! cannot wait for an in-band approval, and a removed file is the only
-//! off switch (an admin disabling the kit).
+//! phrase can unwrap whenever the file exists.
 //!
-//! Recovery ceremony (device enrollment, owner-row binding, unlock) is
-//! designed in docs/security/emergency-org-identity.md and lands as a follow-up
-//! slice; this module provides the escrow primitives.
+//! Recovery ceremony (device enrollment, owner-row binding, unlock)
+//! lives in `VaultHandle::recover_device_with_kit`.
 
 use crate::crypto::hpke_wrap;
 use crate::error::{BaluardError, VaultError};
@@ -266,13 +264,13 @@ fn mint_kit(
     vault_id: Uuid,
     phrase: &RecoveryPhrase,
 ) -> Result<(), BaluardError> {
-    let secret = phrase_to_secret(&phrase);
+    let secret = phrase_to_secret(phrase);
     let recipient = x25519_dalek::PublicKey::from(&secret);
 
     let (ephemeral_pub, ciphertext, tag) =
         hpke_wrap::wrap_key(root_key.as_bytes(), &recipient, KIT_CONTEXT)?;
 
-    let verifier_pub = kit_signing_key(&phrase).verifying_key();
+    let verifier_pub = kit_signing_key(phrase).verifying_key();
     let recipient_hex = hex::encode(recipient.as_bytes());
     let verifier_hex = hex::encode(verifier_pub.as_bytes());
 

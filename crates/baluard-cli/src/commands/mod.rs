@@ -5901,7 +5901,20 @@ fn vaults_recover_kit(
         Ok(p) => p,
         Err(_) => prompt_password("Recovery phrase (24 words): ")?,
     };
-    let password = daemon_master_password("New master password for this device: ")?;
+    // Confirm the typed password (review S8): a typo would seed the
+    // device's member unlock with the wrong secret, and a retry
+    // replaces the in-place unlock, so catching it here is cheap.
+    let password = match std::env::var("BALUARD_PASSWORD") {
+        Ok(p) => p,
+        Err(_) => {
+            let first = prompt_password("New master password for this device: ")?;
+            let second = prompt_password("Repeat new master password: ")?;
+            if first != second {
+                return Err("The two passwords do not match.".into());
+            }
+            first
+        }
+    };
     let device_name = match device_name {
         Some(name) => name.to_string(),
         None => {

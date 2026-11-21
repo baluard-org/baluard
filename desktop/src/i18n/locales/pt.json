@@ -1495,7 +1495,7 @@
     "passwordMismatch": "As senhas não coincidem.",
     "deviceName": "Nome do dispositivo",
     "deviceNameRequired": "Dê um nome a este dispositivo.",
-    "freshInstallNote": "A recuperação funciona só em uma instalação nova — se este dispositivo já tem as chaves do cofre, remova-o e adicione-o de novo antes.",
+    "freshInstallNote": "Também funciona neste dispositivo: seu desbloqueio aqui é substituído pela nova senha. Os outros dispositivos registrados continuam funcionando.",
     "submit": "Recuperar cofre",
     "done": "Cofre recuperado. Entre com sua nova senha.",
     "back": "Voltar",

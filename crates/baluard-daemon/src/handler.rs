@@ -1895,7 +1895,7 @@ async fn route_host_request_inner(
     // runs on a fresh install with no session). The phrase gates the
     // crypto; the canary check gates the vault.
     if req.action.as_str() == "vault.recover_kit" {
-        return handle_recover_kit(req);
+        return handle_recover_kit(req, host).await;
     }
     // Legacy Contact view: the kit passphrase is the only credential. The
     // route opens the kit, clones the vault copy with the kit's read-only
@@ -3611,7 +3611,7 @@ async fn handle_legacy_contact_view(
     )
 }
 
-fn handle_recover_kit(mut req: GatewayRequest) -> GatewayResponse {
+async fn handle_recover_kit(mut req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     let v: serde_json::Value = match serde_json::from_str(&req.payload) {
         Ok(v) => v,
         Err(e) => {
@@ -3647,6 +3647,31 @@ fn handle_recover_kit(mut req: GatewayRequest) -> GatewayResponse {
         req.payload.zeroize();
         return err_response(format!("Unknown vault: {slug}"));
     };
+    // Same protection class as enroll_with_phrase (M4): the limiter
+    // keyed on the vault path; the 24-word entropy stays the real
+    // defense since the kit rides the public git repo.
+    let vault_key = path.to_string_lossy().into_owned();
+    let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+        crate::rate_limit::ClaimResult::Allowed(p) => p,
+        crate::rate_limit::ClaimResult::Backoff(d) => {
+            req.payload.zeroize();
+            return err_response(format!(
+                "Too many failed attempts. Wait {}s before retrying.",
+                d.as_secs()
+            ));
+        }
+        crate::rate_limit::ClaimResult::LockedOut(d) => {
+            req.payload.zeroize();
+            return err_response(format!(
+                "Vault locked due to too many failed attempts. Wait {}s.",
+                d.as_secs()
+            ));
+        }
+    };
+    // Evict any live handle before rewriting meta files (review S7):
+    // an open session or autosync loop would race the swap and keep
+    // stale device keys in memory. The next unlock reloads from disk.
+    host.close(&slug).await;
     let result = match password {
         Some(password) => baluard_core::vault::handle::VaultHandle::recover_device_with_kit(
             &path,
@@ -3660,7 +3685,10 @@ fn handle_recover_kit(mut req: GatewayRequest) -> GatewayResponse {
     };
     req.payload.zeroize();
     match result {
-        Ok(payload) => ok_resp(payload, None),
+        Ok(payload) => {
+            permit.commit_success();
+            ok_resp(payload, None)
+        }
         Err(e) => err_response(e),
     }
 }

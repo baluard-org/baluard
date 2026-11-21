@@ -584,7 +584,7 @@ impl<'a> VaultCreator<'a> {
                     &root_key,
                     vault_id,
                     &recovery_phrase,
-                )?;;
+                )?;
 
                 // P1a: per-human identity — generated here, sealed under a
                 // wrapping key that is NEVER the vault KEK (OS keystore random

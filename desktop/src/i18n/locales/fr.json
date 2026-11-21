@@ -1495,7 +1495,7 @@
     "passwordMismatch": "Les mots de passe ne correspondent pas.",
     "deviceName": "Nom de l'appareil",
     "deviceNameRequired": "Donnez un nom à cet appareil.",
-    "freshInstallNote": "La récupération ne marche que sur une installation neuve — si cet appareil détient déjà les clés du coffre, retirez-le et ajoutez-le à nouveau d'abord.",
+    "freshInstallNote": "Cela fonctionne aussi sur cet appareil : votre déverrouillage local est remplacé par le nouveau mot de passe. Les autres appareils déjà configurés continuent de fonctionner.",
     "submit": "Récupérer le coffre",
     "done": "Coffre récupéré. Ouvrez avec votre nouveau mot de passe.",
     "back": "Retour",

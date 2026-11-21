@@ -1495,7 +1495,7 @@
     "passwordMismatch": "The passwords do not match.",
     "deviceName": "Device name",
     "deviceNameRequired": "Give this device a name.",
-    "freshInstallNote": "Recovery works on a fresh install only — on a device that already holds this vault's keys, remove the vault and add it again first.",
+    "freshInstallNote": "Works on this device too: your unlock here is replaced by the new password. Other enrolled devices keep working.",
     "submit": "Recover vault",
     "done": "Vault recovered. Unlock with your new password.",
     "back": "Back",

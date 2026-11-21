@@ -1,4 +1,4 @@
-import { createSignal, onSettled, Show, For } from "solid-js";
+import { createSignal, onCleanup, onSettled, Show, For } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
@@ -102,7 +102,9 @@ export default function RecoverVaultScreen() {
 		try {
 			await daemon("vault.recover_kit", {
 				slug: slug(),
-				phrase: phraseWords().join(" "),
+				phrase: phraseWords()
+					.map((w) => w.trim().toLowerCase())
+					.join(" "),
 				password: password(),
 				device_name: deviceName().trim(),
 			});
@@ -124,6 +126,12 @@ export default function RecoverVaultScreen() {
 		setConfirm("");
 		setPhrase("");
 	}
+
+	// Review N6: the phrase and password must not outlive the screen.
+	onCleanup(() => {
+		passwordSignalCleanup();
+		setDeviceName("");
+	});
 
 	return (
 		<div class="welcome-screen flex justify-center h-full overflow-y-auto bg-radial from-[var(--color-detail)] to-[var(--color-bg)] px-4 py-8">

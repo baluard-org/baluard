@@ -1495,7 +1495,7 @@
     "passwordMismatch": "Las contraseñas no coinciden.",
     "deviceName": "Nombre del dispositivo",
     "deviceNameRequired": "Ponle nombre a este dispositivo.",
-    "freshInstallNote": "La recuperación funciona solo en una instalación nueva — si este dispositivo ya tiene las claves de la bóveda, quítala y añádela otra vez antes.",
+    "freshInstallNote": "También funciona en este dispositivo: tu acceso aquí se reemplaza por la nueva contraseña. Los demás dispositivos registrados siguen funcionando.",
     "submit": "Recuperar bóveda",
     "done": "Bóveda recuperada. Entra con tu nueva contraseña.",
     "back": "Volver",

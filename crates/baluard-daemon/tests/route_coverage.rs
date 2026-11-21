@@ -2502,8 +2502,9 @@ async fn recover_kit_route_parses_and_resolves_slug() {
     assert!(!resp.success);
     assert!(resp.error_message.contains("phrase"));
 
-    // A real phrase on a device that already holds keys hits the brick
-    // guard through the full route -> core path.
+    // A real phrase on a device that already holds keys now recovers IN
+    // PLACE (review B1): the route succeeds and the old keys are backed
+    // up, never deleted.
     let resp = route_host_request(
         join_request(
             "vault.recover_kit",
@@ -2512,12 +2513,14 @@ async fn recover_kit_route_parses_and_resolves_slug() {
         &host,
     )
     .await;
-    assert!(!resp.success);
-    assert!(
-        resp.error_message.contains("already has its own keys"),
-        "err: {}",
-        resp.error_message
-    );
+    assert!(resp.success, "in-place recovery succeeds: {}", resp.error_message);
+    let backups: Vec<_> = std::fs::read_dir(vault_path.join("meta"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("device-privkey.json.bak."))
+        .collect();
+    assert!(!backups.is_empty(), "old keys backed up: {:?}", backups);
 }
 
 #[tokio::test]
