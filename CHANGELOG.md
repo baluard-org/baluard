@@ -11,6 +11,12 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.1 - 2026-11-21
+
+- Android: website icons now actually show on your entries. The "Show website icons" option saved icons but nothing displayed them; your entry list and entry screens do now, and Settings gains a "Fetch missing icons" action that fills in imported and older entries. Icons use the same site look as the desktop app.
+
+- Linux: the installer works again on Fedora 45 and future OpenSSL updates. The Fedora 45 release ships OpenSSL 4, so the app installed but refused to start; Baluard now carries its own crypto library instead of depending on the system one, across rpm, deb, and AUR alike.
+
 ## 0.8.0 - 2026-11-21
 
 - All apps: recover a vault with its 24-word phrase when the master password is gone. New vaults mint a recovery kit at creation; older vaults turn it on in Settings, under Space. The desktop sign-in screen now has a "Forgot your master password?" link, mobile reaches the same flow from its welcome screen, and `baluard vaults recover-kit` covers the command line. Recovery works on the device in hand or on a fresh install, and your entries stay.
