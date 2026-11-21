@@ -161,7 +161,20 @@ fn register_dispatch(portable: bool) -> RegistrationReport {
     if portable {
         return RegistrationReport::default();
     }
-    register_for_current_exec_impl()
+    // Mobile targets (android, ios) compile this crate via UniFFI but
+    // never register browser-bridge manifests.
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+        return register_for_current_exec_impl();
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows"
+    )))]
+    {
+        RegistrationReport::default()
+    }
 }
 
 /// macOS: bundle-only guard, so a
