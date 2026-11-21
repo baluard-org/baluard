@@ -28,6 +28,9 @@ EOF
   echo rpm-body > "$base/release/bundle/rpm/Baluard-0.7.3-1.x86_64.rpm"
   echo appimage-body > "$base/release/bundle/appimage/Baluard_0.7.3_amd64.AppImage"
   echo exe-body > "$base/x86_64-pc-windows-msvc/release/bundle/nsis/Baluard_0.7.3_x64-setup.exe"
+  # The portable zip never lives under the bundle tree: its own build leg
+  # writes it straight into dist/.
+  echo portable-body > "$TMP/dist/Baluard_0.7.3_x64-portable.zip"
 }
 
 seed_stale_dist() {
@@ -52,6 +55,7 @@ cmp -s "$TMP/dist/Baluard_0.7.3_amd64.deb" <(echo deb-body) || fail "deb not cop
 cmp -s "$TMP/dist/Baluard-0.7.3-1.x86_64.rpm" <(echo rpm-body) || fail "rpm not copied"
 cmp -s "$TMP/dist/Baluard_0.7.3_amd64.AppImage" <(echo appimage-body) || fail "AppImage not copied"
 cmp -s "$TMP/dist/Baluard_0.7.3_x64-setup.exe" <(echo exe-body) || fail "setup exe not copied"
+cmp -s "$TMP/dist/Baluard_0.7.3_x64-portable.zip" <(echo portable-body) || fail "portable zip not kept"
 [[ ! -e "$TMP/dist/Baluard_0.7.2_amd64.deb" ]] || fail "stale deb survived"
 [[ ! -e "$TMP/dist/Baluard_0.7.2_amd64.deb.sig" ]] || fail "stale sig survived"
 [[ ! -e "$TMP/dist/baluard-0.7.2-linux-amd64.tar.gz" ]] || fail "stale cli tar survived"
@@ -78,16 +82,19 @@ setup_repo
 "$TMP/scripts/collect-dist.sh" > /dev/null 2>&1 || fail "collect failed on a fresh dist"
 [[ -f "$TMP/dist/Baluard_0.7.3_amd64.deb" ]] || fail "deb missing after fresh collect"
 [[ -f "$TMP/dist/Baluard_0.7.3_x64-setup.exe" ]] || fail "exe missing after fresh collect"
+[[ -f "$TMP/dist/Baluard_0.7.3_x64-portable.zip" ]] || fail "portable zip missing after fresh collect"
 echo "ok 3: fresh dist collects cleanly"
 
 # 4. No sources at all refuses naming every missing bundle.
 setup_repo
 rm -rf "$TMP/desktop"
+rm -f "$TMP/dist/Baluard_0.7.3_x64-portable.zip"
 rc=0
 out="$(TMPDIR="$TMP" "$TMP/scripts/collect-dist.sh" 2>&1)" || rc=$?
 [[ $rc -ne 0 ]] || fail "all-sources-missing must fail"
 for f in Baluard_0.7.3_amd64.deb Baluard-0.7.3-1.x86_64.rpm \
-  Baluard_0.7.3_amd64.AppImage Baluard_0.7.3_x64-setup.exe; do
+  Baluard_0.7.3_amd64.AppImage Baluard_0.7.3_x64-setup.exe \
+  Baluard_0.7.3_x64-portable.zip; do
   grep -q "$f" <<<"$out" || fail "refusal must name $f"
 done
 echo "ok 4: missing sources all named"
@@ -95,6 +102,7 @@ echo "ok 4: missing sources all named"
 # 5. An explicit dist argument is honored (the justfile passes one).
 setup_repo
 mkdir -p "$TMP/other-dist"
+cp "$TMP/dist/Baluard_0.7.3_x64-portable.zip" "$TMP/other-dist/"
 "$TMP/scripts/collect-dist.sh" "$TMP/other-dist" > /dev/null 2>&1 \
   || fail "collect failed with an explicit dist"
 [[ -f "$TMP/other-dist/Baluard_0.7.3_amd64.deb" ]] || fail "explicit dist argument ignored"
