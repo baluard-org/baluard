@@ -75,17 +75,7 @@ WV2_CACHE="$ROOT/target/wv2-fixed"
 mkdir -p "$WV2_CACHE"
 PAGE_FILE="$WV2_CACHE/page.html"
 curl -fsSL --max-time 60 https://developer.microsoft.com/en-us/microsoft-edge/webview2/ -o "$PAGE_FILE"
-CAB_URL="$(python3 - "$PAGE_FILE" <<'PY'
-import re, sys
-page = open(sys.argv[1]).read().replace("\\u002F", "/")
-m = re.findall(r'https://[^"\']*FixedVersionRuntime\.([0-9.]+)\.x64\.cab', page)
-if not m:
-    print("")
-else:
-    newest = max(m, key=lambda v: tuple(int(p) for p in v.split('.')))
-    print(re.search(r'https://[^"\']*FixedVersionRuntime\.' + re.escape(newest) + r'\.x64\.cab', page).group(0))
-PY
-)"
+CAB_URL="$(python3 "$ROOT/scripts/lib/wv2_cab_url.py" "$PAGE_FILE")"
 [[ -n "$CAB_URL" ]] || { echo "no WebView2 Fixed Version x64 cab URL found on the downloads page" >&2; exit 1; }
 WV2_VERSION="$(sed -E 's/.*FixedVersionRuntime\.([0-9.]+)\.x64\.cab/\1/' <<<"$CAB_URL")"
 CAB="$WV2_CACHE/Microsoft.WebView2.FixedVersionRuntime.$WV2_VERSION.x64.cab"

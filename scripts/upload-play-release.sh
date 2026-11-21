@@ -45,9 +45,20 @@ if [[ ! -r "$SA_JSON" ]]; then
   exit 1
 fi
 
+# --tracks: read-only mode. Lists internal + alpha versionCodes and fails
+# when the tracks disagree (the runbook rule: both pre-release tracks carry
+# the same version every release). No AAB needed.
+TRACKS_MODE=false
+if [[ "${1:-}" == "--tracks" ]]; then
+  TRACKS_MODE=true
+  shift
+fi
+
 # AAB resolution: argument, then env, then the build script's playRelease output.
 AAB="${1:-${BALUARD_PLAY_AAB:-$ROOT/mobile/androidApp/build/outputs/bundle/playRelease/androidApp-play-release.aab}}"
-[[ -f "$AAB" ]] || die "AAB not found: $AAB (build it with just android-apk-release)"
+if ! $TRACKS_MODE; then
+  [[ -f "$AAB" ]] || die "AAB not found: $AAB (build it with just android-apk-release)"
+fi
 
 # Version metadata defaults to the workspace formula. Independent apps can
 # override both values; the upload response and existing-bundle pool are checked.
@@ -116,6 +127,30 @@ printf 'Authorization: Bearer %s\n' "$TOKEN" > "$SEC/auth-header"
 chmod 600 "$SEC/auth-header"
 
 api() { curl -sS --fail-with-body -H @"$SEC/auth-header" "$@"; }
+
+if $TRACKS_MODE; then
+  api -X POST -d '' "$API_BASE/edits" > "$SEC/resp" \
+    || die "creating the read edit failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"
+  EDIT="$(jq -r '.id // empty' "$SEC/resp")"
+  [[ -n "$EDIT" ]] || die "edit creation returned no id"
+  read_track() {
+    local t="$1"
+    api "$API_BASE/edits/$EDIT/tracks/$t" > "$SEC/track-$t.json" 2>"$SEC/track-$t.err" \
+      || { [[ -s "$SEC/track-$t.err" ]] && head -c 200 "$SEC/track-$t.err" >&2; echo "none"; return 0; }
+    jq -r '[.releases[]?.versionCodes[]?] | if length == 0 then "none" else (map(tostring) | join(",")) end' "$SEC/track-$t.json"
+  }
+  INTERNAL_CODES="$(read_track internal)"
+  ALPHA_CODES="$(read_track alpha)"
+  api -X DELETE "$API_BASE/edits/$EDIT" >/dev/null 2>&1 || true
+  echo "play/internal: $INTERNAL_CODES"
+  echo "play/alpha:    $ALPHA_CODES"
+  if [[ "$INTERNAL_CODES" == "$ALPHA_CODES" ]]; then
+    echo "play: tracks agree"
+  else
+    die "track divergence: internal=$INTERNAL_CODES alpha=$ALPHA_CODES; both pre-release tracks must carry the same version"
+  fi
+  exit 0
+fi
 
 EDIT="$(api -X POST -d '' "$API_BASE/edits" > "$SEC/resp" && jq -r '.id // empty' "$SEC/resp")" \
   || die "creating the edit failed: $(head -c 300 "$SEC/resp" 2>/dev/null || echo 'no response')"

@@ -74,3 +74,7 @@ served_manifest_version() {
   curl -sfL "https://github.com/$repo/releases/download/$channel/latest.json" 2>/dev/null \
     | jq -r .version 2>/dev/null || true
 }
+
+# The standing release-body closer (release-protocol.md). One constant so
+# the publisher's pre-flight and the live verifier can never drift.
+RELEASE_NOTES_CLOSER="As always, thanks for trying Baluard :)"

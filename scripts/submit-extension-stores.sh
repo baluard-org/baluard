@@ -16,6 +16,10 @@ done
 mkdir -p "$ART"
 ART=$(cd "$ART" && pwd)
 
+# Self-heal the stray web-ext leaves after any AMO upload (past runs, including
+# failed ones, leave it behind); the B11 drift gate reads this directory.
+rm -f "$ROOT/browser/firefox/dist/.amo-upload-uuid"
+
 # Old-version zips accumulate in the staging dir, so the newest wins.
 latest_version() {
   local store="$1" f v
@@ -54,6 +58,19 @@ done
 SEC="$(mktemp -d)"
 trap 'rm -rf "$SEC"' EXIT
 chmod 700 "$SEC"
+
+# Never stack a new submission on a store listing still in review: the
+# verdict probe refuses on a positive in-review state and warns through a
+# network failure (the discipline in release-protocol.md, now enforced).
+# shellcheck disable=SC2317  # invoked via the || rc pattern below
+if ! "$ROOT/scripts/extension-verdicts.sh" --guard "$first_dist_version"; then
+  rc=$?
+  if ((rc == 1)); then
+    echo "store submissions aborted; clear the open review first (see above)" >&2
+    exit 1
+  fi
+  echo "verdict probe failed (rc=$rc); proceeding without the guard" >&2
+fi
 
 # web-ext 10 folded submit into sign: --channel listed is the public listing,
 # approval-timeout 0 exits after the upload is accepted instead of waiting on

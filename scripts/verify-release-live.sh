@@ -7,19 +7,26 @@
 # and always exits 0; without it, any FAIL exits 1.
 #
 # usage: verify-release-live.sh <tag> [--report] [--latest <expected-latest>]
-#        [--packages-sha <full-sha>]
+#        [--packages-sha <full-sha>] [--deep [--all | --only] [--checksum <name>]]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=release-common.sh disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/release-common.sh"
 
-TAG="" REPORT=false EXPECTED_LATEST="" PACKAGES_SHA=""
+TAG="" REPORT=false EXPECTED_LATEST="" PACKAGES_SHA="" DEEP=false DEEP_ALL=false DEEP_ONLY=false
+DEEP_EXTRA=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --report) REPORT=true ;;
     --latest) EXPECTED_LATEST="$2"; shift ;;
     --packages-sha) PACKAGES_SHA="$2"; shift ;;
+    --deep) DEEP=true ;;
+    --all) DEEP_ALL=true ;;
+    --only) DEEP_ONLY=true ;;
+    --checksum)
+      [[ -n "${2:-}" ]] || { echo "--checksum wants an asset name" >&2; exit 1; }
+      DEEP_EXTRA+=("$2"); shift ;;
     -*) echo "unknown flag $1" >&2; exit 1 ;;
     *) TAG="$1" ;;
   esac
@@ -163,10 +170,59 @@ body="$(gh release view "$TAG" --repo "$REPO" --json body -q .body 2>/dev/null |
 # The body is stored with the closer as its last non-empty line; strip CR so
 # a web-UI edit (CRLF) does not fail the comparison.
 last_line="$(awk 'NF {l=$0} END {print l}' <<<"$body" | tr -d '\r')"
-if [[ "$last_line" == "As always, thanks for trying Baluard :)" ]]; then
+if [[ "$last_line" == "$RELEASE_NOTES_CLOSER" ]]; then
   check "notes-closer" ok
 else
   check "notes-closer" fail "the body must end with the standing closer; last non-empty line: ${last_line:-none}"
+fi
+
+# 9. --deep: prove bytes, not just presence. Downloads SHA256SUMS, verifies
+#    its minisign signature against the committed updater.pub (tauri's .sig
+#    is base64-wrapped, so decode first), and checksums the named assets —
+#    everything except the 463 MB portable zip by default; --all includes
+#    it, --checksum <name> adds single assets on top.
+if $DEEP; then
+  command -v rsign >/dev/null 2>&1 \
+    || { echo "ERROR: --deep needs rsign (cargo install rsign --locked)" >&2; exit 1; }
+  DEEP_DIR="$(mktemp -d)"
+  # shellcheck disable=SC2064  # we want the trap expanded NOW: $DEEP_DIR is used by the deep checks below
+  trap "rm -rf \"$DEEP_DIR\"" EXIT
+  sums_url="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
+  deep_dl() { curl -sfL --max-time 600 -o "$DEEP_DIR/$1.part" "$2" && mv "$DEEP_DIR/$1.part" "$DEEP_DIR/$1"; }
+  if deep_dl SHA256SUMS "$sums_url" && deep_dl SHA256SUMS.sig "$sums_url.sig"; then
+    base64 -d < "$DEEP_DIR/SHA256SUMS.sig" > "$DEEP_DIR/SHA256SUMS.sig.minisign"
+    if rsign verify -q -p "$ROOT/updater.pub" -x "$DEEP_DIR/SHA256SUMS.sig.minisign" "$DEEP_DIR/SHA256SUMS"; then
+      check "sha256sums-signature" ok
+    else
+      check "sha256sums-signature" fail "minisign signature does not verify against updater.pub"
+    fi
+  else
+    check "sha256sums-signature" fail "could not download SHA256SUMS(.sig)"
+  fi
+  declare -A deep_want=()
+  if ! $DEEP_ONLY; then
+    for n in "${STABLE_ASSETS[@]}"; do
+      [[ "$n" == SHA256SUMS ]] && continue
+      if $DEEP_ALL || [[ "$n" != "Baluard-amd64-portable.zip" ]]; then deep_want["$n"]=1; fi
+    done
+  fi
+  for n in "${DEEP_EXTRA[@]}"; do deep_want["$n"]=1; done
+  for n in "${!deep_want[@]}"; do
+    if grep -qF " $n" "$DEEP_DIR/SHA256SUMS" 2>/dev/null && deep_dl "$n" "https://github.com/$REPO/releases/download/$TAG/$n"; then
+      if ( cd "$DEEP_DIR" && grep -F " $n" SHA256SUMS | sed 's/\r$//' | sha256sum -c - ); then
+        check "checksum/$n" ok
+      else
+        check "checksum/$n" fail "downloaded bytes do not match the signed SHA256SUMS entry"
+      fi
+    elif ! grep -qF " $n" "$DEEP_DIR/SHA256SUMS" 2>/dev/null; then
+      check "checksum/$n" fail "no SHA256SUMS entry for $n"
+    else
+      check "checksum/$n" fail "download failed"
+    fi
+  done
+  if ! $DEEP_ALL && ! $DEEP_ONLY && [[ -z "${deep_want[Baluard-amd64-portable.zip]:-}" ]]; then
+    check "checksum/Baluard-amd64-portable.zip" warn "skipped by default; pass --all or --checksum to include"
+  fi
 fi
 
 echo "---"

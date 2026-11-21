@@ -280,3 +280,10 @@ grep -q 'CRX packaging failed' "$TMP/crxfail.err"
 if [[ -s "$CURL_LOG" ]]; then echo "store contacted despite CRX failure" >&2; exit 1; fi
 
 printf 'PASS: submit-extension-stores.sh\n'
+
+
+# ── The .amo-upload-uuid stray is self-healed (B11 drift gate reads dist) ───
+touch "$SANDBOX/browser/firefox/dist/.amo-upload-uuid"
+env "${UNSET[@]/#/-u}" "$SANDBOX/scripts/submit-extension-stores.sh" "$ART" > /dev/null 2>&1 || true
+[[ ! -e "$SANDBOX/browser/firefox/dist/.amo-upload-uuid" ]] \
+  || { echo 'expected the .amo-upload-uuid stray to be cleaned on any run' >&2; exit 1; }
