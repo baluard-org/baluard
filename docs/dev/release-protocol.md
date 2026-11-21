@@ -28,7 +28,7 @@ Run `just bump-version X.Y.Z` first. It moves every version source in one pass a
 | `browser/shared/package.json` | Extension build package |
 | `browser/shared/manifest.base.json` | Extension manifest version (single source for both stores) |
 | `mobile/androidApp/build.gradle.kts` | `versionName` and `versionCode` (`major*1000000 + minor*1000 + patch`) |
-| `mobile/.../i18n/Strings{En,Es}.kt` | Mobile about-screen string |
+| `mobile/.../i18n/Strings{En,Es,Fr,Pt}.kt` | Mobile about-screen string (all four locales in lockstep) |
 
 The recipe then rebuilds the committed extension dists so the bump commit carries fresh dists (the B11 rule: `browser/<store>/dist` artifacts are committed and must never go stale). `Cargo.lock` is refreshed by cargo, never sed-edited. Commit the version sources and the rebuilt dists together.
 
@@ -94,7 +94,7 @@ Stage order, fail-fast (any failure stops the pipeline):
 3. `fdroid-stage`: verifies the APK (application ID, signing certificate, `versionName`), signs it into `repo-out/fdroid/repo`, regenerates the F-Droid indexes.
 4. `release-sign`: minisign sidecars plus signed `SHA256SUMS` over `./dist` (covers `.AppImage`, `.deb`, `.rpm`, `.tar.gz`, `.zip`), refusing any file whose version differs from the workspace version.
 5. `repo-stage`: builds the apt, dnf, and Arch (pacman) trees into `repo-out` (GPG-signed metadata; already-signed RPMs are not signed twice; package history persists in `~/.baluard/linux-repo-history/`). The Arch leg rebuilds the pacman database from scratch each run and refreshes `aur/` (PKGBUILD version, checksum, .SRCINFO) for the AUR submission.
-6. `repo-sync`: publishes `repo-out` to the package site checkout `../baluard-packages` (the `baluard-org/baluard-packages` repository; `packages.baluard.app` serves it as a custom domain), removing stale generated files and leaving author-owned files untouched. Publication commits and pushes the site repo and the package repo.
+6. `repo-sync`: publishes `repo-out` to the package site checkout `../baluard-packages` (the `baluard-org/baluard-packages` repository; `packages.baluard.app` serves it as a custom domain), removing stale generated files and leaving author-owned files untouched. The pipeline stops there: the diffs land uncommitted in both checkouts, and publication is the manual review, commit, and push of those diffs (0.8.0's `repo-sync` left `baluard-packages` one commit ahead for exactly this review).
 
 Publishing is a manual review, commit, and push of the `baluard-org` diff. The pipeline never commits or pushes. The Linux trees map to `repo/`, the F-Droid tree to the site root `fdroid/`; a push of `baluard-org` main is what updates `baluard.app` and both Linux repositories.
 
@@ -159,11 +159,10 @@ The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src
 ## Pre-release checklist
 
 1. `just check` green (fmt, clippy, audit, tests, build).
-2. `just test-release-scripts` green (the registered suites: fdroid, sync-site-repos, build-extension-packages, submit-extension-stores, build-windows-installer, build-nmh-manifests, bump-version, generate-updates-manifest, publish-updates-manifest, sign-updater-sigs, stage-release-assets, upload-play-release, build-arch-repo, build-apt-repo, verify-release-live, check-changelog, android-launcher-icons).
+2. `just test-release-scripts` green: the recipe enumerates its hermetic suites (collect-dist, sign-release-artifacts, fdroid, arch/apt repos, extension packages and stores, windows installer, nmh manifests, bump-version, updates manifests, verify-release-live, changelog, launcher icons, stage-release-assets, play upload) — the recipe is the source of truth, not this list.
 3. `just smoke-pkg` for the deb, and the relevant `e2e` recipes for changed surfaces (`e2e-desktop`, `e2e-android` with `just emulator`, `e2e-extension`, `e2e-extension-firefox`).
 4. After the build legs, `just release-post-checks <version>` green: it fails on missing sidecars, greps the actual GitLab and Codeberg client IDs in the four consumed release sidecars, and checks the NMH manifests and the store APK version. The `strings <binary> | grep REPLACE_WITH_` probe finds exactly one match on every binary, including healthy ones: `option_env!`'s fallback literal compiles in unconditionally, so that count is inert and greping for it proves nothing.
-5. Confirm the newest store zips carry the bumped version (`just ext-package` already refuses a mismatch).
-6. `just dist-collect` stages `dist/` fresh: it copies the four desktop bundles in, deletes the previous release's loose files, and refuses to delete anything when a source bundle is missing, so a partial build cannot destroy the staged set of the last run. `release-repositories` runs it as its first step; the manual call is for inspecting the set before signing.
+5. `just dist-collect` stages `dist/` fresh: it copies the four desktop bundles in, deletes the previous release's loose files, and refuses to delete anything when a source bundle is missing, so a partial build cannot destroy the staged set of the last run. `release-repositories` runs it as its first step; the manual call is for inspecting the set before signing.
 
 ## Release-day gotchas
 
@@ -198,6 +197,6 @@ The desktop confirm-first flow: the Rust command surface (`desktop/src-tauri/src
 - macOS: ad-hoc signing only; no Developer ID certificate or notarization. The aarch64 release bundle comes off `scripts/build-macos-aarch64-deliverable.sh`, which encodes the SDK tbd shims, per-entry zip compression, and the updater-key requirement; keep its checked-in pipeline current instead of reviving /tmp copies.
 - iOS: no build or store pipeline.
 - Windows: no MSI (WiX is Windows-only); no Authenticode signing, so SmartScreen warns. Clean Windows machines need the VC++ redistributable (`VC_redist.x64.exe`) before the bundled exes run; the release notes carry this prerequisite and bundling it into NSIS is still open.
-- Windows installer: verified interactively on the Windows 11 smoke VM (uninstall old version, clean install, app launch over WebView2). A non-interactive start (ssh, scheduled task) exits with code 123 before any UI; that is a launch-context artifact, not an installer bug. The published 0.1.3 Windows installer was rebuilt in place from commit aa5b27d2 (carrying the post-0.1.3 desktop fixes) after the install-dir fix; the git tag intentionally stays at the 0.1.3 release commit because the other platforms' artifacts were built there.
+- Windows installer: verified interactively on the Windows 11 smoke VM (uninstall old version, clean install, app launch over WebView2). A non-interactive start (ssh, scheduled task) exits with code 123 before any UI; that is a launch-context artifact, not an installer bug. Repairing a published release's artifacts happens by force-moving the tag per the pipeline section above, not by rebuilding a tag in place.
 - Desktop updater: the feed endpoint and publish job exist (release.yml `publish-updates`); the residual gap is publish-side signature re-verification and manifest expiry (deferred M5/M9).
 - Chrome Web Store and AMO listings: AMO 0.8.0 approved and public within minutes of submission (2026-11-21); Chrome 0.8.0 uploaded and in Google's review queue as of the same date. Store status is a per-release fact, not a standing clearance — check the AMO versions endpoint and the Chrome dashboard after each `ext-submit`.
