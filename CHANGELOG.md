@@ -11,6 +11,12 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.0 - 2026-11-21
+
+- All apps: recover a vault with its 24-word phrase when the master password is gone. New vaults mint a recovery kit at creation; older vaults turn it on in Settings, under Space. The desktop sign-in screen now has a "Forgot your master password?" link, mobile reaches the same flow from its welcome screen, and `baluard vaults recover-kit` covers the command line. Recovery works on the device in hand or on a fresh install, and your entries stay.
+
+- Windows: a portable Baluard that runs without installing. Unzip it anywhere, including a USB stick, start it with no admin rights, and take it with you. The app updates itself in place, like the installed version.
+
 ## 0.7.5 - 2026-11-19
 
 - Browser: passkey interception now survives the browser pausing the extension in the background, the top cause of Baluard's passkey offer never appearing on a site. Registration state self-repairs when it goes stale, and a sign-in waiting in the credential picker keeps waiting through a pause instead of silently dying.
