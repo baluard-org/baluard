@@ -2513,7 +2513,11 @@ async fn recover_kit_route_parses_and_resolves_slug() {
         &host,
     )
     .await;
-    assert!(resp.success, "in-place recovery succeeds: {}", resp.error_message);
+    assert!(
+        resp.success,
+        "in-place recovery succeeds: {}",
+        resp.error_message
+    );
     let backups: Vec<_> = std::fs::read_dir(vault_path.join("meta"))
         .unwrap()
         .filter_map(|e| e.ok())
