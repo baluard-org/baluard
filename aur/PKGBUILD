@@ -18,7 +18,6 @@ depends=(
   'gtk3'
   'webkit2gtk-4.1'
   'libayatana-appindicator'
-  'openssl'
   'libssh2'
   'hicolor-icon-theme'
 )

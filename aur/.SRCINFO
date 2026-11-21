@@ -8,7 +8,6 @@ pkgbase = baluard-bin
 	depends = gtk3
 	depends = webkit2gtk-4.1
 	depends = libayatana-appindicator
-	depends = openssl
 	depends = libssh2
 	depends = hicolor-icon-theme
 	optdepends = gnome-keyring: OS keyring storage and quick unlock (biometric/PIN)

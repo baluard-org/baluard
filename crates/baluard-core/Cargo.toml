@@ -154,9 +154,12 @@ libgit2-sys = { version = "0.18", features = ["vendored"] }
 # manager by default; the TSS2_TCTI_* env vars override.
 tss-esapi = { version = "7.6", optional = true }
 # Vendored libgit2: a distro-pinned soname (Ubuntu noble carries 1.7,
-# Fedora 1.9) would make the deb uninstallable. libssh2 and OpenSSL stay
-# dynamic against the system libraries.
-libgit2-sys = { version = "0.18", features = ["vendored"] }
+# Fedora 1.9) would make the deb uninstallable. One rpm serves every
+# supported Fedora, so OpenSSL is vendored too: a dynamic libssl soname
+# pins it to one release, and Fedora 45 (OpenSSL 4) cannot load a
+# so.3-linked binary at all. libssh2 stays dynamic (libssh2.so.1 is
+# soname-stable across every target distro).
+libgit2-sys = { version = "0.18", features = ["vendored", "vendored-openssl"] }
 
 [target.'cfg(all(target_os = "windows"))'.dependencies]
 # The hw-seal PCP (TPM 2.0 over CNG) backend and the daemon IPC named-pipe
