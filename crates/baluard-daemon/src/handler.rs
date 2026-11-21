@@ -6,12 +6,12 @@
 //! Wire protocol: length-delimited Protobuf (varint prefix).
 
 use crate::host::{SharedVaultHost, SnapshotError, VaultPresence};
+use crate::proto::{GatewayRequest, GatewayResponse};
+use crate::state::{SharedVaultState, VaultState};
 use baluard_runtime::bridge_policy::{
     after_mutation, first_device_id, merge_fanout_rows, provider_assert_args,
     provider_register_args, store_registered_args,
 };
-use crate::proto::{GatewayRequest, GatewayResponse};
-use crate::state::{SharedVaultState, VaultState};
 
 use std::sync::Arc;
 
@@ -569,7 +569,6 @@ const HOST_ACTIONS: &[&str] = &[
     "reveals.open_guest",
     "vault.recover_kit",
 ];
-
 
 /// Build a success GatewayResponse. Attaches session token if available.
 pub(crate) fn ok_resp(payload: impl Into<String>, token: Option<&str>) -> GatewayResponse {
@@ -2312,14 +2311,6 @@ async fn handle_bridge_host_route(
     }
 }
 
-/// vault.search: the CLI's executable spec of the fan-out contract. Three
-/// forms - default searches the active vault, all=true fans out over every
-/// unlocked merge-eligible vault (personal first, plan section 4.11), and
-/// vault_slug=<slug> is the CLI's "switch vaults": one explicit vault, an
-/// organization Space included, which must merely be unlocked. Token-gated
-/// IN PLACE against the ACTIVE vault (same trust as vaults.list_full_all);
-/// bridge pairing tokens never verify.
-
 /// Route an allowlisted action for a verified bridge token.
 ///
 /// Enforces: BRIDGE_ALLOWED_ACTIONS (Decision 7); vault.update field gate
@@ -2344,6 +2335,13 @@ impl baluard_runtime::bridge_policy::BridgeDispatcher for DaemonDispatcher {
     }
 }
 
+/// vault.search: the CLI's executable spec of the fan-out contract. Three
+/// forms - default searches the active vault, all=true fans out over every
+/// unlocked merge-eligible vault (personal first, plan section 4.11), and
+/// vault_slug=<slug> is the CLI's "switch vaults": one explicit vault, an
+/// organization Space included, which must merely be unlocked. Token-gated
+/// IN PLACE against the ACTIVE vault (same trust as vaults.list_full_all);
+/// bridge pairing tokens never verify.
 async fn handle_vault_search(req: GatewayRequest, host: &SharedVaultHost) -> GatewayResponse {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&req.payload) else {
         return err_response("Invalid JSON");
@@ -2492,7 +2490,6 @@ async fn finalize_pair(
         Err(msg) => err_response(msg.to_string()),
     }
 }
-
 
 /// `vault.unlock` (Phase 6): takes an explicit `slug` (or falls back to
 /// active). If the slug is not yet in the host map, looks up its path in
@@ -6918,7 +6915,7 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 
     // Schedule cover commit + arm auto-sync after successful vault
     // mutations (shared with the bridge policy's mobile dispatcher).
-    after_mutation(&state, &req.action, &resp).await;
+    after_mutation(state, &req.action, &resp).await;
 
     // Zeroize any remaining sensitive data in the request
     req.payload.zeroize();
@@ -6928,7 +6925,6 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
 }
 
 // ── Sync helpers (git2-rs, CPU-bound) ──
-
 
 #[cfg(feature = "git-sync")]
 fn sync_init(
@@ -7857,8 +7853,9 @@ fn clone_refusal_prefixes_match_the_frontend_matcher() {
 #[cfg(test)]
 mod tests {
     use super::{
-        HOST_ACTIONS, HOST_ONLY_ACTIONS, SENTINEL_FORWARDED_ACTIONS,        TOKEN_EXEMPT_ACTIONS, action_requires_session_token,
-        parse_repo_owner_name, repo_web_url_from_remote, route_request,
+        HOST_ACTIONS, HOST_ONLY_ACTIONS, SENTINEL_FORWARDED_ACTIONS, TOKEN_EXEMPT_ACTIONS,
+        action_requires_session_token, parse_repo_owner_name, repo_web_url_from_remote,
+        route_request,
     };
     use crate::proto::GatewayRequest;
     use crate::state::VaultState;
@@ -8246,7 +8243,6 @@ mod tests {
         assert!(validate_slug("my-vault").is_ok());
     }
 
-
     /// Covers the URL forms `sync_disconnect` must extract owner/name from.
     /// If this breaks, the destructive delete-remote path silently no-ops
     /// (returns Err on the now-unparseable URL instead of deleting).
@@ -8310,7 +8306,6 @@ mod tests {
         );
         assert_eq!(repo_web_url_from_remote("not-a-url"), None);
     }
-
 
     #[cfg(unix)]
     #[tokio::test]

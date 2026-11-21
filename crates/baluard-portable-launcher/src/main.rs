@@ -95,10 +95,7 @@ fn env_pairs(exe_dir: &Path, has_webview: bool) -> Vec<(&'static str, String)> {
     let data_dir = exe_dir.join("data");
     let mut pairs = vec![
         ("BALUARD_PORTABLE", "1".to_string()),
-        (
-            "BALUARD_DATA_DIR",
-            data_dir.to_string_lossy().into_owned(),
-        ),
+        ("BALUARD_DATA_DIR", data_dir.to_string_lossy().into_owned()),
         ("BALUARD_SOCKET", pipe_name(exe_dir)),
         (
             "BALUARD_LOG_DIR",
@@ -158,17 +155,12 @@ mod update {
         F: Fn() -> std::io::Result<T>,
     {
         let deadline = Instant::now() + OP_DEADLINE;
-        let mut last: Option<std::io::Error> = None;
         loop {
             match op() {
                 Ok(v) => return Ok(v),
                 Err(e) => {
-                    last = Some(e);
                     if Instant::now() >= deadline {
-                        return Err(format!(
-                            "{what}: {}",
-                            last.map(|e| e.to_string()).unwrap_or_else(|| "timed out".into())
-                        ));
+                        return Err(format!("{what}: {e}"));
                     }
                     std::thread::sleep(RETRY_PAUSE);
                 }
@@ -226,7 +218,9 @@ mod update {
         };
         let result = (|| -> Result<(), String> {
             for entry in &entries {
-                let Some(name) = entry.file_name() else { continue };
+                let Some(name) = entry.file_name() else {
+                    continue;
+                };
                 if name.eq_ignore_ascii_case(super::DATA_DIR_NAME) {
                     continue;
                 }
@@ -235,10 +229,7 @@ mod update {
                     let backup = backup_path(install, name);
                     let _ = remove_any(&backup);
                     fs_retry("move old file aside", || std::fs::rename(&target, &backup))
-                        .map_err(|e| {
-                            rollback(install, &applied);
-                            e
-                        })?;
+                        .inspect_err(|_| rollback(install, &applied))?;
                     applied.push((target.clone(), Some(backup.clone())));
                 } else {
                     applied.push((target.clone(), None));
@@ -330,15 +321,17 @@ mod win {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
     use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-    use windows_sys::Win32::System::Threading::{
-        CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
-    };
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_ICONERROR, MB_SETFOREGROUND, MB_TOPMOST, MB_OK,
+        MB_ICONERROR, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW,
     };
 
     fn message_box(text: &str) {
-        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let wide = |s: &str| {
+            s.encode_utf16()
+                .chain(std::iter::once(0))
+                .collect::<Vec<u16>>()
+        };
         unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),
@@ -532,13 +525,25 @@ mod tests {
     #[test]
     fn env_points_at_the_drive() {
         let pairs = env_pairs(&dir("one"), false);
-        let get = |k: &str| pairs.iter().find(|(key, _)| *key == k).map(|(_, v)| v.clone());
+        let get = |k: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.clone())
+        };
         assert_eq!(get("BALUARD_PORTABLE").as_deref(), Some("1"));
-        assert_eq!(get("BALUARD_DATA_DIR"), Some(dir("one").join("data").to_string_lossy().into_owned()));
+        assert_eq!(
+            get("BALUARD_DATA_DIR"),
+            Some(dir("one").join("data").to_string_lossy().into_owned())
+        );
         assert_eq!(get("BALUARD_DISABLE_KEYRING").as_deref(), Some("1"));
         assert_eq!(get("BALUARD_NO_UPDATE_CHECK").as_deref(), Some("1"));
         assert_eq!(get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"), None);
-        for key in ["BALUARD_LOG_DIR", "BALUARD_CACHE_DIR", "WEBVIEW2_USER_DATA_FOLDER"] {
+        for key in [
+            "BALUARD_LOG_DIR",
+            "BALUARD_CACHE_DIR",
+            "WEBVIEW2_USER_DATA_FOLDER",
+        ] {
             let v = get(key).expect(key);
             assert!(v.contains("data"), "{key}={v} must live under data\\");
         }
@@ -563,7 +568,11 @@ mod tests {
         assert_eq!(a, a_again, "same folder must derive the same pipe name");
         assert_ne!(a, b, "different folders must not share a pipe");
         assert!(a.starts_with(r"\\.\pipe\baluard-portable-"));
-        assert!(a.chars().skip(r"\\.\pipe\baluard-portable-".len()).all(|c| c.is_ascii_alphanumeric()));
+        assert!(
+            a.chars()
+                .skip(r"\\.\pipe\baluard-portable-".len())
+                .all(|c| c.is_ascii_alphanumeric())
+        );
     }
 }
 
@@ -614,7 +623,10 @@ mod update_tests {
             std::fs::read_to_string(install.join("baluard-desktop.exe")).unwrap(),
             "new-desktop"
         );
-        assert_eq!(std::fs::read_to_string(install.join("baluard.exe")).unwrap(), "new-cli");
+        assert_eq!(
+            std::fs::read_to_string(install.join("baluard.exe")).unwrap(),
+            "new-cli"
+        );
         assert_eq!(
             std::fs::read_to_string(install.join("WebView2/msedgewebview2.exe")).unwrap(),
             "new-webview"
@@ -628,8 +640,14 @@ mod update_tests {
             "keep-me-too",
             "the data skip is case-insensitive (NTFS/exFAT)"
         );
-        assert!(!install.join("update-backup").exists(), "backup dir cleaned on success");
-        assert!(!install.join("update-staging").exists(), "staging removed on success");
+        assert!(
+            !install.join("update-backup").exists(),
+            "backup dir cleaned on success"
+        );
+        assert!(
+            !install.join("update-staging").exists(),
+            "staging removed on success"
+        );
     }
 
     #[test]
@@ -689,7 +707,11 @@ mod update_tests {
         // Half-swapped state: desktop moved to backup + journal says so.
         std::fs::create_dir_all(install.join("update-backup")).unwrap();
         std::fs::create_dir_all(install.join("update-staging")).unwrap();
-        std::fs::write(install.join("update-backup/baluard-desktop.exe"), "old-desktop").unwrap();
+        std::fs::write(
+            install.join("update-backup/baluard-desktop.exe"),
+            "old-desktop",
+        )
+        .unwrap();
         std::fs::write(install.join("baluard.exe"), "new-cli").unwrap(); // pure-new copy in flight
         std::fs::write(
             install.join("update-staging/journal.txt"),
@@ -735,6 +757,8 @@ mod rollback_tests {
     /// A read-only staging dir fails the journal write right after the
     /// first entry was renamed aside: the swap must roll the whole install
     /// back to the exact old tree instead of leaving a mix (B2).
+    /// Unix-only: the injection needs directory mode bits.
+    #[cfg(unix)]
     #[test]
     fn failed_swap_rolls_back_to_the_exact_old_tree() {
         use std::os::unix::fs::PermissionsExt;
