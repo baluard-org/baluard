@@ -11,6 +11,10 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.3 - 2026-11-22
+
+- Android: vault diagnostics moved out of Security into its own full page under About, Advanced, with a refresh button in the title bar and clearer remote status wording. Security goes back to security-only settings.
+
 ## 0.8.2 - 2026-11-22
 
 - All apps: a Vault diagnostics screen that settles "my devices show different numbers" without debugging blind. Find it under Settings, Sync, Vault diagnostics on desktop and under Settings on mobile: one screen with the vault's sync verdict (in sync, behind, waiting on you, offline, or failing), both devices' commit points, entry counts read straight from the vault history, and the last sync error with its cause class. A Copy report action puts the whole picture on the clipboard, pre-redacted for sharing: commit ids, counts, and timing, never entry names or passwords. Counts and history stay readable even while the vault is locked.
