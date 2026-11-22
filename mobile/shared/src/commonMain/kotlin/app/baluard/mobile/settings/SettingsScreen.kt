@@ -61,6 +61,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import kotlinx.serialization.json.jsonPrimitive
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -98,6 +101,7 @@ import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.platform.AutofillRole
 import app.baluard.mobile.platform.AutofillSuggestions
 import app.baluard.mobile.platform.AccessibilityFill
+import app.baluard.mobile.platform.Clock
 import app.baluard.mobile.platform.Biometric
 import app.baluard.mobile.platform.BrowserAutofillIntegration
 import app.baluard.mobile.platform.ClipboardPrefs
@@ -170,6 +174,7 @@ fun SettingsScreen(
     vaultTimeoutToken: String,
     onVaultTimeoutChange: (String) -> Unit,
     vaultPath: String,
+    vaultName: String,
     authViewModel: AuthViewModel,
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
@@ -479,6 +484,12 @@ val entitlement by Entitlements.state.collectAsState()
                     Spacer(Modifier.height(8.dp))
                     SiteIconBackfillSection(vault = vault, repo = repo, onChanged = onIconsChanged)
                 }
+
+                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                // Vault diagnostics: per-device sync state + the shareable
+                // support report (desktop sync tab parity).
+                VaultDiagnosticsSection(vault = vault, repo = repo, vaultName = vaultName)
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -3311,6 +3322,142 @@ val entitlement by Entitlements.state.collectAsState()
  * running when the screen re-enters; completion of a self-started job
  * shows the summary, completion of a foreign one just leaves progress.
  */
+@Composable
+private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository, vaultName: String) {
+    var snap by remember(vault) { mutableStateOf<JsonObject?>(null) }
+    var failed by remember(vault) { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
+    val copied = remember { mutableStateOf(false) }
+
+    LaunchedEffect(vault) {
+        repo.vaultDiagnostics(vault, vaultName).fold(
+            onSuccess = { raw ->
+                failed = null
+                snap = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+            },
+            onFailure = { e -> failed = e.message ?: t("diag.verdict.locked") },
+        )
+    }
+
+    fun autosync(): JsonObject? =
+        snap?.get("autosync") as? JsonObject
+
+    fun ago(secs: Long?): String {
+        secs ?: return t("diag.never")
+        val d = Clock.currentTimeMillis() / 1000 - secs
+        return when {
+            d < 90 -> t("diag.agoSecs", d)
+            d < 5400 -> t("diag.agoMins", d / 60)
+            d < 129600 -> t("diag.agoHours", d / 3600)
+            else -> t("diag.agoDays", d / 86_400)
+        }
+    }
+
+    fun verdictText(v: String?): String = t(
+        when (v) {
+            "up_to_date" -> "diag.verdict.upToDate"
+            "behind" -> "diag.verdict.behind"
+            "local_pending" -> "diag.verdict.localPending"
+            "failing" -> "diag.verdict.failing"
+            "unfetched" -> "diag.verdict.unfetched"
+            "needs_decision" -> "diag.verdict.needsDecision"
+            "no_remote" -> "diag.verdict.noRemote"
+            else -> "diag.verdict.locked"
+        },
+    )
+
+    @Composable
+    fun verdictColor(v: String?): Color = when (v) {
+        "up_to_date" -> MaterialTheme.colorScheme.primary
+        "behind", "local_pending", "needs_decision", "unfetched" -> MaterialTheme.colorScheme.tertiary
+        "failing" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = t("diag.title"),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        failed?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        } ?: run {
+            val s = snap
+            if (s == null) {
+                Text(
+                    text = t("diag.loading"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val verdict = s.str("verdict")
+                Text(
+                    text = verdictText(verdict),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = verdictColor(verdict),
+                )
+                val auto = s.get("autosync") as? JsonObject
+                @Composable
+                fun row(label: String, value: String) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+                if (s.str("hasRemote") == "true") {
+                    row(t("diag.head"), s.str("headOid")?.take(7) ?: t("diag.never"))
+                    val behind = s.str("behind")?.toIntOrNull() ?: 0
+                    val ahead = s.str("ahead")?.toIntOrNull() ?: 0
+                    row(
+                        t("diag.remoteState"),
+                        when {
+                            behind > 0 -> t("diag.behindCount", behind)
+                            ahead > 0 -> t("diag.aheadCount", ahead)
+                            else -> t("diag.inSync")
+                        },
+                    )
+                } else {
+                    row(t("diag.remote"), t("diag.noneConfigured"))
+                }
+                row(t("diag.lastSync"), ago(auto?.get("last_sync")?.jsonPrimitive?.content?.toLongOrNull()))
+                row(
+                    t("diag.autosync"),
+                    if (auto?.get("active")?.jsonPrimitive?.content == "true") t("diag.on") else t("diag.off"),
+                )
+                (auto?.get("access_denied_streak")?.jsonPrimitive?.content?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let {
+                    row(t("diag.rejections"), it.toString())
+                }
+                (auto?.get("conflicts_resolved")?.jsonPrimitive?.content?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let {
+                    row(t("diag.conflicts"), it.toString())
+                }
+                val dirty = (s.str("staged")?.toIntOrNull() ?: 0) + (s.str("unstaged")?.toIntOrNull() ?: 0)
+                if (dirty > 0) row(t("diag.localChanges"), dirty.toString())
+                s.str("entries")?.toIntOrNull()?.let { n -> row(t("diag.entries"), n.toString()) }
+                (s.str("archived")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let { row(t("diag.archived"), it.toString()) }
+                (s.str("trashed")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let { row(t("diag.trashed"), it.toString()) }
+                BaluardOutlinedButton(
+                    text = if (copied.value) t("diag.copied") else t("diag.copy"),
+                    onClick = {
+                        s.str("report")?.let { report ->
+                            clipboard.setText(AnnotatedString(report))
+                            copied.value = true
+                        }
+                    },
+                )
+                Text(
+                    text = t("diag.privacyNote"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SiteIconBackfillSection(vault: MobileVault, repo: VaultRepository, onChanged: () -> Unit) {
     var status by remember { mutableStateOf<JsonObject?>(null) }

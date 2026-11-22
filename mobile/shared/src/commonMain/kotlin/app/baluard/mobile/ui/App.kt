@@ -822,6 +822,7 @@ fun App(
                                     viewModel = settingsVm,
                                     vaultTimeoutToken = autoLockToken,
                                     vaultPath = path,
+                                    vaultName = vaultDisplayName,
                                     authViewModel = auth,
                                     onIconsChanged = { saveRevision++ },
                                     onVaultRemoved = {

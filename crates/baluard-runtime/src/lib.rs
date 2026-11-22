@@ -26,6 +26,7 @@ pub mod autosync;
 pub mod bridge;
 pub mod bridge_policy;
 pub mod crypto;
+pub mod diagnostics;
 pub mod founding;
 pub mod host;
 pub mod legacy;

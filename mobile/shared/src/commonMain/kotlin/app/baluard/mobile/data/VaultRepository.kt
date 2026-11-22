@@ -386,6 +386,13 @@ class VaultRepository {
     suspend fun fetchFavicon(vault: MobileVault, domainOrUri: String): String =
         vault.fetchFavicon(domainOrUri)
 
+    /** Vault diagnostics snapshot JSON (verdict, sync state, git position,
+     * counts, and the shareable report text). Desktop sync.diagnostics
+     * parity. */
+    suspend fun vaultDiagnostics(vault: MobileVault, slug: String): Result<String> {
+        return runCatching { vault.vaultDiagnostics(slug) }
+    }
+
     /** Start the batch site-icon backfill (desktop parity). Returns the
      * initial status JSON; fails when the setting is off or one is running. */
     suspend fun faviconBackfillStart(vault: MobileVault): Result<String> {

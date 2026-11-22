@@ -1581,6 +1581,11 @@ internal interface UniffiLib : Library {
     `payload`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_diagnostics(
+    `ptr`: Pointer,
+    `slug`: RustBuffer.ByValue,
+  ): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(`ptr`: Pointer): Long
 
   fun uniffi_baluard_uniffi_fn_func_background_fetch(`path`: RustBuffer.ByValue): Long
@@ -2288,6 +2293,8 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_vault_diagnostics(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_vault_id(): Short
 
   fun ffi_baluard_uniffi_uniffi_contract_version(): Int
@@ -2864,6 +2871,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher() != 61017.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_vault_diagnostics() != 51539.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_vault_id() != 48325.toShort()) {
@@ -5305,6 +5315,13 @@ public interface MobileVaultInterface {
    * payload (does NOT clone the existing kind).
    */
   suspend fun `updateCipher`(`payload`: kotlin.String)
+
+  /**
+   * Vault diagnostics snapshot: verdict, sync state, git position,
+   * counts, and the shareable report text. Same JSON the desktop's
+   * sync.diagnostics route returns.
+   */
+  suspend fun `vaultDiagnostics`(`slug`: kotlin.String): kotlin.String
 
   /**
    * Deterministic vault UUID (derived from the KDF salt, stable across
@@ -9613,6 +9630,36 @@ open class MobileVault :
       { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_void(future) },
       // lift function
       { Unit },
+      // Error FFI converter
+      BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Vault diagnostics snapshot: verdict, sync state, git position,
+   * counts, and the shareable report text. Same JSON the desktop's
+   * sync.diagnostics route returns.
+   */
+  @Throws(BaluardException::class)
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `vaultDiagnostics`(`slug`: kotlin.String): kotlin.String =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_vault_diagnostics(
+          thisPtr,
+          FfiConverterString.lower(`slug`),
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterString.lift(it) },
       // Error FFI converter
       BaluardException.ErrorHandler,
     )

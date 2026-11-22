@@ -18,7 +18,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -53,7 +53,7 @@ const BG_FLUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15)
 pub const SYNC_OP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Coordinator state, surfaced to clients via [`AutoSyncHandle::status`].
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoSyncState {
     /// Active remote, nothing pending.
@@ -71,6 +71,21 @@ pub enum AutoSyncState {
     /// loop and debounce DO NOT fire in this state (the repo is mid-merge);
     /// they resume once the queue drains.
     NeedsDecision,
+}
+
+impl AutoSyncState {
+    /// Stable lowercase tag for diagnostics output. Deliberately a method,
+    /// not a serde change: AutoSyncStatus's wire shape is consumed by the
+    /// desktop already and must not shift.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Dirty => "dirty",
+            Self::Syncing => "syncing",
+            Self::Offline => "offline",
+            Self::NeedsDecision => "needs_decision",
+        }
+    }
 }
 
 /// Consecutive access-denied sync cycles after which the removal-notice
@@ -131,7 +146,7 @@ impl PullReport {
 const SKIPPED_DETAIL: &str = "Pull skipped: uncommitted local changes are blocking the vault sync.";
 
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoSyncStatus {
     /// Whether auto-sync is active for this vault (remote + provider connected).
     pub active: bool,

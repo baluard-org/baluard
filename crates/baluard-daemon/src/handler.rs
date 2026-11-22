@@ -5438,6 +5438,22 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Err(e) => err_response(e),
             }
         }
+        "sync.diagnostics" => {
+            // Payload is the caller's slug so the report can name the vault
+            // without the runtime needing registry access.
+            let slug = if req.payload.is_empty() {
+                "unknown"
+            } else {
+                req.payload.as_str()
+            };
+            match baluard_runtime::diagnostics::snapshot(state, slug).await {
+                Ok(snap) => match serde_json::to_string(&snap) {
+                    Ok(json) => ok_resp(json, token_str),
+                    Err(e) => err_response(format!("JSON error: {e}")),
+                },
+                Err(e) => err_response(e),
+            }
+        }
         "sync.status_json" => {
             match sync_status_json(&state.vault_path, state.autosync.last_sync_secs().await) {
                 Ok(json) => ok_resp(json, token_str),

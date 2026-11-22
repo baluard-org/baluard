@@ -1338,6 +1338,16 @@ impl MobileVault {
         baluard_runtime::icon_backfill::status(&self.state)
     }
 
+    /// Vault diagnostics snapshot: verdict, sync state, git position,
+    /// counts, and the shareable report text. Same JSON the desktop's
+    /// sync.diagnostics route returns.
+    pub async fn vault_diagnostics(&self, slug: String) -> Result<String, BaluardError> {
+        let snap = baluard_runtime::diagnostics::snapshot(&self.state, &slug).await?;
+        serde_json::to_string(&snap).map_err(|e| BaluardError::Vault {
+            detail: format!("diagnostics JSON: {e}"),
+        })
+    }
+
     /// Stop a running backfill; counts keep what completed before the stop.
     pub fn favicon_backfill_cancel(&self) {
         baluard_runtime::icon_backfill::cancel(&self.state)
