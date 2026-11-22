@@ -178,14 +178,11 @@ fun SettingsScreen(
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
     onIconsChanged: () -> Unit = {},
-    // Client-only facts (app version, Android version, background
-    // restriction state) prepended to the diagnostics report on copy,
-    // evaluated when the user copies so the flags are fresh.
-    clientEnv: () -> String = { "" },
     onOpenPeople: () -> Unit = {},
     onSyncNudge: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
     onOpenActivity: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     onOpenGitBackup: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
@@ -487,12 +484,6 @@ val entitlement by Entitlements.state.collectAsState()
                     Spacer(Modifier.height(8.dp))
                     SiteIconBackfillSection(vault = vault, repo = repo, onChanged = onIconsChanged)
                 }
-
-                BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                // Vault diagnostics: per-device sync state + the shareable
-                // support report (desktop sync tab parity).
-                VaultDiagnosticsSection(vault = vault, repo = repo, clientEnv = clientEnv)
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -3308,214 +3299,41 @@ val entitlement by Entitlements.state.collectAsState()
                 }
             }
 
+            // Advanced: tools that answer support questions. Diagnostics
+            // opens its own full screen — a dense table needs the width.
+            SectionCard(title = t("settings.advanced")) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenDiagnostics() },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = t("diag.title"),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = t("diag.entryHint"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
                     }
                     null -> Unit
                 }
             }
 
             Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-/**
- * Vault diagnostics (desktop sync tab parity): per-device sync state plus
- * the copy-to-clipboard support report. The report is redacted by
- * construction in the runtime (host-only remote, sanitized commit
- * subjects, no entry names), so pasting it into an issue is safe.
- */
-@Composable
-private fun VaultDiagnosticsSection(
-    vault: MobileVault,
-    repo: VaultRepository,
-    clientEnv: () -> String,
-) {
-    var snap by remember(vault) { mutableStateOf<JsonObject?>(null) }
-    var failed by remember(vault) { mutableStateOf<String?>(null) }
-    var refreshKey by remember(vault) { mutableStateOf(0) }
-    val clipboard = LocalClipboardManager.current
-    val copied = remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    LaunchedEffect(vault, refreshKey) {
-        repo.vaultDiagnostics(vault).fold(
-            onSuccess = { raw ->
-                val parsed = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
-                if (parsed == null) {
-                    failed = t("diag.error")
-                    snap = null
-                } else {
-                    failed = null
-                    snap = parsed
-                }
-            },
-            onFailure = { failed = t("diag.error") },
-        )
-    }
-
-    fun ago(secs: Long?): String {
-        secs ?: return t("diag.never")
-        val d = (Clock.currentTimeMillis() / 1000 - secs).coerceAtLeast(0)
-        return when {
-            d < 90 -> t("diag.agoSecs", d)
-            d < 5400 -> t("diag.agoMins", d / 60)
-            d < 129600 -> t("diag.agoHours", d / 3600)
-            else -> t("diag.agoDays", d / 86_400)
-        }
-    }
-
-    fun verdictText(v: String?): String = t(
-        when (v) {
-            "up_to_date" -> "diag.verdict.upToDate"
-            "behind" -> "diag.verdict.behind"
-            "local_pending" -> "diag.verdict.localPending"
-            "failing" -> "diag.verdict.failing"
-            "unfetched" -> "diag.verdict.unfetched"
-            "needs_decision" -> "diag.verdict.needsDecision"
-            "no_remote" -> "diag.verdict.noRemote"
-            else -> "diag.verdict.unknown"
-        },
-    )
-
-    @Composable
-    fun verdictColor(v: String?): Color = when (v) {
-        "up_to_date" -> MaterialTheme.colorScheme.primary
-        "behind", "local_pending", "needs_decision", "unfetched" -> MaterialTheme.colorScheme.tertiary
-        "failing" -> MaterialTheme.colorScheme.error
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = t("diag.title"),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            BaluardOutlinedButton(
-                text = t("diag.refresh"),
-                onClick = { refreshKey++ },
-            )
-        }
-        failed?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        } ?: run {
-            val s = snap
-            if (s == null) {
-                Text(
-                    text = t("diag.loading"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                val verdict = s.str("verdict")
-                Text(
-                    text = verdictText(verdict),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = verdictColor(verdict),
-                )
-                val auto = s.get("autosync") as? JsonObject
-                @Composable
-                fun row(label: String, value: String) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
-                    }
-                }
-                row(t("diag.deviceId"), (s.str("deviceId") ?: "").take(7))
-                row(t("diag.head"), s.str("headOid")?.take(7) ?: t("diag.never"))
-                if (s.str("hasRemote") == "true") {
-                    val neverFetched = s.str("upstreamOid") == null
-                    val behind = s.str("behind")?.toIntOrNull() ?: 0
-                    val ahead = s.str("ahead")?.toIntOrNull() ?: 0
-                    row(
-                        t("diag.remoteState"),
-                        when {
-                            neverFetched -> t("diag.never")
-                            behind > 0 && ahead > 0 ->
-                                t("diag.behindCount", behind) + " / " + t("diag.aheadCount", ahead)
-                            behind > 0 -> t("diag.behindCount", behind)
-                            ahead > 0 -> t("diag.aheadCount", ahead)
-                            else -> t("diag.inSync")
-                        },
-                    )
-                    s.str("upstreamAt")?.toLongOrNull()?.let {
-                        row(t("diag.upstream"), ago(it))
-                    }
-                } else {
-                    row(t("diag.remote"), t("diag.noneConfigured"))
-                }
-                val lastSync = auto?.get("last_sync")?.jsonPrimitive?.content?.toLongOrNull()
-                row(
-                    t("diag.lastSync"),
-                    if (lastSync == null) t("diag.never")
-                    else ago(lastSync) + " (" + formatEpochDate(lastSync) + ")",
-                )
-                row(
-                    t("diag.autosync"),
-                    if (auto?.get("active")?.jsonPrimitive?.content == "true") t("diag.on") else t("diag.off"),
-                )
-                (auto?.get("access_denied_streak")?.jsonPrimitive?.content?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let {
-                    row(t("diag.rejections"), it.toString())
-                }
-                (auto?.get("conflicts_resolved")?.jsonPrimitive?.content?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let {
-                    row(t("diag.conflicts"), it.toString())
-                }
-                val dirty = (s.str("staged")?.toIntOrNull() ?: 0) + (s.str("unstaged")?.toIntOrNull() ?: 0)
-                if (dirty > 0) row(t("diag.localChanges"), dirty.toString())
-                row(
-                    t("diag.versions"),
-                    t("diag.versionsValue", s.str("formatVersion") ?: "?", s.str("coreVersion") ?: "?"),
-                )
-                row(
-                    t("diag.os"),
-                    s.str("osVersion")?.let { osv -> (s.str("os") ?: "?") + " " + (s.str("arch") ?: "?") + " (" + osv + ")" }
-                        ?: ((s.str("os") ?: "?") + " " + (s.str("arch") ?: "?")),
-                )
-                s.str("headCiphers")?.toLongOrNull()?.let { n ->
-                    row(
-                        t("diag.headTree"),
-                        t("diag.headTreeValue", n, s.str("headTrash")?.toLongOrNull() ?: 0L),
-                    )
-                }
-                s.str("lastError")?.let { le ->
-                    val at = s.str("lastErrorAt")?.toLongOrNull()
-                    row(t("diag.lastError"), if (at != null) le + " (" + ago(at) + ")" else le)
-                }
-                if (s.str("kitSignerFile") == "true") {
-                    row(t("diag.kitSigner"), t("diag.kitSignerPresent"))
-                }
-                s.str("entries")?.toIntOrNull()?.let { n -> row(t("diag.entries"), n.toString()) }
-                (s.str("archived")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let { row(t("diag.archived"), it.toString()) }
-                (s.str("trashed")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let { row(t("diag.trashed"), it.toString()) }
-                BaluardOutlinedButton(
-                    text = if (copied.value) t("diag.copied") else t("diag.copy"),
-                    onClick = {
-                        s.str("report")?.let { report ->
-                            val env = clientEnv()
-                            val full = if (env.isBlank()) report else env + report
-                            clipboard.setText(AnnotatedString(full))
-                            copied.value = true
-                            scope.launch {
-                                delay(3000)
-                                copied.value = false
-                            }
-                        }
-                    },
-                )
-                Text(
-                    text = t("diag.privacyNote"),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }

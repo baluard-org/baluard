@@ -85,6 +85,7 @@ import app.baluard.mobile.settings.ActivityScreen
 import app.baluard.mobile.settings.CollectionsScreen
 import app.baluard.mobile.settings.SettingsScreen
 import app.baluard.mobile.settings.SettingsViewModel
+import app.baluard.mobile.settings.VaultDiagnosticsScreen
 import app.baluard.mobile.generator.GeneratorScreen
 import app.baluard.mobile.generator.GeneratorViewModel
 import app.baluard.mobile.totp.TotpViewModel
@@ -114,6 +115,7 @@ private sealed interface Nav {
     data object Collections : Nav
     data object Activity : Nav
     data object GitBackup : Nav
+    data object Diagnostics : Nav
     data class EntryList(val kind: EntryListKind) : Nav
     data object CategoryList : Nav
     data object TagList : Nav
@@ -123,7 +125,7 @@ private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
     is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.CategoryList, Nav.TagList -> 1
     // Settings sub-pages sit one level below Settings: back animates a pop.
-    Nav.People, Nav.Collections, Nav.Activity, Nav.GitBackup -> 2
+    Nav.People, Nav.Collections, Nav.Activity, Nav.GitBackup, Nav.Diagnostics -> 2
     is Nav.Edit -> 2
 }
 
@@ -829,7 +831,6 @@ fun App(
                                     vaultPath = path,
                                     authViewModel = auth,
                                     onIconsChanged = { saveRevision++ },
-                                    clientEnv = clientEnv,
                                     onVaultRemoved = {
                                         scope.launch { auth.forget() }
                                         Toast.success(t("toast.vaultRemoved"))
@@ -856,6 +857,7 @@ fun App(
                                     onOpenCollections = { nav = Nav.Collections },
                                     onSyncNudge = { notifyMutation() },
                                     onOpenActivity = { nav = Nav.Activity },
+                                    onOpenDiagnostics = { nav = Nav.Diagnostics },
                                     onOpenGitBackup = { nav = Nav.GitBackup },
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
@@ -890,6 +892,12 @@ fun App(
                                     repo = repo,
                                     onBack = { nav = Nav.Settings },
                                     onSyncNudge = { notifyMutation() },
+                                )
+                                Nav.Diagnostics -> VaultDiagnosticsScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    clientEnv = clientEnv,
+                                    onBack = { nav = Nav.Settings },
                                 )
                             }
                         }
