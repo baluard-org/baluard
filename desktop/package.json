@@ -13,19 +13,19 @@
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-biometry-api": "0.2.8",
-    "@solid-primitives/refs": "3.0.0-next.4",
-    "@solid-primitives/transition-group": "2.0.0-next.4",
-    "@solidjs/web": "2.0.0-rc.22",
+    "@solid-primitives/refs": "3.0.0",
+    "@solid-primitives/transition-group": "2.0.0",
+    "@solidjs/web": "2.0.3",
     "@tauri-apps/api": "2.12.5",
     "@tauri-apps/plugin-dialog": "2.8.4",
     "@tauri-apps/plugin-opener": "2.7.3",
     "dompurify": "^3.4.17",
     "marked": "^18.1.2",
-    "solid-js": "2.0.0-rc.22"
+    "solid-js": "2.0.3"
   },
   "devDependencies": {
     "@solidjs/testing-library": "1.0.0-rc.2",
-    "@solidjs/vite-plugin": "3.0.0-next.57",
+    "@solidjs/vite-plugin": "3.0.1",
     "@tailwindcss/vite": "^4.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "jsdom": "^29.1.1",
