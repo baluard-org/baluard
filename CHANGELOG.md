@@ -11,6 +11,10 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.2 - 2026-11-22
+
+- All apps: a Vault diagnostics screen that settles "my devices show different numbers" without debugging blind. Find it under Settings, Sync, Vault diagnostics on desktop and under Settings on mobile: one screen with the vault's sync verdict (in sync, behind, waiting on you, offline, or failing), both devices' commit points, entry counts read straight from the vault history, and the last sync error with its cause class. A Copy report action puts the whole picture on the clipboard, pre-redacted for sharing: commit ids, counts, and timing, never entry names or passwords. Counts and history stay readable even while the vault is locked.
+
 ## 0.8.1 - 2026-11-21
 
 - Android: website icons now actually show on your entries. The "Show website icons" option saved icons but nothing displayed them; your entry list and entry screens do now, and Settings gains a "Fetch missing icons" action that fills in imported and older entries. Icons use the same site look as the desktop app.
