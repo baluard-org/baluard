@@ -460,7 +460,7 @@ internal val FR: Map<String, String> = mapOf(
     "diag.verdict.unknown" to "État de synchronisation inconnu",
     "diag.copy" to "Copier le rapport de diagnostic",
     "diag.copied" to "Rapport copié",
-    "diag.privacyNote" to "Le rapport affiche l'état de synchronisation, des compteurs, des identifiants courts de commits et le nom d'hôte du dépôt distant. Il n'inclut jamais de noms d'entrées, de mots de passe ni l'adresse complète du dépôt.",
+    "diag.privacyNote" to "Le rapport liste l'\u00e9tat de synchronisation et le motif du dernier \u00e9chec, les d\u00e9comptes, les identifiants courts des commits, les versions de l'app et du syst\u00e8me, et le nom d'h\u00f4te du d\u00e9p\u00f4t distant. Il n'inclut jamais les noms d'entr\u00e9es, les mots de passe ni l'adresse compl\u00e8te du d\u00e9p\u00f4t.",
     "diag.head" to "Cet appareil (head)",
     "diag.remoteState" to "Comparé au dépôt distant",
     "diag.remote" to "Dépôt distant",

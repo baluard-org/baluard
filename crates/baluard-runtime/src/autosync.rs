@@ -338,16 +338,19 @@ impl AutoSyncHandle {
         self.inner.lock().await.last_sync
     }
 
-    /// Last failed cycle (scrubbed reason, unix seconds). Cleared by any
-    /// success. Diagnostics-only surface: a vault that silently stops
-    /// syncing reports WHY here instead of only a stale `last_sync`.
+    /// Last failed cycle (failure class, unix seconds; see
+    /// diagnostics::error_class for the fixed vocabulary). Cleared by any
+    /// success. Offline outcomes and timeouts record nothing here — they
+    /// already show through `state` — so None means "no hard failure",
+    /// not "healthy". Diagnostics-only surface: a vault that silently
+    /// stops syncing reports WHY instead of only a stale `last_sync`.
     pub async fn last_error(&self) -> Option<(String, i64)> {
         self.inner.lock().await.last_error.clone()
     }
 
     fn record_failure(g: &mut Inner, what: &str, detail: Option<&str>) {
         let msg = match detail {
-            Some(d) if !d.is_empty() => format!("{what}: {}", crate::diagnostics::display_safe(d)),
+            Some(d) if !d.is_empty() => format!("{what}: {}", crate::diagnostics::error_class(d)),
             _ => what.to_string(),
         };
         g.last_error = Some((msg, now_secs() as i64));

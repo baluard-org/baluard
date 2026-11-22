@@ -1507,7 +1507,7 @@
     "refresh": "Refresh",
     "copy": "Copy diagnostic report",
     "copied": "Report copied",
-    "privacyNote": "The report lists sync state, counts, short commit ids and the remote's host name. It never includes entry names, passwords or the full repository address.",
+    "privacyNote": "The report lists sync state and the last failure reason, counts, short commit ids, app and system versions, and the remote's host name. It never includes entry names, passwords or the full repository address.",
     "head": "This device (head)",
     "remoteState": "Compared to remote",
     "remote": "Remote",

@@ -217,7 +217,7 @@ class MainActivity : FragmentActivity() {
                     onPasskeyResult = { completePasskey(it) },
                     onPasskeyCancel = { cancelPasskey() },
                     onPasskeyUnlockComplete = { completePasskeyUnlock() },
-                    clientEnv = clientEnvHeader(),
+                    clientEnv = ::clientEnvHeader,
                 )
             }
         }
@@ -225,21 +225,27 @@ class MainActivity : FragmentActivity() {
 
     /// Facts the Rust runtime cannot see, formatted as a report header.
     /// Android OEMs kill background sync, so the restriction flags are
-    /// prime "mobile differs" triage data.
-    private fun clientEnvHeader(): String = runCatching {
-        val info = packageManager.getPackageInfo(packageName, 0)
-        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-        buildString {
-            append("app: ").append(info.versionName ?: "unknown")
-            append(" (").append(info.versionCode).appendLine(")")
-            append("android: ").append(android.os.Build.VERSION.RELEASE)
-            append(" (SDK ").append(android.os.Build.VERSION.SDK_INT).appendLine(")")
-            appendLine("background restricted: ${am.isBackgroundRestricted}")
-            appendLine(
-                "battery optimization ignored: ${packageManager.isIgnoringBatteryOptimizations(packageName)}",
-            )
+    /// prime "mobile differs" triage data. Called at copy time so the
+    /// flags are fresh, and built per field so one failing read cannot
+    /// drop the whole header.
+    @Suppress("DEPRECATION")
+    private fun clientEnvHeader(): String {
+        val lines = mutableListOf<String>()
+        runCatching {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            lines += "app: ${info.versionName ?: "unknown"} (${info.longVersionCode})"
         }
-    }.getOrDefault("")
+        lines += "android: ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})"
+        runCatching {
+            val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+            lines += "background restricted: ${am.isBackgroundRestricted}"
+        }
+        runCatching {
+            val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+            lines += "battery optimization ignored: ${pm.isIgnoringBatteryOptimizations(packageName)}"
+        }
+        return lines.joinToString("\n", postfix = "\n")
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

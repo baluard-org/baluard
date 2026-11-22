@@ -1507,7 +1507,7 @@
     "refresh": "Actualiser",
     "copy": "Copier le rapport de diagnostic",
     "copied": "Rapport copié",
-    "privacyNote": "Le rapport affiche l'état de synchronisation, des compteurs, des identifiants courts de commits et le nom d'hôte du dépôt distant. Il n'inclut jamais de noms d'entrées, de mots de passe ni l'adresse complète du dépôt.",
+    "privacyNote": "Le rapport liste l'état de synchronisation et le motif du dernier échec, les décomptes, les identifiants courts des commits, les versions de l'app et du système, et le nom d'hôte du dépôt distant. Il n'inclut jamais les noms d'entrées, les mots de passe ni l'adresse complète du dépôt.",
     "head": "Cet appareil (head)",
     "remoteState": "Comparé au dépôt distant",
     "remote": "Dépôt distant",

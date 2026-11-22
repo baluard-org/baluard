@@ -179,8 +179,9 @@ fun SettingsScreen(
     repo: VaultRepository,
     onIconsChanged: () -> Unit = {},
     // Client-only facts (app version, Android version, background
-    // restriction state) prepended to the diagnostics report on copy.
-    clientEnv: String = "",
+    // restriction state) prepended to the diagnostics report on copy,
+    // evaluated when the user copies so the flags are fresh.
+    clientEnv: () -> String = { "" },
     onOpenPeople: () -> Unit = {},
     onSyncNudge: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
@@ -3327,7 +3328,7 @@ val entitlement by Entitlements.state.collectAsState()
 private fun VaultDiagnosticsSection(
     vault: MobileVault,
     repo: VaultRepository,
-    clientEnv: String,
+    clientEnv: () -> String,
 ) {
     var snap by remember(vault) { mutableStateOf<JsonObject?>(null) }
     var failed by remember(vault) { mutableStateOf<String?>(null) }
@@ -3498,7 +3499,8 @@ private fun VaultDiagnosticsSection(
                     text = if (copied.value) t("diag.copied") else t("diag.copy"),
                     onClick = {
                         s.str("report")?.let { report ->
-                            val full = if (clientEnv.isBlank()) report else clientEnv + report
+                            val env = clientEnv()
+                            val full = if (env.isBlank()) report else env + report
                             clipboard.setText(AnnotatedString(full))
                             copied.value = true
                             scope.launch {

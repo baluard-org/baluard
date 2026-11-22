@@ -431,7 +431,7 @@ internal val PT: Map<String, String> = mapOf(
     "diag.verdict.unknown" to "Estado de sincronização desconhecido",
     "diag.copy" to "Copiar relatório de diagnóstico",
     "diag.copied" to "Relatório copiado",
-    "diag.privacyNote" to "O relatório mostra o estado da sincronização, contagens, identificadores curtos de commits e o host do remoto. Nunca inclui nomes de entradas, senhas nem o endereço completo do repositório.",
+    "diag.privacyNote" to "O relat\u00f3rio lista o estado da sincroniza\u00e7\u00e3o e o motivo da \u00faltima falha, contagens, identificadores curtos de commits, vers\u00f5es do app e do sistema, e o nome do host remoto. Nunca inclui nomes de entradas, senhas nem o endere\u00e7o completo do reposit\u00f3rio.",
     "diag.head" to "Este dispositivo (head)",
     "diag.remoteState" to "Comparado ao remoto",
     "diag.remote" to "Remoto",

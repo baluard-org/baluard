@@ -1507,7 +1507,7 @@
     "refresh": "Atualizar",
     "copy": "Copiar relatório de diagnóstico",
     "copied": "Relatório copiado",
-    "privacyNote": "O relatório mostra o estado da sincronização, contagens, identificadores curtos de commits e o host do remoto. Nunca inclui nomes de entradas, senhas nem o endereço completo do repositório.",
+    "privacyNote": "O relatório lista o estado da sincronização e o motivo da última falha, contagens, identificadores curtos de commits, versões do app e do sistema, e o nome do host remoto. Nunca inclui nomes de entradas, senhas nem o endereço completo do repositório.",
     "head": "Este dispositivo (head)",
     "remoteState": "Comparado ao remoto",
     "remote": "Remoto",

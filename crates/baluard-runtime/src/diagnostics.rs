@@ -86,8 +86,10 @@ pub struct DiagnosticsSnapshot {
     pub archived: Option<usize>,
     #[serde(rename = "trashed")]
     pub trashed: Option<usize>,
-    /// True when no VaultHandle is open: the counts above are None and
-    /// everything below stays meaningful while locked.
+    /// No usable unlock session right now: the counts above are None and
+    /// everything below stays meaningful. Defensive only — the daemon
+    /// route refuses locked vaults upstream and mobile gates Settings on
+    /// an unlocked vault, so no client reads this today.
     #[serde(rename = "locked")]
     pub locked: bool,
     /// Baluard core version (workspace version) + on-disk envelope
@@ -108,7 +110,11 @@ pub struct DiagnosticsSnapshot {
     /// Cipher/trash blob counts read straight from the HEAD tree: the
     /// ground truth that arbitrates "different item counts" against any
     /// local index or meta-cache drift, independent of the live meta
-    /// lists. Works while locked.
+    /// lists. Works while locked. headCiphers counts every blob under
+    /// ciphers/ including archived entries (archiving is a meta flag,
+    /// the blob stays), so the comparable meta figure is
+    /// entries + archived, not entries alone. None = the tree read
+    /// failed; Some(0) is a real empty vault.
     #[serde(rename = "headCiphers")]
     pub head_ciphers: Option<u64>,
     #[serde(rename = "headTrash")]
@@ -198,7 +204,7 @@ fn remote_host(url: &str) -> Option<String> {
 /// Peer-authored commit messages are arbitrary bytes: reduce to a
 /// bounded single-line ASCII subject so a forged message cannot add
 /// report lines ("x\nverdict: up_to_date") or carry junk.
-pub fn display_safe(raw: &str) -> String {
+fn display_safe(raw: &str) -> String {
     let s: String = raw
         .lines()
         .next()
@@ -247,8 +253,8 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
     r.push_str(&format!("vault id: {}\n", s.vault_id));
     r.push_str(&format!("device: {}\n", s.device_id));
     r.push_str(&format!(
-        "core: {} (vault format {})\n",
-        s.core_version, s.format_version
+        "vault format: {} (core {})\n",
+        s.format_version, s.core_version
     ));
     r.push_str(&match &s.os_version {
         Some(v) => format!("os: {} {} ({v})\n", s.os, s.arch),
@@ -336,7 +342,7 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
     }
     let c = |name: &str, v: Option<usize>| match v {
         Some(n) => format!("{name}: {n}\n"),
-        None => format!("{name}: (locked)\n"),
+        None => format!("{name}: (unavailable)\n"),
     };
     if s.locked {
         r.push_str("counts: unavailable (vault locked; unlock and regenerate the report)\n");
@@ -403,7 +409,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         totp: None,
         archived: None,
         trashed: None,
-        locked: state.inner.read().await.is_none(),
+        locked: !state.is_unlocked().await,
         core_version: env!("CARGO_PKG_VERSION").into(),
         format_version: baluard_core::BALUARD_VERSION,
         os: std::env::consts::OS.into(),
@@ -445,8 +451,8 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         s.unstaged = dirty.as_ref().map(|d| d.unstaged).unwrap_or(0);
         s.commits = commits;
         if let Some((c, t)) = tree_counts {
-            s.head_ciphers = Some(c);
-            s.head_trash = Some(t);
+            s.head_ciphers = c;
+            s.head_trash = t;
         }
     }
 
@@ -508,7 +514,7 @@ type GitState = (
     Option<(u32, u32)>,
     Option<baluard_core::sync::engine::WorkTreeStatus>,
     Vec<CommitRow>,
-    Option<(u64, u64)>,
+    Option<(Option<u64>, Option<u64>)>,
 );
 
 #[cfg(feature = "git-sync")]
@@ -564,23 +570,28 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
                 .map(|(a, b)| (a as u32, b as u32));
         }
     }
-    let head = repo
-        .head()
-        .ok()
-        .and_then(|h| h.peel_to_commit().ok())
+    // One HEAD read for everything downstream: a live autosync commit
+    // between two reads would let headOid and the tree counts disagree.
+    let head_commit = repo.head().ok().and_then(|h| h.peel_to_commit().ok());
+    let head = head_commit
+        .as_ref()
         .map(|c| (c.id().to_string(), c.time().seconds()));
-    let tree_counts = repo
-        .head()
-        .ok()
-        .and_then(|h| h.peel_to_commit().ok())
+    let tree_counts = head_commit
+        .as_ref()
         .and_then(|c| c.tree().ok())
         .map(|tree| {
-            let n = |p: &str| {
-                tree.get_path(std::path::Path::new(p))
-                    .ok()
-                    .and_then(|t| t.to_object(&repo).ok())
-                    .and_then(|o| o.as_tree().map(|st| count_tree_blobs(&repo, st)))
-                    .unwrap_or(0)
+            // A missing subtree is a real zero (empty vault); any other
+            // read failure is None so a corrupt tree never reads as empty.
+            let n = |p: &str| -> Option<u64> {
+                match tree.get_path(std::path::Path::new(p)) {
+                    Ok(entry) => {
+                        let obj = entry.to_object(&repo).ok()?;
+                        let sub = obj.as_tree()?;
+                        Some(count_tree_blobs(&repo, sub, 0))
+                    }
+                    Err(e) if e.code() == git2::ErrorCode::NotFound => Some(0),
+                    Err(_) => None,
+                }
             };
             (n("ciphers"), n("trash"))
         });
@@ -611,15 +622,19 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
 /// Blob count under a HEAD-tree subtree: the commit's own contents,
 /// independent of any local index or meta cache. Works while locked.
 #[cfg(feature = "git-sync")]
-fn count_tree_blobs(repo: &git2::Repository, tree: &git2::Tree) -> u64 {
+fn count_tree_blobs(repo: &git2::Repository, tree: &git2::Tree, depth: u8) -> u64 {
+    // The HEAD tree is remote-controlled: a hostile commit could nest
+    // arbitrarily deep, so recursion is depth-capped instead of trusting
+    // the layout (real depth is 1-2; a stack overflow aborts the process).
+    const MAX_DEPTH: u8 = 4;
     let mut n = 0u64;
     for entry in tree.iter() {
         match entry.kind() {
             Some(git2::ObjectType::Blob) => n += 1,
-            Some(git2::ObjectType::Tree) => {
+            Some(git2::ObjectType::Tree) if depth < MAX_DEPTH => {
                 if let Ok(obj) = entry.to_object(repo) {
                     if let Some(sub) = obj.as_tree() {
-                        n += count_tree_blobs(repo, sub);
+                        n += count_tree_blobs(repo, sub, depth + 1);
                     }
                 }
             }
@@ -627,6 +642,37 @@ fn count_tree_blobs(repo: &git2::Repository, tree: &git2::Tree) -> u64 {
         }
     }
     n
+}
+
+/// Coarse failure class for stored diagnostics: raw git error text can
+/// carry repository paths or usernames even after credential scrubbing,
+/// so stored reasons are a fixed vocabulary, never the error body.
+pub fn error_class(raw: &str) -> &'static str {
+    let l = raw.to_ascii_lowercase();
+    if l.contains("401")
+        || l.contains("403")
+        || l.contains("authenticat")
+        || l.contains("permission")
+        || l.contains("denied")
+    {
+        "authentication"
+    } else if l.contains("ssl") || l.contains("tls") || l.contains("certificate") {
+        "tls"
+    } else if l.contains("resolve")
+        || l.contains("connect")
+        || l.contains("timed out")
+        || l.contains("network")
+    {
+        "network"
+    } else if l.contains("signature") || l.contains("unsigned") || l.contains("verif") {
+        "commit verification"
+    } else if l.contains("conflict") || l.contains("merge") {
+        "merge"
+    } else if l.contains("lock") {
+        "vault locked"
+    } else {
+        "other"
+    }
 }
 
 /// Linux-only distro pretty name; the client header covers other OSes.
@@ -639,7 +685,7 @@ fn os_version() -> Option<String> {
         .and_then(|c| {
             c.lines()
                 .find_map(|l| l.strip_prefix("PRETTY_NAME="))
-                .map(|v| v.trim_matches('"').trim().to_string())
+                .map(|v| display_safe(v.trim_matches('"').trim()))
         })
         .filter(|v| !v.is_empty())
 }
@@ -662,6 +708,58 @@ mod tests {
         assert_eq!(classify(true, true, 0, 0, 2, 0), "local_pending");
         assert_eq!(classify(true, true, 0, 0, 0, 3), "behind");
         assert_eq!(classify(true, true, 0, 0, 0, 0), "up_to_date");
+    }
+
+    #[test]
+    fn error_class_never_carries_error_text() {
+        assert_eq!(
+            error_class(
+                "fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host"
+            ),
+            "network"
+        );
+        assert_eq!(
+            error_class("remote: Permission to o/r.git denied to bob"),
+            "authentication"
+        );
+        assert_eq!(error_class("gh: authentication required"), "authentication");
+        assert_eq!(error_class("TLS handshake failed"), "tls");
+        assert_eq!(
+            error_class("Sync(UnsignedCommitRefused)"),
+            "commit verification"
+        );
+        assert_eq!(error_class("merge conflict in index.enc"), "merge");
+        assert_eq!(error_class("vault is locked"), "vault locked");
+        assert_eq!(error_class("something odd"), "other");
+    }
+
+    #[test]
+    fn tree_blob_count_is_depth_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        // Build a 500-deep chain of trees; the counter must bail, not
+        // overflow the stack.
+        let mut parent_tree_oid = {
+            let mut tb = repo.treebuilder(None).unwrap();
+            tb.insert("a.txt", repo.blob(b"deep").unwrap(), 0o100644)
+                .unwrap();
+            tb.write().unwrap()
+        };
+        for _ in 0..500 {
+            let mut tb = repo.treebuilder(None).unwrap();
+            tb.insert("n", parent_tree_oid, 0o040000).unwrap();
+            parent_tree_oid = tb.write().unwrap();
+        }
+        // Root = { shallow blob, deep chain }. Only the shallow blob is
+        // reachable under the cap: the deep branch is skipped, not walked.
+        let mut root_tb = repo.treebuilder(None).unwrap();
+        root_tb
+            .insert("shallow.bin", repo.blob(b"near").unwrap(), 0o100644)
+            .unwrap();
+        root_tb.insert("deep", parent_tree_oid, 0o040000).unwrap();
+        let tree = repo.find_tree(root_tb.write().unwrap()).unwrap();
+        let n = count_tree_blobs(&repo, &tree, 0);
+        assert_eq!(n, 1, "capped: only the shallow blob counts, got {n}");
     }
 
     #[test]

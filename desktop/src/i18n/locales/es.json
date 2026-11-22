@@ -1507,7 +1507,7 @@
     "refresh": "Actualizar",
     "copy": "Copiar informe de diagnóstico",
     "copied": "Informe copiado",
-    "privacyNote": "El informe muestra el estado de sincronización, conteos, identificadores cortos de commits y el host del remoto. Nunca incluye nombres de entradas, contraseñas ni la dirección completa del repositorio.",
+    "privacyNote": "El informe lista el estado de sincronización y el motivo del último fallo, recuentos, identificadores cortos de commits, versiones de la app y del sistema, y el nombre del host remoto. Nunca incluye nombres de entradas, contraseñas ni la dirección completa del repositorio.",
     "head": "Este dispositivo (head)",
     "remoteState": "Comparado con el remoto",
     "remote": "Remoto",

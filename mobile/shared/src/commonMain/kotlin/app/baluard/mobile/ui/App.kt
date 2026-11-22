@@ -160,9 +160,10 @@ fun App(
     onPasskeyCancel: () -> Unit = {},
     onPasskeyUnlockComplete: () -> Unit = {},
     // Client-only facts (app version, Android version, background
-    // restriction state) prepended to the diagnostics report on copy.
-    // Empty on platforms that do not supply it.
-    clientEnv: String = "",
+    // restriction state) prepended to the diagnostics report on copy,
+    // evaluated when the user copies so the flags are fresh. Empty on
+    // platforms that do not supply it.
+    clientEnv: () -> String = { "" },
 ) {
     BaluardTheme {
         Surface(
@@ -828,6 +829,7 @@ fun App(
                                     vaultPath = path,
                                     authViewModel = auth,
                                     onIconsChanged = { saveRevision++ },
+                                    clientEnv = clientEnv,
                                     onVaultRemoved = {
                                         scope.launch { auth.forget() }
                                         Toast.success(t("toast.vaultRemoved"))

@@ -469,7 +469,7 @@ internal val EN: Map<String, String> = mapOf(
     "diag.verdict.unknown" to "Sync state unknown",
     "diag.copy" to "Copy diagnostic report",
     "diag.copied" to "Report copied",
-    "diag.privacyNote" to "The report lists sync state, counts, short commit ids and the remote's host name. It never includes entry names, passwords or the full repository address.",
+    "diag.privacyNote" to "The report lists sync state and the last failure reason, counts, short commit ids, app and system versions, and the remote's host name. It never includes entry names, passwords or the full repository address.",
     "diag.head" to "This device (head)",
     "diag.remoteState" to "Compared to remote",
     "diag.remote" to "Remote",

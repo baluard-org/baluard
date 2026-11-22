@@ -14,6 +14,8 @@ const { daemonMock, clipboardMock, toastMock, setSlug, slugSignal } = await vi.h
 });
 
 vi.mock("../lib/daemon.js", () => ({ daemon: (...a) => daemonMock(...a) }));
+const versionMock = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/app", () => ({ getVersion: (...a) => versionMock(...a) }));
 vi.mock("../lib/clipboard.js", () => ({ copyToClipboard: (...a) => clipboardMock(...a) }));
 vi.mock("../context/toastSignal.js", () => ({ toastSuccess: toastMock }));
 vi.mock("../i18n/index.jsx", () => ({ useI18n: () => ({ t: (k, vars) => (vars?.n != null ? `${k}:${vars.n}` : k) }) }));
@@ -56,6 +58,7 @@ import VaultDiagnostics from "../components/VaultDiagnostics.jsx";
 describe("VaultDiagnostics", () => {
   beforeEach(() => {
     setSlug("personal");
+    versionMock.mockReset().mockResolvedValue("9.9.9");
     daemonMock.mockReset().mockResolvedValue(JSON.stringify(SNAPSHOT));
     clipboardMock.mockClear();
     toastMock.mockClear();
@@ -101,13 +104,30 @@ describe("VaultDiagnostics", () => {
     expect(queryByText("diag.upstream")).toBeNull();
   });
 
-  it("copies the daemon-composed report verbatim", async () => {
+  it("appends the daemon-composed report unchanged after the header", async () => {
+    const { findByText } = render(() => <VaultDiagnostics />);
+    const btn = await findByText("diag.copy");
+    btn.click();
+    await vi.waitFor(() => expect(clipboardMock).toHaveBeenCalled());
+    expect(clipboardMock.mock.calls[0][0].endsWith(SNAPSHOT.report)).toBe(true);
+    expect(toastMock).toHaveBeenCalledWith("diag.copied");
+  });
+
+  it("the copy header carries the app version", async () => {
+    const { findByText } = render(() => <VaultDiagnostics />);
+    const btn = await findByText("diag.copy");
+    btn.click();
+    await vi.waitFor(() => expect(clipboardMock).toHaveBeenCalled());
+    expect(clipboardMock.mock.calls[0][0]).toBe(`app: 9.9.9\n${SNAPSHOT.report}`);
+  });
+
+  it("a failing version probe still copies the bare report", async () => {
+    versionMock.mockRejectedValue(new Error("no app module"));
     const { findByText } = render(() => <VaultDiagnostics />);
     const btn = await findByText("diag.copy");
     btn.click();
     await vi.waitFor(() => expect(clipboardMock).toHaveBeenCalled());
     expect(clipboardMock.mock.calls[0][0]).toBe(SNAPSHOT.report);
-    expect(toastMock).toHaveBeenCalledWith("diag.copied");
   });
 
   it("a stale response from a superseded request never lands", async () => {
