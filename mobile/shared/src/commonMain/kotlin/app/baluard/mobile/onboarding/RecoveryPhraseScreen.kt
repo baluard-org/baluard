@@ -52,11 +52,14 @@ import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.toast.Toast
 import app.baluard.mobile.ui.E2eTags
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.platform.testTag
 
 /**
  * Recovery-phrase display styled with numbered word cards and security alerts.
  */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun RecoveryPhraseScreen(
     words: List<String>,
@@ -248,6 +251,10 @@ fun RecoveryPhraseScreen(
 
     if (showFinalCheck) {
         AlertDialog(
+            // Dialog windows do not inherit the activity root's
+            // testTagsAsResourceId; Maestro needs it set here to see the
+            // dialog's tags.
+            modifier = Modifier.semantics { testTagsAsResourceId = true },
             onDismissRequest = { showFinalCheck = false },
             title = {
                 Text(
@@ -262,10 +269,13 @@ fun RecoveryPhraseScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showFinalCheck = false
-                    onAcknowledged()
-                }) {
+                TextButton(
+                    modifier = Modifier.testTag(E2eTags.RECOVERY_FINAL_CONFIRM),
+                    onClick = {
+                        showFinalCheck = false
+                        onAcknowledged()
+                    },
+                ) {
                     Text(t("recovery.finalConfirm"))
                 }
             },

@@ -52,23 +52,12 @@ name: 15-family-create
     direction: DOWN
 - tapOn:
     id: "e2e/recovery/continue"
-# Words-once again: the Space Recovery Kit (family only).
-- extendedWaitUntil:
-    visible: "Family recovery kit"
-    timeout: 20000
-- scrollUntilVisible:
-    element:
-      id: "e2e/recovery/ack"
-    direction: DOWN
+# Kit-at-birth adds a final confirmation dialog after Continue, before
+# the family kit screen appears.
 - tapOn:
-    id: "e2e/recovery/ack"
-- scrollUntilVisible:
-    element:
-      id: "e2e/recovery/continue"
-    direction: DOWN
-- tapOn:
-    id: "e2e/recovery/continue"
-# Family hub: the Shared folder section always renders.
+    id: "e2e/recovery/finalConfirm"
+# Kit-at-birth: the ceremony phrase IS the family kit, so there is no
+# second phrase screen; the hub renders directly with the Shared section.
 - extendedWaitUntil:
     visible: "SHARED"
     timeout: 45000

@@ -22,6 +22,7 @@ object E2eTags {
     // Recovery-phrase acknowledgment (creation step 2).
     const val RECOVERY_ACK = "e2e/recovery/ack"
     const val RECOVERY_CONTINUE = "e2e/recovery/continue"
+    const val RECOVERY_FINAL_CONFIRM = "e2e/recovery/finalConfirm"
 
     // Unlock.
     const val UNLOCK_PASSWORD = "e2e/unlock/password"

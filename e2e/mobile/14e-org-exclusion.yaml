@@ -79,6 +79,9 @@ appLaunchDelay: 3000
     timeout: 20000
 - tapOn:
     id: "e2e/recovery/continue"
+# Kit-at-birth adds a final confirmation dialog after Continue.
+- tapOn:
+    id: "e2e/recovery/finalConfirm"
 - extendedWaitUntil:
     visible:
       id: "e2e/list/search"

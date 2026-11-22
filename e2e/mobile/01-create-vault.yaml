@@ -42,5 +42,8 @@ name: 01-create-vault
     direction: DOWN
 - tapOn:
     id: "e2e/recovery/continue"
+# Kit-at-birth adds a final confirmation dialog after Continue.
+- tapOn:
+    id: "e2e/recovery/finalConfirm"
 - assertVisible:
     id: "e2e/list/search"
