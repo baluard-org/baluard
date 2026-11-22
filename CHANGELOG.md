@@ -11,6 +11,10 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.4 - 2026-11-22
+
+- Desktop: vault diagnostics moved to About, Advanced, matching the mobile app, and Sync goes back to sync-only settings.
+
 ## 0.8.3 - 2026-11-22
 
 - Android: vault diagnostics moved out of Security into its own full page under About, Advanced, with a refresh button in the title bar and clearer remote status wording. Security goes back to security-only settings.
