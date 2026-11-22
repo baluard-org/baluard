@@ -29,6 +29,7 @@ STABLE_LIST="$(cd "$ROOT" && bash -c 'source scripts/release-common.sh; printf "
 stage_set() {
   : > "$SANDBOX/release-upload/SHA256SUMS"
   : > "$SANDBOX/release-upload/SHA256SUMS.sig"
+  printf '%s\n' "${PUB_TEST_STAGED_VERSION:-0.9.9}" > "$SANDBOX/release-upload/.staged-version"
   local n
   while IFS= read -r n; do
     [[ "$n" == SHA256SUMS ]] && continue
@@ -107,6 +108,20 @@ rm -f "$SANDBOX/release-upload/Baluard-amd64.deb"
 out="$(run_pub 0.9.9 "$NOTES")"
 grep -q "$MISSING_PAT" <<<"$out" || die "missing asset: $out"
 gh_uncalled
+stage_set
+
+# Presence is not freshness: the upload set must carry a stage marker
+# matching the tag, else a leftover set from another cycle publishes.
+rm -f "$SANDBOX/release-upload/.staged-version"
+out="$(run_pub 0.9.9 "$NOTES")"
+grep -q 'stale or unstaged' <<<"$out" || die "unmarked upload set: $out"
+gh_uncalled
+
+printf '0.9.8\n' > "$SANDBOX/release-upload/.staged-version"
+out="$(run_pub 0.9.9 "$NOTES")"
+grep -q 'stale or unstaged' <<<"$out" || die "stale upload set: $out"
+gh_uncalled
+
 stage_set
 
 out="$(export PUB_TEST_GH_HAD_RELEASE=1; run_pub 0.9.9 "$NOTES")"

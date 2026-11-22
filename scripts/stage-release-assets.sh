@@ -177,6 +177,11 @@ fi
 $TAURI_BIN signer sign "$OUT_ABS/SHA256SUMS" </dev/null
 [[ -s "$OUT_ABS/SHA256SUMS.sig" ]] || die "SHA256SUMS.sig missing after signing"
 
+# Publish provenance: release-publish refuses an upload set whose marker
+# does not match the tag, so a leftover set from another cycle can never
+# reach a release. Dot-prefixed so the upload glob skips it.
+printf '%s\n' "$VER" > "$OUT_ABS/.staged-version"
+
 echo
 echo "staged $(find "$OUT_ABS" -maxdepth 1 -type f | wc -l) files in $OUT_ABS:"
 ls -1 "$OUT_ABS"

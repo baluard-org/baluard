@@ -53,6 +53,12 @@ for n in "${STABLE_REQUIRE[@]}" SHA256SUMS SHA256SUMS.sig; do
     || die "release-upload/$n missing; run just release-stage first"
 done
 
+# Presence is not freshness: a leftover set from the previous cycle matches
+# every stable name. The stage marker is the version proof.
+STAGED_VERSION="$(cat "$ROOT/release-upload/.staged-version" 2>/dev/null || true)"
+[[ "$STAGED_VERSION" == "$TAG" ]] \
+  || die "release-upload/ is stale or unstaged for $TAG (marker: ${STAGED_VERSION:-none}; run just release-stage first)"
+
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
   || die "gh could not resolve the repository"
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then

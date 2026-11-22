@@ -85,7 +85,9 @@ EXPECT=(
 check_set() {
   local expected_count=$#
   local actual_count
-  actual_count="$(find "$OUT" -maxdepth 1 -type f | wc -l)"
+  # Dotfiles are staging metadata (e.g. .staged-version), not assets; the
+  # upload glob skips them too.
+  actual_count="$(find "$OUT" -maxdepth 1 -type f ! -name '.*' | wc -l)"
   if [[ "$actual_count" -ne "$expected_count" ]]; then
     echo "FAIL: expected $expected_count files in output, got $actual_count:" >&2
     find "$OUT" -maxdepth 1 -type f >&2
