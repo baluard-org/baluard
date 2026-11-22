@@ -8,7 +8,7 @@
 # scripts and no Debian-specific paths that need rewriting.
 
 pkgname=baluard-bin
-pkgver=0.8.0
+pkgver=0.8.1
 pkgrel=1
 pkgdesc="Git-native password manager. No accounts, no servers."
 arch=('x86_64')
@@ -28,7 +28,7 @@ provides=('baluard')
 conflicts=('baluard')
 options=('!strip' '!debug')
 source=("https://github.com/baluard-org/baluard/releases/download/${pkgver}/Baluard-amd64.deb")
-sha256sums=('9808b7f67b9b410e5d225f14c3919338d8cadae143dc5bc940a42b94d3a93d75')
+sha256sums=('eb6a82ec385dfd41b718c5b179dc684eb6ecd858b183716da99b5850cd148f1c')
 
 package() {
   local deb="${srcdir}/Baluard-amd64.deb"
