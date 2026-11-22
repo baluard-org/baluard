@@ -119,9 +119,9 @@ open class StubVault(
         return """{"running":false,"finished":false,"total":0,"done":0,"fetched":0,"skipped":0,"error":null}"""
     }
     override fun faviconBackfillCancel() { calls += "faviconBackfillCancel" }
-    override suspend fun vaultDiagnostics(slug: kotlin.String): kotlin.String {
-        calls += "vaultDiagnostics:$slug"
-        return """{"verdict":"no_remote","vaultId":"stub","deviceId":"stub","autosync":{"active":false,"state":"Idle","last_sync":null,"pending":0,"conflicts_resolved":0,"access_denied_streak":0},"hasRemote":false,"remoteHost":null,"headOid":null,"headAt":null,"upstreamOid":null,"ahead":null,"behind":null,"staged":0,"unstaged":0,"commits":[],"entries":0,"folders":0,"tags":0,"totp":0,"archived":0,"trashed":0,"report":"stub report"}"""
+    override suspend fun vaultDiagnostics(): kotlin.String {
+        calls += "vaultDiagnostics"
+        return """{"verdict":"no_remote","vaultId":"stub","deviceId":"stubdevice","autosync":{"active":false,"state":"idle","last_sync":null,"pending":0,"conflicts_resolved":0,"access_denied_streak":0},"hasRemote":false,"remoteHost":null,"branch":"main","headOid":null,"headAt":null,"upstreamOid":null,"upstreamAt":null,"ahead":null,"behind":null,"staged":0,"unstaged":0,"commits":[],"entries":0,"folders":0,"tags":0,"totp":0,"archived":0,"trashed":0,"report":"stub report"}"""
     }
     override suspend fun syncOnBackground() { calls += "syncOnBackground" }
 

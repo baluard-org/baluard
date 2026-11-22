@@ -431,6 +431,7 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "sync.pull",
     "sync.push",
     "sync.status_json",
+    "sync.diagnostics",
     "sync.p2p.status",
     "sync.p2p.enable",
     "sync.p2p.disable",
@@ -2279,6 +2280,13 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The diagnostics panel fetches through the allowlist; a missing entry
+    // silently renders an empty section because the test mocks daemon().
+    #[test]
+    fn sync_diagnostics_is_allowed_from_the_webview() {
+        assert!(desktop_action_allowed("sync.diagnostics"));
+    }
 
     // D2: raw backup-transport paths stay unreachable from the webview even
     // though `vaults.detach` is allowed. delete_from_disk/force pass now —

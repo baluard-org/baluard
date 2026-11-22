@@ -1581,10 +1581,7 @@ internal interface UniffiLib : Library {
     `payload`: RustBuffer.ByValue,
   ): Long
 
-  fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_diagnostics(
-    `ptr`: Pointer,
-    `slug`: RustBuffer.ByValue,
-  ): Long
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_diagnostics(`ptr`: Pointer): Long
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_vault_id(`ptr`: Pointer): Long
 
@@ -2873,7 +2870,7 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_update_cipher() != 61017.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
-  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_vault_diagnostics() != 51539.toShort()) {
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_vault_diagnostics() != 28547.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_vault_id() != 48325.toShort()) {
@@ -5321,7 +5318,7 @@ public interface MobileVaultInterface {
    * counts, and the shareable report text. Same JSON the desktop's
    * sync.diagnostics route returns.
    */
-  suspend fun `vaultDiagnostics`(`slug`: kotlin.String): kotlin.String
+  suspend fun `vaultDiagnostics`(): kotlin.String
 
   /**
    * Deterministic vault UUID (derived from the KDF salt, stable across
@@ -9641,12 +9638,11 @@ open class MobileVault :
    */
   @Throws(BaluardException::class)
   @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-  override suspend fun `vaultDiagnostics`(`slug`: kotlin.String): kotlin.String =
+  override suspend fun `vaultDiagnostics`(): kotlin.String =
     uniffiRustCallAsync(
       callWithPointer { thisPtr ->
         UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_vault_diagnostics(
           thisPtr,
-          FfiConverterString.lower(`slug`),
         )
       },
       {

@@ -5439,19 +5439,19 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             }
         }
         "sync.diagnostics" => {
-            // Payload is the caller's slug so the report can name the vault
-            // without the runtime needing registry access.
-            let slug = if req.payload.is_empty() {
-                "unknown"
-            } else {
-                req.payload.as_str()
-            };
-            match baluard_runtime::diagnostics::snapshot(state, slug).await {
-                Ok(snap) => match serde_json::to_string(&snap) {
+            // Payload ignored; the report never carries user-typed text.
+            match tokio::time::timeout(
+                SYNC_OP_TIMEOUT,
+                baluard_runtime::diagnostics::snapshot(state),
+            )
+            .await
+            {
+                Ok(Ok(snap)) => match serde_json::to_string(&snap) {
                     Ok(json) => ok_resp(json, token_str),
                     Err(e) => err_response(format!("JSON error: {e}")),
                 },
-                Err(e) => err_response(e),
+                Ok(Err(e)) => err_response(e),
+                Err(_) => err_response("diagnostics timed out"),
             }
         }
         "sync.status_json" => {

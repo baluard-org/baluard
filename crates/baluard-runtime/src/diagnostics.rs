@@ -1,9 +1,14 @@
 //! Vault diagnostics snapshot: the per-device sync state a user (or a
 //! bug report) needs to answer "why does this device show different
-//! data". Read-only by construction — every field here is shareable:
-//! hashes, ids, counts, and D9's static commit messages. The remote URL
-//! is deliberately reduced to its host before it enters the snapshot,
+//! data". Read-only by construction — the repo is opened without the
+//! sync engine's side effects, and every field here is shareable:
+//! hashes, ids, counts, and sanitized commit subjects. The remote URL is
+//! deliberately reduced to its host before it enters the snapshot,
 //! because provider credentials ride in some remote URLs.
+//!
+//! Commit messages are NOT trusted as a static-string invariant: peers
+//! can push arbitrary messages, so they are sanitized to a bounded
+//! single-line ASCII subject before display.
 
 use crate::autosync::AutoSyncStatus;
 use crate::state::VaultState;
@@ -24,7 +29,10 @@ pub struct CommitRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiagnosticsSnapshot {
     /// One of: no_remote | unfetched | failing | local_pending | behind |
-    /// up_to_date | locked.
+    /// up_to_date | needs_decision. Clients map anything else to a
+    /// generic "unknown" string (the runtime never emits "locked": the
+    /// daemon route requires an unlocked vault and counts degrade
+    /// independently otherwise).
     #[serde(rename = "verdict")]
     pub verdict: String,
     #[serde(rename = "vaultId")]
@@ -36,16 +44,24 @@ pub struct DiagnosticsSnapshot {
     #[serde(rename = "hasRemote")]
     pub has_remote: bool,
     /// Host only — never the full URL (tokens ride in some remote URLs).
+    /// None when the URL has no parseable host (fail closed).
     #[serde(rename = "remoteHost")]
     pub remote_host: Option<String>,
+    /// Resolved remote branch (defaults to "main" when undetectable).
+    #[serde(rename = "branch")]
+    pub branch: String,
     #[serde(rename = "headOid")]
     pub head_oid: Option<String>,
     /// Unix seconds of HEAD's committer time.
     #[serde(rename = "headAt")]
     pub head_at: Option<i64>,
-    /// origin/main as of this device's last fetch (no network involved).
+    /// Remote branch tip as of this device's last fetch (no network).
     #[serde(rename = "upstreamOid")]
     pub upstream_oid: Option<String>,
+    /// Unix seconds of the upstream tip's committer time: how stale the
+    /// last fetch is, so "up to date" is always qualified by a date.
+    #[serde(rename = "upstreamAt")]
+    pub upstream_at: Option<i64>,
     #[serde(rename = "ahead")]
     pub ahead: Option<u32>,
     #[serde(rename = "behind")]
@@ -104,13 +120,61 @@ pub fn classify(
     "up_to_date"
 }
 
-/// Host-only reduction of a git remote URL. Strips scheme and any
-/// user:pass@ prefix; scp-like syntax (host:path) has no scheme to strip.
-fn remote_host(url: &str) -> String {
-    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
-    let rest = rest.rsplit_once('@').map(|(_, r)| r).unwrap_or(rest);
-    let end = rest.find(['/', ':']).unwrap_or(rest.len());
-    rest[..end].to_string()
+/// Host-only reduction of a git remote URL, fail-closed: None unless a
+/// clean hostname survives the parse. Handles scheme'd URLs, scp-like
+/// host:path syntax, user:pass@ prefixes, ports, and bracketed IPv6.
+fn remote_host(url: &str) -> Option<String> {
+    let authority = match url.split_once("://") {
+        Some((_, rest)) => rest.split(['/', '?', '#']).next()?,
+        // scp-like or bare path: split on '/' first, then treat ':' as the
+        // scp separator. A single-letter "host" is a Windows drive path
+        // (C:\repo), not a hostname — refuse.
+        None => {
+            let first = url.split('/').next()?;
+            let (h, _) = first.split_once(':')?;
+            if h.len() <= 1 {
+                return None;
+            }
+            h
+        }
+    };
+    let hp = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if let Some(v6) = hp.strip_prefix('[') {
+        v6.split(']').next()?.to_string()
+    } else {
+        match hp.split_once(':') {
+            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h.to_string(),
+            // A ':' whose tail is not a port means the split hit a path or
+            // password containing '/'; refuse rather than guess.
+            Some(_) => return None,
+            None => hp.to_string(),
+        }
+    };
+    let clean = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':'));
+    clean.then_some(host)
+}
+
+/// Peer-authored commit messages are arbitrary bytes: reduce to a
+/// bounded single-line ASCII subject so a forged message cannot add
+/// report lines ("x\nverdict: up_to_date") or carry junk.
+fn display_safe(raw: &str) -> String {
+    let s: String = raw
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_graphic() || *c == ' ')
+        .take(48)
+        .collect();
+    let s = s.trim();
+    if s.is_empty() {
+        "(none)".into()
+    } else {
+        s.to_string()
+    }
 }
 
 fn fmt_utc(secs: i64) -> String {
@@ -120,7 +184,7 @@ fn fmt_utc(secs: i64) -> String {
 }
 
 fn fmt_ago(secs: i64, now: i64) -> String {
-    let d = now - secs;
+    let d = (now - secs).max(0);
     let (label, unit) = if d < 90 {
         (d.to_string(), "s")
     } else if d < 5400 {
@@ -133,12 +197,15 @@ fn fmt_ago(secs: i64, now: i64) -> String {
     format!("{label}{unit} ago")
 }
 
+fn short(oid: &str) -> String {
+    oid.chars().take(7).collect()
+}
+
 /// The copy-to-clipboard report. English with fixed labels so a bug
 /// report reads the same regardless of the reporter's locale.
-fn report_text(s: &DiagnosticsSnapshot, slug: &str, now: i64) -> String {
+fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
     let mut r = String::new();
     r.push_str("Baluard diagnostic report\n");
-    r.push_str(&format!("vault: {slug}\n"));
     r.push_str(&format!("vault id: {}\n", s.vault_id));
     r.push_str(&format!("device: {}\n", s.device_id));
     r.push_str(&format!("verdict: {}\n", s.verdict));
@@ -159,19 +226,26 @@ fn report_text(s: &DiagnosticsSnapshot, slug: &str, now: i64) -> String {
     if !s.has_remote {
         r.push_str("remote: none configured\n");
     } else {
-        if let Some(h) = &s.remote_host {
-            r.push_str(&format!("remote host: {h}\n"));
+        match &s.remote_host {
+            Some(h) => r.push_str(&format!("remote host: {h}\n")),
+            None => r.push_str("remote host: (not a hostname)\n"),
         }
         match (&s.head_oid, &s.upstream_oid) {
             (Some(h), Some(u)) => {
                 r.push_str(&format!(
                     "head: {} ({})\n",
-                    &h[..7.min(h.len())],
+                    short(h),
                     fmt_ago(s.head_at.unwrap_or(now), now)
                 ));
+                let stale = s
+                    .upstream_at
+                    .map(|a| format!(" ({})", fmt_ago(a, now)))
+                    .unwrap_or_default();
                 r.push_str(&format!(
-                    "origin/main (last fetch): {}\n",
-                    &u[..7.min(u.len())]
+                    "origin/{} (last fetch): {}{}\n",
+                    s.branch,
+                    short(u),
+                    stale
                 ));
                 r.push_str(&format!(
                     "ahead {} / behind {}\n",
@@ -180,7 +254,7 @@ fn report_text(s: &DiagnosticsSnapshot, slug: &str, now: i64) -> String {
                 ));
             }
             (Some(h), None) => {
-                r.push_str(&format!("head: {} (never fetched)\n", &h[..7.min(h.len())]));
+                r.push_str(&format!("head: {} (never fetched)\n", short(h)));
             }
             _ => {}
         }
@@ -235,7 +309,7 @@ fn json_len(raw: &str) -> Option<usize> {
 
 /// Build the snapshot for an open vault. Counts that need the vault
 /// unlocked degrade to None instead of failing the whole snapshot.
-pub async fn snapshot(state: &VaultState, slug: &str) -> Result<DiagnosticsSnapshot, String> {
+pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String> {
     let device_id = crate::bridge_policy::first_device_id(&state.vault_path);
     let vault_id = state.vault_id_str().await?;
     let autosync = state.autosync.status().await;
@@ -243,13 +317,19 @@ pub async fn snapshot(state: &VaultState, slug: &str) -> Result<DiagnosticsSnaps
     let mut s = DiagnosticsSnapshot {
         verdict: "up_to_date".into(),
         vault_id,
-        device_id,
+        // An unreadable device id prints as "unknown" instead of blank.
+        device_id: {
+            let d = device_id;
+            if d.is_empty() { "unknown".into() } else { d }
+        },
         autosync,
         has_remote: false,
         remote_host: None,
+        branch: "main".into(),
         head_oid: None,
         head_at: None,
         upstream_oid: None,
+        upstream_at: None,
         ahead: None,
         behind: None,
         staged: 0,
@@ -271,14 +351,20 @@ pub async fn snapshot(state: &VaultState, slug: &str) -> Result<DiagnosticsSnaps
         let git = tokio::task::spawn_blocking(move || git_state(&vault_path, &device))
             .await
             .map_err(|e| format!("diagnostics join: {e}"))?;
-        let (has_remote, host, head, upstream, ahead_behind, dirty, commits) = git?;
+        let (has_remote, host, branch, head, upstream, ahead_behind, dirty, commits) = git;
         s.has_remote = has_remote;
         s.remote_host = host;
+        if !branch.is_empty() {
+            s.branch = branch;
+        }
         if let Some((oid, at)) = head {
             s.head_oid = Some(oid);
             s.head_at = Some(at);
         }
-        s.upstream_oid = upstream;
+        if let Some((oid, at)) = upstream {
+            s.upstream_oid = Some(oid);
+            s.upstream_at = Some(at);
+        }
         s.ahead = ahead_behind.as_ref().map(|(a, _)| *a);
         s.behind = ahead_behind.as_ref().map(|(_, b)| *b);
         s.staged = dirty.as_ref().map(|d| d.staged).unwrap_or(0);
@@ -304,10 +390,16 @@ pub async fn snapshot(state: &VaultState, slug: &str) -> Result<DiagnosticsSnaps
     if s.autosync.state == crate::autosync::AutoSyncState::NeedsDecision {
         s.verdict = "needs_decision".into();
         let now = chrono::Utc::now().timestamp();
-        s.report = report_text(&s, slug, now);
+        s.report = report_text(&s, now);
         return Ok(s);
     }
-    let dirty_changes = s.staged + s.unstaged;
+    // A cycle in flight legitimately leaves the tree half-staged; that
+    // transient must not read as local_pending.
+    let dirty_changes = if s.autosync.state == crate::autosync::AutoSyncState::Syncing {
+        0
+    } else {
+        s.staged + s.unstaged
+    };
     s.verdict = classify(
         s.has_remote,
         s.upstream_oid.is_some(),
@@ -318,52 +410,83 @@ pub async fn snapshot(state: &VaultState, slug: &str) -> Result<DiagnosticsSnaps
     )
     .into();
     let now = chrono::Utc::now().timestamp();
-    s.report = report_text(&s, slug, now);
+    s.report = report_text(&s, now);
     Ok(s)
 }
 
-/// All git reads in one blocking closure. Errors degrade per-field so a
-/// corrupt repo still yields partial diagnostics.
+/// All git reads in one blocking closure. Every field degrades
+/// independently so a corrupt repo still yields partial diagnostics.
+///
+/// Opens the repo directly (not via SyncEngine::open_repo, which writes
+/// .gitignore/config/index as repair side effects and could flip the
+/// dirty counts mid-snapshot).
 #[cfg(feature = "git-sync")]
 type GitState = (
     bool,
     Option<String>,
+    String,
     Option<(String, i64)>,
-    Option<String>,
+    Option<(String, i64)>,
     Option<(u32, u32)>,
     Option<baluard_core::sync::engine::WorkTreeStatus>,
     Vec<CommitRow>,
 );
 
 #[cfg(feature = "git-sync")]
-fn git_state(vault_path: &std::path::Path, device_id: &str) -> Result<GitState, String> {
+fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
     use baluard_core::sync::engine::SyncEngine;
 
-    let engine = SyncEngine::new(vault_path, device_id, None);
-    let repo = match engine.open_repo() {
+    let repo = match git2::Repository::open(vault_path) {
         Ok(r) => r,
         Err(_) => {
-            return Ok((false, None, None, None, None, None, Vec::new()));
+            return (
+                false,
+                None,
+                String::new(),
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+            );
         }
     };
+    let engine = SyncEngine::new(vault_path, device_id, None);
     let has_remote = SyncEngine::has_remote(&repo).unwrap_or(false);
     let mut host = None;
+    let mut branch = String::new();
     let mut upstream = None;
     let mut ahead_behind = None;
     if let Ok(remote) = repo.find_remote("origin") {
         if let Some(url) = remote.url() {
-            host = Some(remote_host(url));
+            host = remote_host(url);
         }
-        if let Ok(head) = repo.find_reference("refs/heads/main") {
-            if let Ok(up) = repo.find_reference("refs/remotes/origin/main") {
-                upstream = up.target().map(|o| o.to_string());
-                if let (Some(h), Some(u)) = (head.target(), up.target()) {
-                    ahead_behind = repo
-                        .graph_ahead_behind(h, u)
+        // The engine resolves the branch dynamically (master-default
+        // remotes exist); never assume main.
+        let rb = SyncEngine::resolve_remote_branch(&repo, "origin");
+        if !rb.is_empty() {
+            branch = rb;
+            if let Ok(up_ref) = repo.find_reference(&format!("refs/remotes/origin/{branch}")) {
+                upstream = up_ref.target().map(|o| {
+                    let at = up_ref
+                        .peel_to_commit()
                         .ok()
-                        .map(|(a, b)| (a as u32, b as u32));
-                }
+                        .map(|c| c.time().seconds())
+                        .unwrap_or(0);
+                    (o.to_string(), at)
+                });
             }
+        }
+    }
+    // Ahead/behind compares the working HEAD (not refs/heads/<branch>),
+    // so detached and mid-merge states report their true position.
+    let local = repo.head().ok().and_then(|h| h.target());
+    if let (Some(l), Some(u)) = (local, upstream.as_ref().map(|(o, _)| o)) {
+        if let Ok(u) = git2::Oid::from_str(u) {
+            ahead_behind = repo
+                .graph_ahead_behind(l, u)
+                .ok()
+                .map(|(a, b)| (a as u32, b as u32));
         }
     }
     let head = repo
@@ -373,24 +496,25 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> Result<GitState, 
         .map(|c| (c.id().to_string(), c.time().seconds()));
     let dirty = engine.status(&repo).ok();
     let commits = engine
-        .log(&repo, 20)
+        .log(&repo, 10)
         .unwrap_or_default()
         .into_iter()
         .map(|c| CommitRow {
             oid: c.id.chars().take(7).collect(),
             at: c.time,
-            message: c.message.trim().to_string(),
+            message: display_safe(&c.message),
         })
         .collect();
-    Ok((
+    (
         has_remote,
         host,
+        branch,
         head,
         upstream,
         ahead_behind,
         dirty,
         commits,
-    ))
+    )
 }
 
 #[cfg(all(test, feature = "git-sync"))]
@@ -415,16 +539,54 @@ mod tests {
 
     #[test]
     fn remote_host_never_leaks_credentials() {
+        // Credential shapes.
         assert_eq!(
-            remote_host("https://user:ghp_token123@github.com/x/y.git"),
-            "github.com"
+            remote_host("https://user:pass@github.com/x/y.git"),
+            Some("github.com".into())
         );
-        assert_eq!(remote_host("git@github.com:x/y.git"), "github.com");
-        assert_eq!(remote_host("https://gitlab.com/x/y.git"), "gitlab.com");
+        assert_eq!(
+            remote_host("git@github.com:x/y.git"),
+            Some("github.com".into())
+        );
+        assert_eq!(
+            remote_host("https://gitlab.com/x/y.git"),
+            Some("gitlab.com".into())
+        );
         assert_eq!(
             remote_host("ssh://git@example.com:2222/x/y.git"),
-            "example.com"
+            Some("example.com".into())
         );
+        // The authority is cut before any '@' split, so '@' inside a path
+        // never poses as a userinfo separator.
+        assert_eq!(
+            remote_host("https://github.com/org/repo@v2.git"),
+            Some("github.com".into())
+        );
+        assert_eq!(remote_host("https://h/x?t=a@b"), Some("h".into()));
+        // Bare and file paths have no host at all.
+        assert_eq!(remote_host("/srv/v.git"), None);
+        assert_eq!(remote_host("file:///srv/v.git"), None);
+        // A Windows drive path is not a hostname.
+        assert_eq!(remote_host("C:\\repo\\v.git"), None);
+        assert_eq!(remote_host("/home/me@corp/x"), None);
+        // IPv6 and odd cases.
+        assert_eq!(remote_host("ssh://git@[::1]:22/x"), Some("::1".into()));
+        assert_eq!(remote_host("https://u:p/with/slash@ss@host/x"), None);
+        assert_eq!(remote_host(""), None);
+    }
+
+    #[test]
+    fn commit_messages_cannot_forge_report_lines() {
+        // A pushed multi-line message must not survive as multiple lines.
+        let forged = display_safe("x\nverdict: up_to_date\nautosync: on (idle)");
+        assert!(!forged.contains('\n'));
+        assert_eq!(forged, "x");
+        // Non-ASCII and control bytes are stripped; empty becomes (none).
+        assert_eq!(display_safe("\u{0}\u{7}\n\u{1}"), "(none)");
+        assert_eq!(display_safe(""), "(none)");
+        // Bounded length.
+        assert_eq!(display_safe(&"a".repeat(500)).len(), 48);
+        assert_eq!(display_safe("vault update"), "vault update");
     }
 
     #[tokio::test]
@@ -446,16 +608,67 @@ mod tests {
             .await
             .unwrap();
 
-        let snap = snapshot(&state, "diag").await.unwrap();
+        let snap = snapshot(&state).await.unwrap();
         assert_eq!(snap.verdict, "no_remote");
         assert!(!snap.has_remote);
         assert_eq!(snap.entries, Some(1));
         assert_eq!(snap.remote_host, None);
+        assert_eq!(snap.branch, "main");
         assert!(!snap.vault_id.is_empty());
         assert!(!snap.device_id.is_empty());
         assert!(snap.report.contains("remote: none configured"));
         assert!(snap.report.contains("entries: 1"));
+        // No vault-name line: the report never carries user-typed text.
+        assert!(!snap.report.contains("vault:"));
         assert!(!snap.report.contains("https://"));
+    }
+
+    #[tokio::test]
+    async fn upstream_resolution_follows_the_remote_branch_not_main() {
+        // A vault whose origin default is master must still resolve an
+        // upstream tip. Build the refs directly: real enough to exercise
+        // resolve_remote_branch + the tracking-ref read.
+        let sb = crate::test_support::lock_env();
+        let _ = &sb;
+        let dir = tempfile::tempdir().unwrap();
+        let vpath = dir.path().join("v");
+        let password = format!("diag-pass-{}", std::process::id());
+        let handle = baluard_core::vault::creation::VaultCreator::new(&vpath, &password, "device")
+            .execute()
+            .unwrap()
+            .0;
+        let repo = git2::Repository::open(handle.path.clone()).unwrap();
+        let sig = repo.signature().unwrap();
+        let tree_id = {
+            let mut tb = repo.treebuilder(None).unwrap();
+            tb.insert("x", repo.blob(b"").unwrap(), 0o100644).unwrap();
+            tb.write().unwrap()
+        };
+        let tree = repo.find_tree(tree_id).unwrap();
+        let commit = repo
+            .commit(
+                Some("refs/remotes/origin/master"),
+                &sig,
+                &sig,
+                "test",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        repo.remote_set_url("origin", "https://example.com/x/y.git")
+            .unwrap();
+
+        let state = std::sync::Arc::new(crate::VaultState::new(handle.path.clone()));
+        state.unlock(&password).await.unwrap();
+        let snap = snapshot(&state).await.unwrap();
+        assert_eq!(snap.branch, "master");
+        assert_eq!(
+            snap.upstream_oid.as_deref(),
+            Some(commit.to_string().as_str())
+        );
+        assert!(snap.upstream_at.is_some());
+        assert!(snap.has_remote);
+        assert_eq!(snap.remote_host.as_deref(), Some("example.com"));
     }
 
     #[test]
@@ -474,9 +687,11 @@ mod tests {
             },
             has_remote: true,
             remote_host: Some("github.com".into()),
+            branch: "main".into(),
             head_oid: Some("a".repeat(40)),
             head_at: Some(1_700_000_100),
             upstream_oid: Some("b".repeat(40)),
+            upstream_at: Some(1_700_000_050),
             ahead: Some(0),
             behind: Some(2),
             staged: 0,
@@ -494,15 +709,16 @@ mod tests {
             trashed: Some(3),
             report: String::new(),
         };
-        let text = report_text(&s, "personal", 1_700_010_000);
-        // Safe by construction: hashes, ids, counts, static messages.
+        let text = report_text(&s, 1_700_010_000);
+        // Safe by construction: hashes, ids, counts, sanitized subjects.
         assert!(text.contains("head: aaaaaaa"));
         assert!(text.contains("behind 2"));
         assert!(text.contains("entries: 12"));
-        // Nothing that could carry secrets or user content.
+        assert!(text.contains("origin/main (last fetch): bbbbbbb"));
         assert!(!text.contains("https://"));
         assert!(!text.contains("github.com/x"));
         assert!(!text.contains("token"));
+        assert!(!text.contains("vault:"));
         assert_eq!(
             text.lines().last().unwrap().trim(),
             "abc1234 2023-11-14 22:13 UTC vault update"

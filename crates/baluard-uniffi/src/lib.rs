@@ -1341,8 +1341,8 @@ impl MobileVault {
     /// Vault diagnostics snapshot: verdict, sync state, git position,
     /// counts, and the shareable report text. Same JSON the desktop's
     /// sync.diagnostics route returns.
-    pub async fn vault_diagnostics(&self, slug: String) -> Result<String, BaluardError> {
-        let snap = baluard_runtime::diagnostics::snapshot(&self.state, &slug).await?;
+    pub async fn vault_diagnostics(&self) -> Result<String, BaluardError> {
+        let snap = baluard_runtime::diagnostics::snapshot(&self.state).await?;
         serde_json::to_string(&snap).map_err(|e| BaluardError::Vault {
             detail: format!("diagnostics JSON: {e}"),
         })

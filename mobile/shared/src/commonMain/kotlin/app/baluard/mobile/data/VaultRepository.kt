@@ -389,8 +389,8 @@ class VaultRepository {
     /** Vault diagnostics snapshot JSON (verdict, sync state, git position,
      * counts, and the shareable report text). Desktop sync.diagnostics
      * parity. */
-    suspend fun vaultDiagnostics(vault: MobileVault, slug: String): Result<String> {
-        return runCatching { vault.vaultDiagnostics(slug) }
+    suspend fun vaultDiagnostics(vault: MobileVault): Result<String> {
+        return runCatching { vault.vaultDiagnostics() }
     }
 
     /** Start the batch site-icon backfill (desktop parity). Returns the

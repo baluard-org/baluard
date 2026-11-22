@@ -1507,7 +1507,7 @@
     "refresh": "Actualiser",
     "copy": "Copier le rapport de diagnostic",
     "copied": "Rapport copié",
-    "privacyNote": "Le rapport ne contient que des empreintes, identifiants et compteurs. Il n'inclut jamais de noms d'entrées, de mots de passe ni l'adresse de votre dépôt.",
+    "privacyNote": "Le rapport affiche l'état de synchronisation, des compteurs, des identifiants courts de commits et le nom d'hôte du dépôt distant. Il n'inclut jamais de noms d'entrées, de mots de passe ni l'adresse complète du dépôt.",
     "head": "Cet appareil (head)",
     "remoteState": "Comparé au dépôt distant",
     "remote": "Dépôt distant",
@@ -1533,6 +1533,15 @@
     "verdict.noRemote": "Aucun dépôt distant configuré",
     "verdict.unfetched": "Pas encore synchronisé avec le dépôt distant",
     "verdict.needsDecision": "Un conflit attend votre décision",
-    "verdict.locked": "Déverrouillez le coffre pour voir le diagnostic"
+    "verdict.locked": "Déverrouillez le coffre pour voir le diagnostic",
+    "loading": "Lecture de l'état du coffre…",
+    "error": "Impossible de lire l'état du coffre.",
+    "deviceId": "Cet appareil (id)",
+    "upstream": "Dépôt distant à la dernière syncro",
+    "agoSecs": "il y a {n}s",
+    "agoMins": "il y a {n}m",
+    "agoHours": "il y a {n}h",
+    "agoDays": "il y a {n}d",
+    "verdict.unknown": "État de synchronisation inconnu"
   }
 }

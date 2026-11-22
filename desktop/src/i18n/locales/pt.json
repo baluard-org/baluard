@@ -1507,7 +1507,7 @@
     "refresh": "Atualizar",
     "copy": "Copiar relatório de diagnóstico",
     "copied": "Relatório copiado",
-    "privacyNote": "O relatório contém apenas hashes, identificadores e contagens. Nunca inclui nomes de entradas, senhas nem o endereço do seu repositório.",
+    "privacyNote": "O relatório mostra o estado da sincronização, contagens, identificadores curtos de commits e o host do remoto. Nunca inclui nomes de entradas, senhas nem o endereço completo do repositório.",
     "head": "Este dispositivo (head)",
     "remoteState": "Comparado ao remoto",
     "remote": "Remoto",
@@ -1533,6 +1533,15 @@
     "verdict.noRemote": "Sem remoto configurado",
     "verdict.unfetched": "Ainda não sincronizou com o remoto",
     "verdict.needsDecision": "Um conflito precisa da sua decisão",
-    "verdict.locked": "Desbloqueie o cofre para ver o diagnóstico"
+    "verdict.locked": "Desbloqueie o cofre para ver o diagnóstico",
+    "loading": "Lendo o estado do cofre…",
+    "error": "Não foi possível ler o estado do cofre.",
+    "deviceId": "Este dispositivo (id)",
+    "upstream": "Remoto na última sincronização",
+    "agoSecs": "há {n}s",
+    "agoMins": "há {n}m",
+    "agoHours": "há {n}h",
+    "agoDays": "há {n}d",
+    "verdict.unknown": "Estado de sincronização desconhecido"
   }
 }

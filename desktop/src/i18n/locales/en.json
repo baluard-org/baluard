@@ -1507,7 +1507,7 @@
     "refresh": "Refresh",
     "copy": "Copy diagnostic report",
     "copied": "Report copied",
-    "privacyNote": "The report contains only hashes, ids and counts. It never includes entry names, passwords or your repository address.",
+    "privacyNote": "The report lists sync state, counts, short commit ids and the remote's host name. It never includes entry names, passwords or the full repository address.",
     "head": "This device (head)",
     "remoteState": "Compared to remote",
     "remote": "Remote",
@@ -1533,6 +1533,15 @@
     "verdict.noRemote": "No remote configured",
     "verdict.unfetched": "Never synced with the remote yet",
     "verdict.needsDecision": "A conflict needs your decision",
-    "verdict.locked": "Unlock the vault to see diagnostics"
+    "verdict.locked": "Unlock the vault to see diagnostics",
+    "loading": "Reading vault state…",
+    "error": "Could not read the vault state.",
+    "deviceId": "This device (id)",
+    "upstream": "Remote as of last fetch",
+    "agoSecs": "{n}s ago",
+    "agoMins": "{n}m ago",
+    "agoHours": "{n}h ago",
+    "agoDays": "{n}d ago",
+    "verdict.unknown": "Sync state unknown"
   }
 }

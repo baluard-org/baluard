@@ -174,7 +174,6 @@ fun SettingsScreen(
     vaultTimeoutToken: String,
     onVaultTimeoutChange: (String) -> Unit,
     vaultPath: String,
-    vaultName: String,
     authViewModel: AuthViewModel,
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
@@ -489,7 +488,7 @@ val entitlement by Entitlements.state.collectAsState()
 
                 // Vault diagnostics: per-device sync state + the shareable
                 // support report (desktop sync tab parity).
-                VaultDiagnosticsSection(vault = vault, repo = repo, vaultName = vaultName)
+                VaultDiagnosticsSection(vault = vault, repo = repo)
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -3316,35 +3315,39 @@ val entitlement by Entitlements.state.collectAsState()
 }
 
 /**
- * Site-icon backfill (desktop IconBackfillSection parity): imported and
- * legacy entries only gain icons through this batch job; displaying stored
- * icons is free and needs none of this. Reattaches to a job already
- * running when the screen re-enters; completion of a self-started job
- * shows the summary, completion of a foreign one just leaves progress.
+ * Vault diagnostics (desktop sync tab parity): per-device sync state plus
+ * the copy-to-clipboard support report. The report is redacted by
+ * construction in the runtime (host-only remote, sanitized commit
+ * subjects, no entry names), so pasting it into an issue is safe.
  */
 @Composable
-private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository, vaultName: String) {
+private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository) {
     var snap by remember(vault) { mutableStateOf<JsonObject?>(null) }
     var failed by remember(vault) { mutableStateOf<String?>(null) }
+    var refreshKey by remember(vault) { mutableStateOf(0) }
     val clipboard = LocalClipboardManager.current
     val copied = remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(vault) {
-        repo.vaultDiagnostics(vault, vaultName).fold(
+    LaunchedEffect(vault, refreshKey) {
+        repo.vaultDiagnostics(vault).fold(
             onSuccess = { raw ->
-                failed = null
-                snap = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+                val parsed = runCatching { Json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
+                if (parsed == null) {
+                    failed = t("diag.error")
+                    snap = null
+                } else {
+                    failed = null
+                    snap = parsed
+                }
             },
-            onFailure = { e -> failed = e.message ?: t("diag.verdict.locked") },
+            onFailure = { failed = t("diag.error") },
         )
     }
 
-    fun autosync(): JsonObject? =
-        snap?.get("autosync") as? JsonObject
-
     fun ago(secs: Long?): String {
         secs ?: return t("diag.never")
-        val d = Clock.currentTimeMillis() / 1000 - secs
+        val d = (Clock.currentTimeMillis() / 1000 - secs).coerceAtLeast(0)
         return when {
             d < 90 -> t("diag.agoSecs", d)
             d < 5400 -> t("diag.agoMins", d / 60)
@@ -3362,7 +3365,7 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository, v
             "unfetched" -> "diag.verdict.unfetched"
             "needs_decision" -> "diag.verdict.needsDecision"
             "no_remote" -> "diag.verdict.noRemote"
-            else -> "diag.verdict.locked"
+            else -> "diag.verdict.unknown"
         },
     )
 
@@ -3375,11 +3378,21 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository, v
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = t("diag.title"),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = t("diag.title"),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            BaluardOutlinedButton(
+                text = t("diag.refresh"),
+                onClick = { refreshKey++ },
+            )
+        }
         failed?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         } ?: run {
@@ -3408,22 +3421,35 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository, v
                         Text(value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
+                row(t("diag.deviceId"), (s.str("deviceId") ?: "").take(7))
+                row(t("diag.head"), s.str("headOid")?.take(7) ?: t("diag.never"))
                 if (s.str("hasRemote") == "true") {
-                    row(t("diag.head"), s.str("headOid")?.take(7) ?: t("diag.never"))
+                    val neverFetched = s.str("upstreamOid") == null
                     val behind = s.str("behind")?.toIntOrNull() ?: 0
                     val ahead = s.str("ahead")?.toIntOrNull() ?: 0
                     row(
                         t("diag.remoteState"),
                         when {
+                            neverFetched -> t("diag.never")
+                            behind > 0 && ahead > 0 ->
+                                t("diag.behindCount", behind) + " / " + t("diag.aheadCount", ahead)
                             behind > 0 -> t("diag.behindCount", behind)
                             ahead > 0 -> t("diag.aheadCount", ahead)
                             else -> t("diag.inSync")
                         },
                     )
+                    s.str("upstreamAt")?.toLongOrNull()?.let {
+                        row(t("diag.upstream"), ago(it))
+                    }
                 } else {
                     row(t("diag.remote"), t("diag.noneConfigured"))
                 }
-                row(t("diag.lastSync"), ago(auto?.get("last_sync")?.jsonPrimitive?.content?.toLongOrNull()))
+                val lastSync = auto?.get("last_sync")?.jsonPrimitive?.content?.toLongOrNull()
+                row(
+                    t("diag.lastSync"),
+                    if (lastSync == null) t("diag.never")
+                    else ago(lastSync) + " \u00b7 " + formatEpochDate(lastSync),
+                )
                 row(
                     t("diag.autosync"),
                     if (auto?.get("active")?.jsonPrimitive?.content == "true") t("diag.on") else t("diag.off"),
@@ -3445,6 +3471,10 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository, v
                         s.str("report")?.let { report ->
                             clipboard.setText(AnnotatedString(report))
                             copied.value = true
+                            scope.launch {
+                                delay(3000)
+                                copied.value = false
+                            }
                         }
                     },
                 )

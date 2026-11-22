@@ -10,7 +10,7 @@ import { Button } from "./Primitives.jsx";
 // Vault diagnostics: the per-device sync state a support report needs.
 // Read-only snapshot from sync.diagnostics; the copy button exports the
 // daemon-composed report (redacted by construction in the runtime —
-// host-only remote, no entry names, static commit messages).
+// host-only remote, no entry names, sanitized commit subjects).
 const VERDICT_KEY = {
   up_to_date: "diag.verdict.upToDate",
   behind: "diag.verdict.behind",
@@ -19,7 +19,6 @@ const VERDICT_KEY = {
   no_remote: "diag.verdict.noRemote",
   unfetched: "diag.verdict.unfetched",
   needs_decision: "diag.verdict.needsDecision",
-  locked: "diag.verdict.locked",
 };
 
 const VERDICT_CLASS = {
@@ -30,8 +29,9 @@ const VERDICT_CLASS = {
   no_remote: "text-[var(--color-muted)]",
   unfetched: "text-amber-400",
   needs_decision: "text-amber-400",
-  locked: "text-[var(--color-muted)]",
 };
+
+
 
 export default function VaultDiagnostics() {
   const { t } = useI18n();
@@ -40,19 +40,29 @@ export default function VaultDiagnostics() {
 
   const [snap, setSnap] = createSignal(null);
   const [err, setErr] = createSignal(null);
+  const [loading, setLoading] = createSignal(false);
 
+  // Stale-response guard: only the latest request may land, so a slug
+  // switch can never leave the other vault's report on screen.
+  let seq = 0;
   const load = async (s) => {
+    const mine = ++seq;
+    setSnap(null);
+    setErr(null);
     if (!s) {
-      setSnap(null);
+      setLoading(false);
       return;
     }
+    setLoading(true);
     try {
-      const raw = await daemon("sync.diagnostics", s);
+      const raw = await daemon("sync.diagnostics", "", s);
+      if (mine !== seq) return;
       setSnap(JSON.parse(raw));
-      setErr(null);
     } catch (e) {
-      setSnap(null);
+      if (mine !== seq) return;
       setErr(sanitizeError(e));
+    } finally {
+      if (mine === seq) setLoading(false);
     }
   };
   createEffect(
@@ -65,10 +75,14 @@ export default function VaultDiagnostics() {
   const copyReport = async () => {
     const s = snap();
     if (!s?.report) return;
-    await copyToClipboard(s.report, { autoClearMs: 0 });
-    setCopied(true);
-    toastSuccess(t("diag.copied"));
-    setTimeout(() => setCopied(false), 3000);
+    try {
+      await copyToClipboard(s.report, { autoClearMs: 0 });
+      setCopied(true);
+      toastSuccess(t("diag.copied"));
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      // Clipboard denied: leave the report on screen, no toast.
+    }
   };
 
   const fmtTime = (secs) => {
@@ -77,24 +91,41 @@ export default function VaultDiagnostics() {
     return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   };
 
+  const agoStr = (secs, now) => {
+    const d = Math.max(0, Math.floor(now / 1000) - secs);
+    if (d < 90) return t("diag.agoSecs", { n: d });
+    if (d < 5400) return t("diag.agoMins", { n: Math.floor(d / 60) });
+    if (d < 129600) return t("diag.agoHours", { n: Math.floor(d / 3600) });
+    return t("diag.agoDays", { n: Math.floor(d / 86400) });
+  };
+
   const rows = () => {
     const s = snap();
     if (!s) return [];
+    const now = Date.now();
     const out = [];
+    out.push([t("diag.deviceId"), s.deviceId ? s.deviceId.slice(0, 7) : t("diag.never")]);
     if (s.hasRemote) {
       out.push([t("diag.head"), s.headOid ? s.headOid.slice(0, 7) : t("diag.never")]);
+      const neverFetched = s.upstreamOid == null;
+      const parts = [];
+      if (s.behind > 0) parts.push(t("diag.behindCount", { n: s.behind }));
+      if (s.ahead > 0) parts.push(t("diag.aheadCount", { n: s.ahead }));
       out.push([
         t("diag.remoteState"),
-        s.behind > 0
-          ? t("diag.behindCount", { n: s.behind })
-          : s.ahead > 0
-            ? t("diag.aheadCount", { n: s.ahead })
-            : t("diag.inSync"),
+        neverFetched ? t("diag.never") : parts.join(" / ") || t("diag.inSync"),
       ]);
+      if (s.upstreamAt) {
+        out.push([t("diag.upstream"), agoStr(s.upstreamAt, now)]);
+      }
     } else {
       out.push([t("diag.remote"), t("diag.noneConfigured")]);
     }
-    out.push([t("diag.lastSync"), fmtTime(s.autosync?.last_sync)]);
+    const lastSync = s.autosync?.last_sync;
+    out.push([
+      t("diag.lastSync"),
+      lastSync ? `${agoStr(lastSync, now)} · ${fmtTime(lastSync)}` : t("diag.never"),
+    ]);
     out.push([
       t("diag.autosync"),
       s.autosync?.active ? t("diag.on") : t("diag.off"),
@@ -110,9 +141,9 @@ export default function VaultDiagnostics() {
     }
     if (s.entries != null) {
       out.push([t("diag.entries"), String(s.entries)]);
-      if (s.archived > 0) out.push([t("diag.archived"), String(s.archived)]);
-      if (s.trashed > 0) out.push([t("diag.trashed"), String(s.trashed)]);
     }
+    if (s.archived > 0) out.push([t("diag.archived"), String(s.archived)]);
+    if (s.trashed > 0) out.push([t("diag.trashed"), String(s.trashed)]);
     return out;
   };
 
@@ -121,18 +152,21 @@ export default function VaultDiagnostics() {
       <div class="border border-[var(--color-border)] rounded-xl p-4 space-y-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-semibold text-[var(--color-text)]">{t("diag.title")}</h3>
-          <Button onClick={() => void refetch()} class="px-2 py-1 text-xs">
+          <Button onClick={() => void refetch()} disabled={loading()} class="px-2 py-1 text-xs">
             {t("diag.refresh")}
           </Button>
         </div>
         <Show when={err()}>
           <p class="text-xs text-red-400">{err()}</p>
         </Show>
+        <Show when={!err() && loading()}>
+          <p class="text-xs text-[var(--color-muted)]">{t("diag.loading")}</p>
+        </Show>
         <Show when={snap()}>
           <div
             class={`text-sm font-semibold ${VERDICT_CLASS[snap().verdict] || "text-[var(--color-text)]"}`}
           >
-            {t(VERDICT_KEY[snap().verdict] || "diag.verdict.locked")}
+            {t(VERDICT_KEY[snap().verdict] || "diag.verdict.unknown")}
           </div>
           <div class="divide-y divide-[var(--color-border)]">
             <For each={rows()}>
