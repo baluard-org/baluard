@@ -448,7 +448,7 @@ internal val FR: Map<String, String> = mapOf(
     "diag.refresh" to "Actualiser",
     "diag.error" to "Impossible de lire l'état du coffre.",
     "diag.deviceId" to "Cet appareil (id)",
-    "diag.upstream" to "Dépôt distant à la dernière syncro",
+    "diag.upstream" to "Changement distant le plus récent vu",
     "diag.verdict.unknown" to "État de synchronisation inconnu",
     "diag.copy" to "Copier le rapport de diagnostic",
     "diag.copied" to "Rapport copié",
@@ -482,7 +482,6 @@ internal val FR: Map<String, String> = mapOf(
     "diag.verdict.noRemote" to "Aucun dépôt distant configuré",
     "diag.verdict.unfetched" to "Pas encore synchronisé avec le dépôt distant",
     "diag.verdict.needsDecision" to "Un conflit attend votre décision",
-    "diag.verdict.locked" to "Déverrouillez le coffre pour voir le diagnostic",
 
 
     "settings.autoLock" to "Verrouillage automatique",

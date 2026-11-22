@@ -419,7 +419,7 @@ internal val PT: Map<String, String> = mapOf(
     "diag.refresh" to "Atualizar",
     "diag.error" to "Não foi possível ler o estado do cofre.",
     "diag.deviceId" to "Este dispositivo (id)",
-    "diag.upstream" to "Remoto na última sincronização",
+    "diag.upstream" to "Mudança remota mais recente vista",
     "diag.verdict.unknown" to "Estado de sincronização desconhecido",
     "diag.copy" to "Copiar relatório de diagnóstico",
     "diag.copied" to "Relatório copiado",
@@ -453,7 +453,6 @@ internal val PT: Map<String, String> = mapOf(
     "diag.verdict.noRemote" to "Sem remoto configurado",
     "diag.verdict.unfetched" to "Ainda não sincronizou com o remoto",
     "diag.verdict.needsDecision" to "Um conflito precisa da sua decisão",
-    "diag.verdict.locked" to "Desbloqueie o cofre para ver o diagnóstico",
 
 
     "settings.autoLock" to "Bloqueio automático",

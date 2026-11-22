@@ -457,7 +457,7 @@ internal val EN: Map<String, String> = mapOf(
     "diag.refresh" to "Refresh",
     "diag.error" to "Could not read the vault state.",
     "diag.deviceId" to "This device (id)",
-    "diag.upstream" to "Remote as of last fetch",
+    "diag.upstream" to "Newest remote change seen",
     "diag.verdict.unknown" to "Sync state unknown",
     "diag.copy" to "Copy diagnostic report",
     "diag.copied" to "Report copied",
@@ -491,7 +491,6 @@ internal val EN: Map<String, String> = mapOf(
     "diag.verdict.noRemote" to "No remote configured",
     "diag.verdict.unfetched" to "Never synced with the remote yet",
     "diag.verdict.needsDecision" to "A conflict needs your decision",
-    "diag.verdict.locked" to "Unlock the vault to see diagnostics",
 
 
     "settings.autoLock" to "Auto-lock",

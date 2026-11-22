@@ -55,6 +55,7 @@ import VaultDiagnostics from "../components/VaultDiagnostics.jsx";
 
 describe("VaultDiagnostics", () => {
   beforeEach(() => {
+    setSlug("personal");
     daemonMock.mockReset().mockResolvedValue(JSON.stringify(SNAPSHOT));
     clipboardMock.mockClear();
     toastMock.mockClear();
@@ -116,6 +117,7 @@ describe("VaultDiagnostics", () => {
     const slow = new Promise((resolve) => { release = resolve; });
     daemonMock.mockImplementationOnce(() => slow);
     const { findByText, queryByText } = render(() => <VaultDiagnostics />);
+    await vi.waitFor(() => expect(daemonMock).toHaveBeenCalledTimes(1));
     daemonMock.mockResolvedValueOnce(JSON.stringify({ ...SNAPSHOT, verdict: "up_to_date", behind: 0 }));
     setSlug("work");
     await vi.waitFor(() => expect(daemonMock).toHaveBeenCalledTimes(2));

@@ -237,15 +237,15 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
                     short(h),
                     fmt_ago(s.head_at.unwrap_or(now), now)
                 ));
-                let stale = s
+                let tip = s
                     .upstream_at
-                    .map(|a| format!(" ({})", fmt_ago(a, now)))
+                    .map(|a| format!(", tip committed {}", fmt_ago(a, now)))
                     .unwrap_or_default();
                 r.push_str(&format!(
-                    "origin/{} (last fetch): {}{}\n",
+                    "origin/{} (as of last fetch): {}{}\n",
                     s.branch,
                     short(u),
-                    stale
+                    tip
                 ));
                 r.push_str(&format!(
                     "ahead {} / behind {}\n",
@@ -363,7 +363,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         }
         if let Some((oid, at)) = upstream {
             s.upstream_oid = Some(oid);
-            s.upstream_at = Some(at);
+            s.upstream_at = at;
         }
         s.ahead = ahead_behind.as_ref().map(|(a, _)| *a);
         s.behind = ahead_behind.as_ref().map(|(_, b)| *b);
@@ -426,7 +426,7 @@ type GitState = (
     Option<String>,
     String,
     Option<(String, i64)>,
-    Option<(String, i64)>,
+    Option<(String, Option<i64>)>,
     Option<(u32, u32)>,
     Option<baluard_core::sync::engine::WorkTreeStatus>,
     Vec<CommitRow>,
@@ -467,14 +467,9 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
         if !rb.is_empty() {
             branch = rb;
             if let Ok(up_ref) = repo.find_reference(&format!("refs/remotes/origin/{branch}")) {
-                upstream = up_ref.target().map(|o| {
-                    let at = up_ref
-                        .peel_to_commit()
-                        .ok()
-                        .map(|c| c.time().seconds())
-                        .unwrap_or(0);
-                    (o.to_string(), at)
-                });
+                // Peel can fail (shallow/corrupt tip): None, not epoch 0.
+                let at = up_ref.peel_to_commit().ok().map(|c| c.time().seconds());
+                upstream = up_ref.target().map(|o| (o.to_string(), at));
             }
         }
     }
@@ -714,7 +709,7 @@ mod tests {
         assert!(text.contains("head: aaaaaaa"));
         assert!(text.contains("behind 2"));
         assert!(text.contains("entries: 12"));
-        assert!(text.contains("origin/main (last fetch): bbbbbbb"));
+        assert!(text.contains("origin/main (as of last fetch): bbbbbbb"));
         assert!(!text.contains("https://"));
         assert!(!text.contains("github.com/x"));
         assert!(!text.contains("token"));

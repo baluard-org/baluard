@@ -449,7 +449,7 @@ internal val ES: Map<String, String> = mapOf(
     "diag.refresh" to "Actualizar",
     "diag.error" to "No se pudo leer el estado de la bóveda.",
     "diag.deviceId" to "Este dispositivo (id)",
-    "diag.upstream" to "Remoto según la última sincronización",
+    "diag.upstream" to "Cambio remoto más reciente visto",
     "diag.verdict.unknown" to "Estado de sincronización desconocido",
     "diag.copy" to "Copiar informe de diagnóstico",
     "diag.copied" to "Informe copiado",
@@ -483,7 +483,6 @@ internal val ES: Map<String, String> = mapOf(
     "diag.verdict.noRemote" to "Sin remoto configurado",
     "diag.verdict.unfetched" to "Aún no se ha sincronizado con el remoto",
     "diag.verdict.needsDecision" to "Un conflicto necesita tu decisión",
-    "diag.verdict.locked" to "Desbloquea la bóveda para ver el diagnóstico",
 
 
     "settings.autoLock" to "Bloqueo automático",

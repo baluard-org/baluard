@@ -391,6 +391,7 @@ class VaultRepository {
      * parity. */
     suspend fun vaultDiagnostics(vault: MobileVault): Result<String> {
         return runCatching { vault.vaultDiagnostics() }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     /** Start the batch site-icon backfill (desktop parity). Returns the

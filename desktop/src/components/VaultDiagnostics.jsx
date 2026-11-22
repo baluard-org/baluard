@@ -1,6 +1,5 @@
 import { Show, For, createSignal, createEffect } from "solid-js";
 import { daemon } from "../lib/daemon.js";
-import { sanitizeError } from "../lib/utils.js";
 import { toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { useVaultSwitcher } from "../context/VaultSwitcherContext.jsx";
@@ -31,8 +30,6 @@ const VERDICT_CLASS = {
   needs_decision: "text-amber-400",
 };
 
-
-
 export default function VaultDiagnostics() {
   const { t } = useI18n();
   const switcher = useVaultSwitcher();
@@ -58,9 +55,9 @@ export default function VaultDiagnostics() {
       const raw = await daemon("sync.diagnostics", "", s);
       if (mine !== seq) return;
       setSnap(JSON.parse(raw));
-    } catch (e) {
+    } catch {
       if (mine !== seq) return;
-      setErr(sanitizeError(e));
+      setErr(t("diag.error"));
     } finally {
       if (mine === seq) setLoading(false);
     }
@@ -124,7 +121,7 @@ export default function VaultDiagnostics() {
     const lastSync = s.autosync?.last_sync;
     out.push([
       t("diag.lastSync"),
-      lastSync ? `${agoStr(lastSync, now)} · ${fmtTime(lastSync)}` : t("diag.never"),
+      lastSync ? `${agoStr(lastSync, now)} (${fmtTime(lastSync)})` : t("diag.never"),
     ]);
     out.push([
       t("diag.autosync"),

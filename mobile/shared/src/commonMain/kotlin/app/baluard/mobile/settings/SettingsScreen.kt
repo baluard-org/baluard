@@ -3448,7 +3448,7 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository) {
                 row(
                     t("diag.lastSync"),
                     if (lastSync == null) t("diag.never")
-                    else ago(lastSync) + " \u00b7 " + formatEpochDate(lastSync),
+                    else ago(lastSync) + " (" + formatEpochDate(lastSync) + ")",
                 )
                 row(
                     t("diag.autosync"),
