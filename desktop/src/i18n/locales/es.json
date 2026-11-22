@@ -455,6 +455,7 @@
     "tabAbout": "Acerca de",
     "aboutTitle": "Acerca de Baluard",
     "aboutSubtitle": "Gestor de contraseñas nativo de Git • GPL-3.0-or-later",
+    "aboutAdvanced": "Avanzado",
     "aboutDaemon": "Daemon",
     "sshAgentLabel": "Agente SSH",
     "sshAgentDesc": "Permite que apps de terminal y git pidan firmas de las claves SSH de tu bóveda mediante el socket local del agente. Desactivado por defecto. Cada clave también debe marcarse para compartirse.",

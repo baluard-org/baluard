@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useI18n } from "../i18n/index.jsx";
 import { updaterStatus } from "../lib/update.js";
 import IconInfo from "./IconInfo.jsx";
+import VaultDiagnostics from "./VaultDiagnostics.jsx";
 
 /**
  * The Settings "About" pane: the installed version and the product tagline,
@@ -56,6 +57,14 @@ export default function AboutTab() {
             </Show>
             <p class="text-sm text-[var(--color-muted)] truncate">{t("settings.aboutSubtitle")}</p>
           </div>
+        </div>
+      </div>
+
+      {/* Advanced: same placement as mobile's About -> Advanced. */}
+      <div>
+        <p class="text-xs font-bold text-[var(--color-text)]">{t("settings.aboutAdvanced")}</p>
+        <div class="mt-3">
+          <VaultDiagnostics />
         </div>
       </div>
     </div>

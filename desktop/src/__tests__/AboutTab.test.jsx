@@ -1,10 +1,16 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@solidjs/testing-library";
 
-const { updaterStatus, invoke } = vi.hoisted(() => ({
-  updaterStatus: vi.fn(),
-  invoke: vi.fn(),
-}));
+const { updaterStatus, invoke, daemonMock, slugSignal } = await vi.hoisted(async () => {
+  const solid = await import("solid-js");
+  const [slug, _setSlug] = solid.createSignal("personal");
+  return {
+    updaterStatus: vi.fn(),
+    invoke: vi.fn(),
+    daemonMock: vi.fn(),
+    slugSignal: slug,
+  };
+});
 
 vi.mock("../lib/update.js", () => ({
   updaterStatus: (...a) => updaterStatus(...a),
@@ -12,6 +18,12 @@ vi.mock("../lib/update.js", () => ({
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...a) => invoke(...a),
+}));
+
+vi.mock("../lib/daemon.js", () => ({ daemon: (...a) => daemonMock(...a) }));
+
+vi.mock("../context/VaultSwitcherContext.jsx", () => ({
+  useVaultSwitcher: () => ({ activeSlug: () => slugSignal() }),
 }));
 
 vi.mock("../i18n/index.jsx", () => ({
@@ -24,6 +36,8 @@ describe("AboutTab", () => {
   beforeEach(() => {
     updaterStatus.mockReset();
     invoke.mockReset();
+    daemonMock.mockReset();
+    daemonMock.mockResolvedValue(JSON.stringify({ verdict: "up_to_date", hasRemote: false }));
   });
   afterEach(() => cleanup());
 
@@ -63,5 +77,14 @@ describe("AboutTab", () => {
     render(() => <AboutTab />);
     await screen.findByText("Baluard v0.5.2");
     expect(screen.queryByTestId("about-daemon")).toBeNull();
+  });
+
+  it("mounts vault diagnostics under the advanced heading", async () => {
+    updaterStatus.mockResolvedValue({ version: "0.5.2" });
+    invoke.mockResolvedValue({ version: "0.7.4", expected: "0.7.4", matches: true });
+    render(() => <AboutTab />);
+    await screen.findByText("settings.aboutAdvanced");
+    expect(screen.getByText("diag.title")).toBeTruthy();
+    await vi.waitFor(() => expect(daemonMock).toHaveBeenCalledWith("sync.diagnostics", "", "personal"));
   });
 });

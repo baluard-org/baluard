@@ -729,6 +729,7 @@
     "tabAbout": "À propos",
     "aboutTitle": "À propos de Baluard",
     "aboutSubtitle": "Gestionnaire de mots de passe souverain, chiffré de bout en bout et sans serveur centralisé.",
+    "aboutAdvanced": "Avancé",
     "aboutDaemon": "Daemon",
     "sshAgentLabel": "Agent SSH",
     "sshAgentDesc": "Permet aux apps de terminal et à git de demander des signatures des clés SSH de votre coffre via le socket local de l'agent. Désactivé par défaut. Chaque clé doit aussi être marquée pour le service.",

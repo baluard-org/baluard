@@ -13,7 +13,6 @@ import FocusTrap from "./FocusTrap.jsx";
 import ConfirmModal from "./ConfirmModal.jsx";
 import ExternalLink from "./ExternalLink.jsx";
 import { Button, Toggle } from "./Primitives.jsx";
-import VaultDiagnostics from "./VaultDiagnostics.jsx";
 import CopyButton from "./CopyButton.jsx";
 import IconBackfillSection from "./IconBackfillSection.jsx";
 import AttachmentsSection from "./AttachmentsSection.jsx";
@@ -1403,9 +1402,6 @@ const [customError, setCustomError] = createSignal(null);
               {t("entry.cancel")}
             </button>
           </Show>
-
-          {/* Vault diagnostics: per-device sync state + support report. */}
-          <VaultDiagnostics />
 
           {/* ── Disconnect Modal ── */}
           <Show when={showDisconnectModal()}>
