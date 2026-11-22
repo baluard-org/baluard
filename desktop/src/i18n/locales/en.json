@@ -1541,6 +1541,14 @@
     "agoMins": "{n}m ago",
     "agoHours": "{n}h ago",
     "agoDays": "{n}d ago",
-    "verdict.unknown": "Sync state unknown"
+    "verdict.unknown": "Sync state unknown",
+    "versions": "Versions",
+    "versionsValue": "format {format}, core {core}",
+    "os": "System",
+    "headTree": "Contents at HEAD",
+    "headTreeValue": "{n} entries, {m} trashed",
+    "lastError": "Last sync failure",
+    "kitSigner": "Kit signer",
+    "kitSignerPresent": "Active until first push"
   }
 }

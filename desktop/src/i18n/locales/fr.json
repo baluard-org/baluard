@@ -1541,6 +1541,14 @@
     "agoMins": "il y a {n}m",
     "agoHours": "il y a {n}h",
     "agoDays": "il y a {n}d",
-    "verdict.unknown": "État de synchronisation inconnu"
+    "verdict.unknown": "État de synchronisation inconnu",
+    "versions": "Versions",
+    "versionsValue": "format {format}, core {core}",
+    "os": "Système",
+    "headTree": "Contenu à HEAD",
+    "headTreeValue": "{n} entrées, {m} à la corbeille",
+    "lastError": "Dernier échec de synchronisation",
+    "kitSigner": "Signataire du kit",
+    "kitSignerPresent": "Actif jusqu'au premier envoi"
   }
 }

@@ -178,6 +178,9 @@ fun SettingsScreen(
     onVaultRemoved: () -> Unit = {},
     repo: VaultRepository,
     onIconsChanged: () -> Unit = {},
+    // Client-only facts (app version, Android version, background
+    // restriction state) prepended to the diagnostics report on copy.
+    clientEnv: String = "",
     onOpenPeople: () -> Unit = {},
     onSyncNudge: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
@@ -488,7 +491,7 @@ val entitlement by Entitlements.state.collectAsState()
 
                 // Vault diagnostics: per-device sync state + the shareable
                 // support report (desktop sync tab parity).
-                VaultDiagnosticsSection(vault = vault, repo = repo)
+                VaultDiagnosticsSection(vault = vault, repo = repo, clientEnv = clientEnv)
 
                 BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -3321,7 +3324,11 @@ val entitlement by Entitlements.state.collectAsState()
  * subjects, no entry names), so pasting it into an issue is safe.
  */
 @Composable
-private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository) {
+private fun VaultDiagnosticsSection(
+    vault: MobileVault,
+    repo: VaultRepository,
+    clientEnv: String,
+) {
     var snap by remember(vault) { mutableStateOf<JsonObject?>(null) }
     var failed by remember(vault) { mutableStateOf<String?>(null) }
     var refreshKey by remember(vault) { mutableStateOf(0) }
@@ -3462,6 +3469,28 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository) {
                 }
                 val dirty = (s.str("staged")?.toIntOrNull() ?: 0) + (s.str("unstaged")?.toIntOrNull() ?: 0)
                 if (dirty > 0) row(t("diag.localChanges"), dirty.toString())
+                row(
+                    t("diag.versions"),
+                    t("diag.versionsValue", s.str("formatVersion") ?: "?", s.str("coreVersion") ?: "?"),
+                )
+                row(
+                    t("diag.os"),
+                    s.str("osVersion")?.let { osv -> (s.str("os") ?: "?") + " " + (s.str("arch") ?: "?") + " (" + osv + ")" }
+                        ?: ((s.str("os") ?: "?") + " " + (s.str("arch") ?: "?")),
+                )
+                s.str("headCiphers")?.toLongOrNull()?.let { n ->
+                    row(
+                        t("diag.headTree"),
+                        t("diag.headTreeValue", n, s.str("headTrash")?.toLongOrNull() ?: 0L),
+                    )
+                }
+                s.str("lastError")?.let { le ->
+                    val at = s.str("lastErrorAt")?.toLongOrNull()
+                    row(t("diag.lastError"), if (at != null) le + " (" + ago(at) + ")" else le)
+                }
+                if (s.str("kitSignerFile") == "true") {
+                    row(t("diag.kitSigner"), t("diag.kitSignerPresent"))
+                }
                 s.str("entries")?.toIntOrNull()?.let { n -> row(t("diag.entries"), n.toString()) }
                 (s.str("archived")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let { row(t("diag.archived"), it.toString()) }
                 (s.str("trashed")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let { row(t("diag.trashed"), it.toString()) }
@@ -3469,7 +3498,8 @@ private fun VaultDiagnosticsSection(vault: MobileVault, repo: VaultRepository) {
                     text = if (copied.value) t("diag.copied") else t("diag.copy"),
                     onClick = {
                         s.str("report")?.let { report ->
-                            clipboard.setText(AnnotatedString(report))
+                            val full = if (clientEnv.isBlank()) report else clientEnv + report
+                            clipboard.setText(AnnotatedString(full))
                             copied.value = true
                             scope.launch {
                                 delay(3000)

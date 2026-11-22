@@ -86,6 +86,44 @@ pub struct DiagnosticsSnapshot {
     pub archived: Option<usize>,
     #[serde(rename = "trashed")]
     pub trashed: Option<usize>,
+    /// True when no VaultHandle is open: the counts above are None and
+    /// everything below stays meaningful while locked.
+    #[serde(rename = "locked")]
+    pub locked: bool,
+    /// Baluard core version (workspace version) + on-disk envelope
+    /// format. Version skew between devices is a prime suspect when
+    /// machines disagree on contents.
+    #[serde(rename = "coreVersion")]
+    pub core_version: String,
+    #[serde(rename = "formatVersion")]
+    pub format_version: u8,
+    #[serde(rename = "os")]
+    pub os: String,
+    #[serde(rename = "arch")]
+    pub arch: String,
+    /// Linux distro pretty name; None elsewhere (the client header
+    /// covers Windows/macOS/Android).
+    #[serde(rename = "osVersion")]
+    pub os_version: Option<String>,
+    /// Cipher/trash blob counts read straight from the HEAD tree: the
+    /// ground truth that arbitrates "different item counts" against any
+    /// local index or meta-cache drift, independent of the live meta
+    /// lists. Works while locked.
+    #[serde(rename = "headCiphers")]
+    pub head_ciphers: Option<u64>,
+    #[serde(rename = "headTrash")]
+    pub head_trash: Option<u64>,
+    /// Kit-recovery signer file present: the device signs commits under
+    /// the kit key until its first push, and peers verify against the
+    /// kit file's verifier key in the meantime.
+    #[serde(rename = "kitSignerFile")]
+    pub kit_signer_file: bool,
+    /// Last failed autosync cycle (scrubbed) and when. Cleared by any
+    /// success: the reason a silently-stalled vault stopped syncing.
+    #[serde(rename = "lastError")]
+    pub last_error: Option<String>,
+    #[serde(rename = "lastErrorAt")]
+    pub last_error_at: Option<i64>,
     /// Ready-to-copy diagnostic report (English, fixed labels, redacted
     /// by construction).
     #[serde(rename = "report")]
@@ -160,7 +198,7 @@ fn remote_host(url: &str) -> Option<String> {
 /// Peer-authored commit messages are arbitrary bytes: reduce to a
 /// bounded single-line ASCII subject so a forged message cannot add
 /// report lines ("x\nverdict: up_to_date") or carry junk.
-fn display_safe(raw: &str) -> String {
+pub fn display_safe(raw: &str) -> String {
     let s: String = raw
         .lines()
         .next()
@@ -208,6 +246,14 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
     r.push_str("Baluard diagnostic report\n");
     r.push_str(&format!("vault id: {}\n", s.vault_id));
     r.push_str(&format!("device: {}\n", s.device_id));
+    r.push_str(&format!(
+        "core: {} (vault format {})\n",
+        s.core_version, s.format_version
+    ));
+    r.push_str(&match &s.os_version {
+        Some(v) => format!("os: {} {} ({v})\n", s.os, s.arch),
+        None => format!("os: {} {}\n", s.os, s.arch),
+    });
     r.push_str(&format!("verdict: {}\n", s.verdict));
     r.push_str(&format!(
         "autosync: {} ({})\n",
@@ -277,16 +323,31 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
             s.autosync.conflicts_resolved
         ));
     }
+    if let Some((c, t)) = s.head_ciphers.zip(s.head_trash) {
+        r.push_str(&format!("head tree: {c} ciphers, {t} trash\n"));
+    }
+    if let Some((msg, at)) = s.last_error.as_ref().zip(s.last_error_at) {
+        r.push_str(&format!("last cycle error: {msg} ({})\n", fmt_ago(at, now)));
+    }
+    if s.kit_signer_file {
+        r.push_str(
+            "kit signer file: present (device signs under the kit key until its first push)\n",
+        );
+    }
     let c = |name: &str, v: Option<usize>| match v {
         Some(n) => format!("{name}: {n}\n"),
         None => format!("{name}: (locked)\n"),
     };
-    r.push_str(&c("entries", s.entries));
-    r.push_str(&c("folders", s.folders));
-    r.push_str(&c("tags", s.tags));
-    r.push_str(&c("totp", s.totp));
-    r.push_str(&c("archived", s.archived));
-    r.push_str(&c("trashed", s.trashed));
+    if s.locked {
+        r.push_str("counts: unavailable (vault locked; unlock and regenerate the report)\n");
+    } else {
+        r.push_str(&c("entries", s.entries));
+        r.push_str(&c("folders", s.folders));
+        r.push_str(&c("tags", s.tags));
+        r.push_str(&c("totp", s.totp));
+        r.push_str(&c("archived", s.archived));
+        r.push_str(&c("trashed", s.trashed));
+    }
     if !s.commits.is_empty() {
         r.push_str("recent commits:\n");
         for row in s.commits.iter().take(10) {
@@ -313,6 +374,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
     let device_id = crate::bridge_policy::first_device_id(&state.vault_path);
     let vault_id = state.vault_id_str().await?;
     let autosync = state.autosync.status().await;
+    let last_err = state.autosync.last_error().await;
 
     let mut s = DiagnosticsSnapshot {
         verdict: "up_to_date".into(),
@@ -341,6 +403,17 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         totp: None,
         archived: None,
         trashed: None,
+        locked: state.inner.read().await.is_none(),
+        core_version: env!("CARGO_PKG_VERSION").into(),
+        format_version: baluard_core::BALUARD_VERSION,
+        os: std::env::consts::OS.into(),
+        arch: std::env::consts::ARCH.into(),
+        os_version: os_version(),
+        head_ciphers: None,
+        head_trash: None,
+        kit_signer_file: state.vault_path.join("meta/recovery-signer.key").exists(),
+        last_error: last_err.as_ref().map(|(m, _)| m.clone()),
+        last_error_at: last_err.as_ref().map(|(_, t)| *t),
         report: String::new(),
     };
 
@@ -351,7 +424,8 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         let git = tokio::task::spawn_blocking(move || git_state(&vault_path, &device))
             .await
             .map_err(|e| format!("diagnostics join: {e}"))?;
-        let (has_remote, host, branch, head, upstream, ahead_behind, dirty, commits) = git;
+        let (has_remote, host, branch, head, upstream, ahead_behind, dirty, commits, tree_counts) =
+            git;
         s.has_remote = has_remote;
         s.remote_host = host;
         if !branch.is_empty() {
@@ -370,6 +444,10 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         s.staged = dirty.as_ref().map(|d| d.staged).unwrap_or(0);
         s.unstaged = dirty.as_ref().map(|d| d.unstaged).unwrap_or(0);
         s.commits = commits;
+        if let Some((c, t)) = tree_counts {
+            s.head_ciphers = Some(c);
+            s.head_trash = Some(t);
+        }
     }
 
     // Counts: each degrades independently.
@@ -430,6 +508,7 @@ type GitState = (
     Option<(u32, u32)>,
     Option<baluard_core::sync::engine::WorkTreeStatus>,
     Vec<CommitRow>,
+    Option<(u64, u64)>,
 );
 
 #[cfg(feature = "git-sync")]
@@ -448,6 +527,7 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
                 None,
                 None,
                 Vec::new(),
+                None,
             );
         }
     };
@@ -489,6 +569,21 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
         .ok()
         .and_then(|h| h.peel_to_commit().ok())
         .map(|c| (c.id().to_string(), c.time().seconds()));
+    let tree_counts = repo
+        .head()
+        .ok()
+        .and_then(|h| h.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok())
+        .map(|tree| {
+            let n = |p: &str| {
+                tree.get_path(std::path::Path::new(p))
+                    .ok()
+                    .and_then(|t| t.to_object(&repo).ok())
+                    .and_then(|o| o.as_tree().map(|st| count_tree_blobs(&repo, st)))
+                    .unwrap_or(0)
+            };
+            (n("ciphers"), n("trash"))
+        });
     let dirty = engine.status(&repo).ok();
     let commits = engine
         .log(&repo, 10)
@@ -509,7 +604,44 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
         ahead_behind,
         dirty,
         commits,
+        tree_counts,
     )
+}
+
+/// Blob count under a HEAD-tree subtree: the commit's own contents,
+/// independent of any local index or meta cache. Works while locked.
+#[cfg(feature = "git-sync")]
+fn count_tree_blobs(repo: &git2::Repository, tree: &git2::Tree) -> u64 {
+    let mut n = 0u64;
+    for entry in tree.iter() {
+        match entry.kind() {
+            Some(git2::ObjectType::Blob) => n += 1,
+            Some(git2::ObjectType::Tree) => {
+                if let Ok(obj) = entry.to_object(repo) {
+                    if let Some(sub) = obj.as_tree() {
+                        n += count_tree_blobs(repo, sub);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    n
+}
+
+/// Linux-only distro pretty name; the client header covers other OSes.
+fn os_version() -> Option<String> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|c| {
+            c.lines()
+                .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+                .map(|v| v.trim_matches('"').trim().to_string())
+        })
+        .filter(|v| !v.is_empty())
 }
 
 #[cfg(all(test, feature = "git-sync"))]
@@ -616,6 +748,58 @@ mod tests {
         // No vault-name line: the report never carries user-typed text.
         assert!(!snap.report.contains("vault:"));
         assert!(!snap.report.contains("https://"));
+        // Ground truth from the commit tree: the added cipher is uncommitted,
+        // so HEAD still holds none; the vault is open and counts live.
+        assert!(!snap.locked);
+        assert_eq!(snap.head_ciphers, Some(0));
+        assert_eq!(snap.head_trash, Some(0));
+        assert!(snap.report.contains("head tree: 0 ciphers"));
+        // Version and platform fields always present.
+        assert_eq!(snap.format_version, baluard_core::BALUARD_VERSION);
+        assert!(!snap.core_version.is_empty());
+        assert!(!snap.os.is_empty());
+        assert!(!snap.arch.is_empty());
+        assert!(!snap.kit_signer_file);
+        assert!(!snap.report.contains("kit signer file"));
+    }
+
+    #[tokio::test]
+    async fn head_tree_counts_follow_commits_not_the_worktree() {
+        let sb = crate::test_support::lock_env();
+        let _ = &sb;
+        let dir = tempfile::tempdir().unwrap();
+        let vpath = dir.path().join("v");
+        let password = format!("diag-pass-{}", std::process::id());
+        let handle = baluard_core::vault::creation::VaultCreator::new(&vpath, &password, "device")
+            .execute()
+            .unwrap()
+            .0;
+        let state = std::sync::Arc::new(crate::VaultState::new(handle.path.clone()));
+        state.unlock(&password).await.unwrap();
+        state
+            .add_cipher(r#"{"name":"Site","type":1}"#)
+            .await
+            .unwrap();
+        // Commit the cipher via the engine's local commit path so HEAD's
+        // tree reflects one cipher while the meta list agrees. Unsigned
+        // commits are refused, so the engine needs the device key seal.
+        let seal = state
+            .inner
+            .read()
+            .await
+            .as_ref()
+            .and_then(|h| h.devkey_seal());
+        // The real device id: staging is role-admitted per device, so a
+        // fake id would resolve PendingJoiner and commit an empty tree.
+        let device = crate::bridge_policy::first_device_id(&vpath);
+        let repo = git2::Repository::open(&vpath).unwrap();
+        let engine = baluard_core::sync::engine::SyncEngine::new(&vpath, &device, seal.as_deref());
+        engine
+            .commit_all(&repo, "test commit")
+            .expect("local commit");
+        let snap = snapshot(&state).await.unwrap();
+        assert_eq!(snap.head_ciphers, Some(1));
+        assert!(snap.report.contains("head tree: 1 ciphers"));
     }
 
     #[tokio::test]
@@ -702,6 +886,17 @@ mod tests {
             totp: Some(1),
             archived: Some(0),
             trashed: Some(3),
+            locked: false,
+            core_version: "0.8.1".into(),
+            format_version: 2,
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            os_version: Some("Fedora Linux 41".into()),
+            head_ciphers: Some(12),
+            head_trash: Some(3),
+            kit_signer_file: false,
+            last_error: Some("pull failed: authentication required".into()),
+            last_error_at: Some(1_700_009_000),
             report: String::new(),
         };
         let text = report_text(&s, 1_700_010_000);

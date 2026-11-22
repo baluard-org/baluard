@@ -177,6 +177,9 @@ struct Inner {
     conflicts_resolved: u32,
     /// Consecutive access-denied pulls (see [`PullReport::AccessDenied`]).
     access_denied_streak: u32,
+    /// Last failed cycle: scrubbed reason + unix seconds. Cleared by any
+    /// success. Diagnostics-only (AutoSyncStatus keeps its wire shape).
+    last_error: Option<(String, i64)>,
     /// Unix ms of the last throttled registry `last_synced` persist.
     stamp_persist_ms: Option<u64>,
     /// Another device compacted the attachments line and this device
@@ -290,6 +293,7 @@ impl AutoSyncHandle {
                 pending: 0,
                 conflicts_resolved: 0,
                 access_denied_streak: 0,
+                last_error: None,
                 stamp_persist_ms: None,
                 line_rewrite_pending: std::sync::atomic::AtomicBool::new(false),
                 line_ack_tip: None,
@@ -332,6 +336,21 @@ impl AutoSyncHandle {
     /// registry stamp so the label is right immediately and after restart.
     pub async fn last_sync_secs(&self) -> Option<u64> {
         self.inner.lock().await.last_sync
+    }
+
+    /// Last failed cycle (scrubbed reason, unix seconds). Cleared by any
+    /// success. Diagnostics-only surface: a vault that silently stops
+    /// syncing reports WHY here instead of only a stale `last_sync`.
+    pub async fn last_error(&self) -> Option<(String, i64)> {
+        self.inner.lock().await.last_error.clone()
+    }
+
+    fn record_failure(g: &mut Inner, what: &str, detail: Option<&str>) {
+        let msg = match detail {
+            Some(d) if !d.is_empty() => format!("{what}: {}", crate::diagnostics::display_safe(d)),
+            _ => what.to_string(),
+        };
+        g.last_error = Some((msg, now_secs() as i64));
     }
 
     /// Stamp a successful sync: advance the in-memory `last_sync` clock
@@ -740,6 +759,7 @@ impl AutoSyncHandle {
                     fresh = true;
                     g.access_denied_streak = 0;
                     g.last_sync = Some(now_secs());
+                    g.last_error = None;
                     // Don't clobber Dirty/Syncing; only settle to Idle from
                     // Offline — and never report Idle while mutations sit
                     // unpushed (their push went Offline earlier). KeptLocal
@@ -762,6 +782,7 @@ impl AutoSyncHandle {
                     // streak feed the removal-notice surface.
                     g.access_denied_streak = g.access_denied_streak.saturating_add(1);
                     g.state = AutoSyncState::Offline;
+                    Self::record_failure(&mut g, "remote refused access", detail.as_deref());
                 } else if r == PullReport::Skipped {
                     detail = Some(SKIPPED_DETAIL.to_string());
                     log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
@@ -770,6 +791,7 @@ impl AutoSyncHandle {
             Ok(Ok(Err(ref e))) => {
                 report = PullReport::Error;
                 detail = Some(baluard_core::sync::credentials::scrub_git_error(e));
+                Self::record_failure(&mut g, "pull failed", detail.as_deref());
                 log::warn!("[autosync] pull failed: {e}")
             }
             Ok(Err(ref e)) => {
@@ -777,6 +799,7 @@ impl AutoSyncHandle {
                 detail = Some(baluard_core::sync::credentials::scrub_git_error(&format!(
                     "sync task failed: {e}"
                 )));
+                Self::record_failure(&mut g, "pull failed", detail.as_deref());
                 log::warn!("[autosync] pull task failed: {e}")
             }
             Err(_) => {
@@ -1009,6 +1032,7 @@ impl AutoSyncHandle {
                 g.access_denied_streak = 0;
                 g.conflicts_resolved = g.conflicts_resolved.saturating_add(conflicts);
                 g.last_sync = Some(now_secs());
+                g.last_error = None;
                 // A mutation during the cycle re-set Dirty: keep it (the
                 // armed debounce pushes the new edit) instead of Idle.
                 if g.pending == 0 {
@@ -1031,8 +1055,26 @@ impl AutoSyncHandle {
                 g.pending_conflicts = pending;
                 g.state = AutoSyncState::NeedsDecision;
             }
-            Ok(Ok((Err(ref e), _, _, _))) => log::warn!("[autosync] sync cycle failed: {e}"),
-            Ok(Err(ref e)) => log::warn!("[autosync] sync task failed: {e}"),
+            Ok(Ok((Err(ref e), _, _, _))) => {
+                Self::record_failure(
+                    &mut g,
+                    "sync failed",
+                    Some(&baluard_core::sync::credentials::scrub_git_error(
+                        &e.to_string(),
+                    )),
+                );
+                log::warn!("[autosync] sync cycle failed: {e}")
+            }
+            Ok(Err(ref e)) => {
+                Self::record_failure(
+                    &mut g,
+                    "sync failed",
+                    Some(&baluard_core::sync::credentials::scrub_git_error(&format!(
+                        "{e}"
+                    ))),
+                );
+                log::warn!("[autosync] sync task failed: {e}")
+            }
             _ => {
                 // SYNC_OP_TIMEOUT: do not go offline unless run_sync_cycle
                 // mapped it to Offline (handled above). Stay Idle so the next

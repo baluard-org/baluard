@@ -1,4 +1,5 @@
 import { Show, For, createSignal, createEffect } from "solid-js";
+import { getVersion } from "@tauri-apps/api/app";
 import { daemon } from "../lib/daemon.js";
 import { toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
@@ -72,8 +73,15 @@ export default function VaultDiagnostics() {
   const copyReport = async () => {
     const s = snap();
     if (!s?.report) return;
+    // Client-only facts the Rust runtime cannot see ride the header.
+    let header = "";
     try {
-      await copyToClipboard(s.report, { autoClearMs: 0 });
+      header = `app: ${await getVersion()}\n`;
+    } catch {
+      header = "";
+    }
+    try {
+      await copyToClipboard(header + s.report, { autoClearMs: 0 });
       setCopied(true);
       toastSuccess(t("diag.copied"));
       setTimeout(() => setCopied(false), 3000);
@@ -135,6 +143,35 @@ export default function VaultDiagnostics() {
     }
     if (s.staged + s.unstaged > 0) {
       out.push([t("diag.localChanges"), String(s.staged + s.unstaged)]);
+    }
+    out.push([
+      t("diag.versions"),
+      t("diag.versionsValue", {
+        format: s.formatVersion ?? "?",
+        core: s.coreVersion ?? "?",
+      }),
+    ]);
+    out.push([
+      t("diag.os"),
+      s.osVersion ? `${s.os} ${s.arch} (${s.osVersion})` : `${s.os ?? "?"} ${s.arch ?? "?"}`,
+    ]);
+    if (s.headCiphers != null) {
+      out.push([
+        t("diag.headTree"),
+        t("diag.headTreeValue", {
+          n: s.headCiphers,
+          m: s.headTrash ?? 0,
+        }),
+      ]);
+    }
+    if (s.lastError) {
+      out.push([
+        t("diag.lastError"),
+        s.lastErrorAt ? `${s.lastError} (${agoStr(s.lastErrorAt, now)})` : s.lastError,
+      ]);
+    }
+    if (s.kitSignerFile) {
+      out.push([t("diag.kitSigner"), t("diag.kitSignerPresent")]);
     }
     if (s.entries != null) {
       out.push([t("diag.entries"), String(s.entries)]);

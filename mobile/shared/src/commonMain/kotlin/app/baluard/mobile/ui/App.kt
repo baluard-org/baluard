@@ -159,6 +159,10 @@ fun App(
     onPasskeyResult: (String) -> Unit = {},
     onPasskeyCancel: () -> Unit = {},
     onPasskeyUnlockComplete: () -> Unit = {},
+    // Client-only facts (app version, Android version, background
+    // restriction state) prepended to the diagnostics report on copy.
+    // Empty on platforms that do not supply it.
+    clientEnv: String = "",
 ) {
     BaluardTheme {
         Surface(

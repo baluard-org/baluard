@@ -217,10 +217,29 @@ class MainActivity : FragmentActivity() {
                     onPasskeyResult = { completePasskey(it) },
                     onPasskeyCancel = { cancelPasskey() },
                     onPasskeyUnlockComplete = { completePasskeyUnlock() },
+                    clientEnv = clientEnvHeader(),
                 )
             }
         }
     }
+
+    /// Facts the Rust runtime cannot see, formatted as a report header.
+    /// Android OEMs kill background sync, so the restriction flags are
+    /// prime "mobile differs" triage data.
+    private fun clientEnvHeader(): String = runCatching {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+        buildString {
+            append("app: ").append(info.versionName ?: "unknown")
+            append(" (").append(info.versionCode).appendLine(")")
+            append("android: ").append(android.os.Build.VERSION.RELEASE)
+            append(" (SDK ").append(android.os.Build.VERSION.SDK_INT).appendLine(")")
+            appendLine("background restricted: ${am.isBackgroundRestricted}")
+            appendLine(
+                "battery optimization ignored: ${packageManager.isIgnoringBatteryOptimizations(packageName)}",
+            )
+        }
+    }.getOrDefault("")
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
