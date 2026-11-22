@@ -904,6 +904,12 @@ play-submit-all:
 	BALUARD_PLAY_TRACK=alpha ./scripts/upload-play-release.sh
 	./scripts/upload-play-release.sh --tracks
 
+# Read-only Play verdict: versionCodes on both pre-release tracks, failing
+# while either track still serves a code other than the workspace's (the
+# store-side close-out check, like ext-verdicts).
+play-tracks:
+	./scripts/upload-play-release.sh --tracks
+
 # Report store verdicts without submitting anything (AMO version status +
 # Chrome item status); with --guard it refuses to let ext-submit stack a
 # new submission on a listing still in review.
