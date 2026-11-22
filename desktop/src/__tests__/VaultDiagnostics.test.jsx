@@ -51,6 +51,17 @@ const SNAPSHOT = {
   archived: 0,
   trashed: 0,
   report: "Baluard diagnostic report\nhead: aaaaaaa\n",
+  locked: false,
+  coreVersion: "0.8.1",
+  formatVersion: 2,
+  os: "linux",
+  arch: "x86_64",
+  osVersion: "Fedora Linux 41",
+  headCiphers: 12,
+  headTrash: 3,
+  kitSignerFile: false,
+  lastError: "pull failed: network",
+  lastErrorAt: 1700009000,
 };
 
 import VaultDiagnostics from "../components/VaultDiagnostics.jsx";

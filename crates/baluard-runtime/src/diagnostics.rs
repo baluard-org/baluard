@@ -750,16 +750,23 @@ mod tests {
             tb.insert("n", parent_tree_oid, 0o040000).unwrap();
             parent_tree_oid = tb.write().unwrap();
         }
-        // Root = { shallow blob, deep chain }. Only the shallow blob is
-        // reachable under the cap: the deep branch is skipped, not walked.
+        // One nested dir under the cap still counts.
+        let mut sub_tb = repo.treebuilder(None).unwrap();
+        sub_tb
+            .insert("x.bin", repo.blob(b"nested").unwrap(), 0o100644)
+            .unwrap();
+        let sub_oid = sub_tb.write().unwrap();
+        // Root = { shallow blob, nested dir, deep chain }. Only blobs at
+        // depth <= 4 count: the deep chain is skipped, not walked.
         let mut root_tb = repo.treebuilder(None).unwrap();
         root_tb
             .insert("shallow.bin", repo.blob(b"near").unwrap(), 0o100644)
             .unwrap();
+        root_tb.insert("dir", sub_oid, 0o040000).unwrap();
         root_tb.insert("deep", parent_tree_oid, 0o040000).unwrap();
         let tree = repo.find_tree(root_tb.write().unwrap()).unwrap();
         let n = count_tree_blobs(&repo, &tree, 0);
-        assert_eq!(n, 1, "capped: only the shallow blob counts, got {n}");
+        assert_eq!(n, 2, "capped: shallow + one nested level count, got {n}");
     }
 
     #[test]

@@ -217,7 +217,7 @@ class MainActivity : FragmentActivity() {
                     onPasskeyResult = { completePasskey(it) },
                     onPasskeyCancel = { cancelPasskey() },
                     onPasskeyUnlockComplete = { completePasskeyUnlock() },
-                    clientEnv = ::clientEnvHeader,
+                    clientEnv = { clientEnvHeader() },
                 )
             }
         }
