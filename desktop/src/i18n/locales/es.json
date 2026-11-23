@@ -397,7 +397,7 @@
     "tabSync": "Sincronización",
     "tabPeople": "Compartir",
     "syncNotAvailable": "La sincronización no está disponible en esta compilación.",
-    "tabBridge": "Extensiones de navegador",
+    "tabBridge": "Conexión del navegador",
     "themeSystem": "Sistema",
     "tabCollections": "Carpetas compartidas",
     "tabGroups": "Grupos",
@@ -874,7 +874,7 @@
     "days": "{n} d"
   },
   "bridge": {
-    "title": "Extensiones de navegador",
+    "title": "Conexión del navegador",
     "description": "Conecta una extensión de navegador para autocompletar contraseñas desde esta bóveda. La extensión solo funciona mientras esta app esté desbloqueada.",
     "add": "Agregar extensión de navegador",
     "waitingForExtension": "Esperando extensión",

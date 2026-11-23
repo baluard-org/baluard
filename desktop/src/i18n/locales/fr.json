@@ -671,7 +671,7 @@
     "tabSync": "Synchronisation",
     "tabPeople": "Partage",
     "syncNotAvailable": "La synchronisation n'est pas disponible sur cette version.",
-    "tabBridge": "Extensions de navigateur",
+    "tabBridge": "Connexion navigateur",
     "themeSystem": "Système",
     "tabCollections": "Dossiers partagés",
     "tabGroups": "Groupes",
@@ -915,7 +915,7 @@
     "days": "{n} j"
   },
   "bridge": {
-    "title": "Extensions de navigateur",
+    "title": "Connexion navigateur",
     "description": "Connectez une extension de navigateur pour remplir automatiquement les mots de passe depuis ce coffre. L'extension ne fonctionne que lorsque l'application est déverrouillée.",
     "add": "Ajouter une extension",
     "waitingForExtension": "En attente de l'extension",

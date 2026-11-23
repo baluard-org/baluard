@@ -438,7 +438,7 @@
     "tabSync": "Sincronização",
     "tabPeople": "Compartilhamento",
     "syncNotAvailable": "A sincronização não está disponível nesta versão.",
-    "tabBridge": "Extensões do navegador",
+    "tabBridge": "Conexão do navegador",
     "themeSystem": "Sistema",
     "tabCollections": "Pastas compartilhadas",
     "tabGroups": "Grupos",
@@ -915,7 +915,7 @@
     "days": "{n} d"
   },
   "bridge": {
-    "title": "Extensões do navegador",
+    "title": "Conexão do navegador",
     "description": "Conecte uma extensão do navegador para preencher senhas deste cofre. A extensão funciona apenas enquanto este aplicativo estiver desbloqueado.",
     "add": "Adicionar extensão do navegador",
     "waitingForExtension": "Aguardando extensão",

@@ -438,7 +438,7 @@
     "tabSync": "Sync",
     "tabPeople": "Sharing",
     "syncNotAvailable": "Sync is not available on this build.",
-    "tabBridge": "Browser extensions",
+    "tabBridge": "Browser connect",
     "themeSystem": "System",
     "tabCollections": "Shared folders",
     "tabGroups": "Groups",
@@ -915,7 +915,7 @@
     "days": "{n} d"
   },
   "bridge": {
-    "title": "Browser extensions",
+    "title": "Browser connect",
     "description": "Connect a browser extension to autofill passwords from this vault. The extension only works while this app is unlocked.",
     "add": "Add browser extension",
     "waitingForExtension": "Waiting for extension",
