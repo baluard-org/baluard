@@ -744,7 +744,12 @@ impl AutoSyncHandle {
             SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
                 let _cycle_guard = lock_guard;
-                run_pull_only_with_pending(&vault_path, &device_id, devkey_seal.as_deref(), enroll_vk)
+                run_pull_only_with_pending(
+                    &vault_path,
+                    &device_id,
+                    devkey_seal.as_deref(),
+                    enroll_vk,
+                )
             }),
         )
         .await;
@@ -773,8 +778,7 @@ impl AutoSyncHandle {
                     // Don't clobber Syncing/NeedsDecision; go Dirty whenever
                     // local commits sit unpushed (enrollment/offline) or KeptLocal
                     // awaits push.
-                    if g.state != AutoSyncState::Syncing
-                        && g.state != AutoSyncState::NeedsDecision
+                    if g.state != AutoSyncState::Syncing && g.state != AutoSyncState::NeedsDecision
                     {
                         if g.pending > 0 || needs_push {
                             g.state = AutoSyncState::Dirty;
@@ -793,8 +797,7 @@ impl AutoSyncHandle {
                     Self::record_failure(&mut g, "remote refused access", detail.as_deref());
                 } else if r == PullReport::Skipped {
                     detail = Some(SKIPPED_DETAIL.to_string());
-                    if g.state != AutoSyncState::Syncing
-                        && g.state != AutoSyncState::NeedsDecision
+                    if g.state != AutoSyncState::Syncing && g.state != AutoSyncState::NeedsDecision
                     {
                         g.state = AutoSyncState::Dirty;
                     }
@@ -1241,7 +1244,9 @@ impl AutoSyncHandle {
                         {
                             g.state = AutoSyncState::Dirty;
                         }
-                        log::debug!("[autosync] background pull skipped: dirty worktree; scheduling sync cycle");
+                        log::debug!(
+                            "[autosync] background pull skipped: dirty worktree; scheduling sync cycle"
+                        );
                     }
                 }
                 Ok(Ok(Err(ref e))) => log::warn!("[autosync] background pull failed: {e}"),

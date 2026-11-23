@@ -11174,7 +11174,9 @@ mod tests {
         let repo = engine.init_repo().unwrap();
 
         std::fs::write(dir.path().join(".gitignore"), b"meta/device-privkey.json\n").unwrap();
-        engine.commit_all_unfiltered(&repo, "old gitignore").unwrap();
+        engine
+            .commit_all_unfiltered(&repo, "old gitignore")
+            .unwrap();
         assert!(!engine.status(&repo).unwrap().is_dirty());
 
         let reopened = engine.open_repo().unwrap();
@@ -11193,7 +11195,9 @@ mod tests {
         let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
         let repo_a = engine_a.init_repo().unwrap();
         std::fs::write(dir.path().join(".gitignore"), b"meta/device-privkey.json\n").unwrap();
-        engine_a.commit_all_unfiltered(&repo_a, "old gitignore").unwrap();
+        engine_a
+            .commit_all_unfiltered(&repo_a, "old gitignore")
+            .unwrap();
 
         let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
 
@@ -11256,9 +11260,12 @@ mod tests {
             .unwrap();
         }
         std::fs::write(dir.path().join(".gitignore"), b"meta/device-privkey.json\n").unwrap();
-        engine_a.commit_all_unfiltered(&repo_a, "old gitignore + roster").unwrap();
+        engine_a
+            .commit_all_unfiltered(&repo_a, "old gitignore + roster")
+            .unwrap();
 
-        let (_remote, clone_dir, _clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
         enroll_device(clone_dir.path(), &id_b, &key_b);
         let editor_engine = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
 
