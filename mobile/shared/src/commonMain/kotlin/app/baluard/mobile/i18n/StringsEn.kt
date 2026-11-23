@@ -212,7 +212,7 @@ internal val EN: Map<String, String> = mapOf(
     "detail.openExternalConfirm" to "Open",
     "detail.openInBrowser" to "Open in browser",
     "detail.sectionCredentials" to "Credentials & details",
-    "detail.passwordHistory" to "Password history",
+    "detail.passwordHistory" to "Password history ({0})",
     "detail.passwordHistoryUnknown" to "Unknown date",
     "detail.repromptTitle" to "Confirm password",
     "detail.repromptLocked" to "This entry is protected. Confirm your master password to show hidden values.",

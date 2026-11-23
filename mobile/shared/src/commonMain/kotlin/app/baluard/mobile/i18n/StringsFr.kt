@@ -203,7 +203,7 @@ internal val FR: Map<String, String> = mapOf(
     "detail.openExternalConfirm" to "Ouvrir",
     "detail.openInBrowser" to "Ouvrir dans le navigateur",
     "detail.sectionCredentials" to "Identifiants et détails",
-    "detail.passwordHistory" to "Historique des mots de passe",
+    "detail.passwordHistory" to "Historique des mots de passe ({0})",
     "detail.passwordHistoryUnknown" to "Date inconnue",
     "detail.repromptTitle" to "Confirmer le mot de passe",
     "detail.repromptLocked" to "Cet élément est protégé. Confirmez votre mot de passe maître pour afficher les valeurs masquées.",

@@ -216,7 +216,7 @@ internal val ES: Map<String, String> = mapOf(
     "detail.openExternalConfirm" to "Abrir",
     "detail.openInBrowser" to "Abrir en el navegador",
     "detail.sectionCredentials" to "Credenciales y datos",
-    "detail.passwordHistory" to "Historial de contraseñas",
+    "detail.passwordHistory" to "Historial de contraseñas ({0})",
     "detail.passwordHistoryUnknown" to "Fecha desconocida",
     "detail.repromptTitle" to "Confirmar contraseña",
     "detail.repromptLocked" to "Esta entrada está protegida. Confirma tu contraseña maestra para mostrar los valores ocultos.",

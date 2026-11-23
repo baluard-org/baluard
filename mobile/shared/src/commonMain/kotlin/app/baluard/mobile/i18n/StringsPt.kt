@@ -182,7 +182,7 @@ internal val PT: Map<String, String> = mapOf(
     "detail.openExternalConfirm" to "Abrir link",
     "detail.openInBrowser" to "Abrir no navegador",
     "detail.sectionCredentials" to "Credenciais",
-    "detail.passwordHistory" to "Histórico de senhas",
+    "detail.passwordHistory" to "Histórico de senhas ({0})",
     "detail.passwordHistoryUnknown" to "Data desconhecida",
     "detail.repromptTitle" to "Confirmar senha",
     "detail.repromptLocked" to "Esta entrada é protegida. Confirme sua senha mestra para mostrar os valores ocultos.",

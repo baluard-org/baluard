@@ -105,6 +105,7 @@ fun CipherDetailScreen(
     // M7: a non-browser URI waiting for the user's confirmation to launch.
     var pendingExternalUri by remember { mutableStateOf<String?>(null) }
     var showNotesView by remember { mutableStateOf(false) }
+    var historyExpanded by remember(cipherId) { mutableStateOf(false) }
 
     // Notes links ride the same M7 gate as vault URIs: browser schemes
     // open directly, others ask first, refused schemes do nothing.
@@ -339,30 +340,6 @@ fun CipherDetailScreen(
                     }
                 }
             }
-            // Password History (desktop parity: past passwords, masked)
-            if (s.passwordHistory.isNotEmpty()) {
-                SectionCard(title = t("detail.passwordHistory")) {
-                    if (s.reprompt && Clock.currentTimeMillis() >= repromptGrantedUntil) {
-                        RepromptLockStrip(onClick = { showReprompt = true })
-                    } else {
-                        s.passwordHistory.forEachIndexed { index, h ->
-                            CopyableFieldRow(
-                                label = h.usedOn ?: t("detail.passwordHistoryUnknown"),
-                                value = h.password,
-                                mono = true,
-                                sensitive = true,
-                            )
-                            if (index < s.passwordHistory.size - 1) {
-                                BaluardDivider(
-                                    modifier = Modifier.padding(vertical = 4.dp),
-                                    alpha = 0.5f,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
             // Custom Fields Section (desktop parity)
             if (s.customFields.isNotEmpty()) {
                 SectionCard(title = t("detail.customFields")) {
@@ -618,6 +595,61 @@ fun CipherDetailScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                             )
+                        }
+                    }
+                }
+            }
+
+            // Password History: last section on the screen, collapsed like
+            // desktop until the header is tapped.
+            if (s.passwordHistory.isNotEmpty()) {
+                val historyTitle =
+                    (if (historyExpanded) "▾ " else "▸ ") +
+                        t("detail.passwordHistory", s.passwordHistory.size)
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (s.reprompt && Clock.currentTimeMillis() >= repromptGrantedUntil) {
+                                    showReprompt = true
+                                } else {
+                                    historyExpanded = !historyExpanded
+                                }
+                            }
+                            .padding(start = 4.dp, top = 2.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = historyTitle.uppercase(),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (historyExpanded) {
+                        BaluardCard {
+                            if (s.reprompt && Clock.currentTimeMillis() >= repromptGrantedUntil) {
+                                RepromptLockStrip(onClick = { showReprompt = true })
+                            } else {
+                                s.passwordHistory.forEachIndexed { index, h ->
+                                    CopyableFieldRow(
+                                        label = h.usedOn ?: t("detail.passwordHistoryUnknown"),
+                                        value = h.password,
+                                        mono = true,
+                                        sensitive = true,
+                                    )
+                                    if (index < s.passwordHistory.size - 1) {
+                                        BaluardDivider(
+                                            modifier = Modifier.padding(vertical = 4.dp),
+                                            alpha = 0.5f,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
