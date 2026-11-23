@@ -97,7 +97,7 @@ function VaultProvider(props) {
     setArchivedCiphers([]);
   }
 
-  async function refreshCiphers(t) {
+  async function refreshCiphers(t, { silent = false } = {}) {
     try {
       const prefetch = consumeVaultPrefetch();
       // A failed prefetch resolves null: fall through to a direct fetch
@@ -113,7 +113,7 @@ function VaultProvider(props) {
       setArchivedCiphers(data.archived || []);
       // Entries this build cannot decrypt stay hidden from the list; the
       // count says they exist and an app update is needed.
-      if (Number(data.unreadable) > 0) {
+      if (!silent && Number(data.unreadable) > 0) {
         toastWarning(t("vault.unreadableEntries", { count: Number(data.unreadable) }));
       }
       await refreshOtherVaults();
@@ -121,7 +121,9 @@ function VaultProvider(props) {
       // Profile loads alongside cipher data
       refreshProfile();
     } catch (e) {
-      toastError(sanitizeError(e, t));
+      if (!silent) {
+        toastError(sanitizeError(e, t));
+      }
     }
   }
 
@@ -184,14 +186,19 @@ function VaultProvider(props) {
   function onFocusOrVisible() {
     refreshOtherVaults();
   }
+  function onVaultSynced() {
+    void refreshCiphers(null, { silent: true });
+  }
   onSettled(() => {
     otherVaultHeartbeat = setInterval(refreshOtherVaults, 30_000);
     window.addEventListener("focus", onFocusOrVisible);
     document.addEventListener("visibilitychange", onFocusOrVisible);
+    window.addEventListener("baluard:vault-synced", onVaultSynced);
     return () => {
       clearInterval(otherVaultHeartbeat);
       window.removeEventListener("focus", onFocusOrVisible);
       document.removeEventListener("visibilitychange", onFocusOrVisible);
+      window.removeEventListener("baluard:vault-synced", onVaultSynced);
     };
   });
 

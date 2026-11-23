@@ -43,6 +43,7 @@ export function AutoSyncProvider(props) {
   let poll;
   let lastSeenConflicts = 0;
   let lastSeenActive = null;
+  let lastSeenPullSeq = null;
 
   // M3 fix: the daemon's conflicts_resolved counter is per-VaultState (resets
   // to 0 on each vault). This context lives at App root and survives vault
@@ -62,6 +63,7 @@ export function AutoSyncProvider(props) {
     (slug) => {
       if (lastSeenActive !== null && slug !== lastSeenActive) {
         lastSeenConflicts = 0;
+        lastSeenPullSeq = null;
         setConflictsResolved(0);
         setBannerDismissed(true);
         conflicts.clear();
@@ -86,10 +88,16 @@ export function AutoSyncProvider(props) {
       // state and fire a false resolved-conflict banner.
       if (switcher.activeSlug() !== targetSlug) return;
       const s = JSON.parse(raw);
+      const nextLastSync = s.last_sync ?? null;
+      const nextPullSeq = s.pull_seq ?? 0;
       setActive(s.active);
       setState(s.state);
-      setLastSync(s.last_sync ?? null);
+      setLastSync(nextLastSync);
       setPending(s.pending ?? 0);
+      if (lastSeenPullSeq !== null && nextPullSeq > lastSeenPullSeq) {
+        window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
+      }
+      lastSeenPullSeq = nextPullSeq;
 
       // A new conflict was auto-resolved since last poll → fire the banner.
       if ((s.conflicts_resolved ?? 0) > lastSeenConflicts) {

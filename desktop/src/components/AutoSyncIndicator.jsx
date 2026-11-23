@@ -148,6 +148,7 @@ export default function AutoSyncIndicator() {
     syncPhase("start");
     try {
       await daemon("sync.pull");
+      window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
       await daemon("sync.push");
       syncPhase("success");
     } catch {

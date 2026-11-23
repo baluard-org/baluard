@@ -305,10 +305,6 @@ impl SyncEngine {
     pub fn open_repo(&self) -> Result<Repository, BaluardError> {
         let repo = Repository::open(&self.vault_path)
             .map_err(|e| BaluardError::Sync(SyncError::Git(format!("open: {e}"))))?;
-        // Refresh .gitignore if it predates the sync-head/sync-state/.baluard
-        // entries. status() filters these paths regardless, so this is cosmetic
-        // (keeps `git status` on the CLI honest too) rather than load-bearing.
-        self.refresh_gitignore();
         // Heal pre-pin vaults: identity-pins every stored remote URL so
         // ambient insteadOf rewrites cannot swap the transport later.
         if let Ok(remotes) = repo.remotes() {
@@ -349,6 +345,25 @@ impl SyncEngine {
             eprintln!("warning: could not untrack meta/index.enc: {e}");
         }
         Ok(repo)
+    }
+
+    fn can_commit_gitignore(&self, repo: &Repository) -> bool {
+        let Some(head_commit) = repo.head().ok().and_then(|h| h.peel_to_commit().ok()) else {
+            return true;
+        };
+        let mut cache = std::collections::HashMap::new();
+        match Self::members_tree_lookup(repo, &head_commit, &mut cache) {
+            Ok(None) => true,
+            Ok(Some(snapshot)) => {
+                let role = snapshot
+                    .roles
+                    .get(&self.device_id)
+                    .copied()
+                    .unwrap_or(crate::sync::policy::CommitRole::PendingJoiner);
+                role.rank() >= crate::sync::policy::CommitRole::Admin.rank()
+            }
+            Err(_) => false,
+        }
     }
 
     /// Rewrite .gitignore from the current const if any new entry is missing.
@@ -443,6 +458,12 @@ impl SyncEngine {
         self.bump_device_epoch();
 
         if admit_all {
+            // Refresh .gitignore only when this commit can stage it (Admin or
+            // personal vault); running it on open_repo() dirtied read/pull-only
+            // worktrees and blocked pulls on older vaults.
+            if self.can_commit_gitignore(repo) {
+                self.refresh_gitignore();
+            }
             // P5 explicit staged path sets: stage only the changed paths
             // this device's policy admits; anything else stays dirty in
             // the worktree instead of poisoning the commit into an
@@ -4563,7 +4584,20 @@ impl SyncEngine {
                 {
                     continue;
                 }
-                if superseded_draft(p) {
+                let index_modified_mask = Status::INDEX_NEW
+                    | Status::INDEX_MODIFIED
+                    | Status::INDEX_DELETED
+                    | Status::INDEX_RENAMED
+                    | Status::INDEX_TYPECHANGE;
+                let unstaged_only = !entry.status().intersects(index_modified_mask);
+                let is_generated_gitignore = p == ".gitignore"
+                    && unstaged_only
+                    && repo
+                        .workdir()
+                        .and_then(|wd| std::fs::read_to_string(wd.join(".gitignore")).ok())
+                        .as_deref()
+                        == Some(GITIGNORE_CONTENT);
+                if superseded_draft(p) || is_generated_gitignore {
                     drafts.push(p.to_string());
                 } else {
                     protected.push(p.to_string());
@@ -11132,6 +11166,111 @@ mod tests {
             "expected DirtyWorktree, got {err:?}"
         );
         assert_eq!(std::fs::read(&roster_path).unwrap(), edited.as_bytes());
+    }
+
+    #[test]
+    fn open_repo_does_not_dirty_older_gitignore() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::write(dir.path().join(".gitignore"), b"meta/device-privkey.json\n").unwrap();
+        engine.commit_all_unfiltered(&repo, "old gitignore").unwrap();
+        assert!(!engine.status(&repo).unwrap().is_dirty());
+
+        let reopened = engine.open_repo().unwrap();
+        assert!(
+            !engine.status(&reopened).unwrap().is_dirty(),
+            "open_repo must not rewrite tracked .gitignore and dirty the worktree"
+        );
+    }
+
+    #[test]
+    fn pull_self_heals_generated_gitignore_without_dirty_worktree() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        std::fs::write(dir.path().join(".gitignore"), b"meta/device-privkey.json\n").unwrap();
+        engine_a.commit_all_unfiltered(&repo_a, "old gitignore").unwrap();
+
+        let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+
+        std::fs::write(dir.path().join(".gitignore"), GITIGNORE_CONTENT).unwrap();
+        engine_a.commit_all(&repo_a, "refresh gitignore").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // Simulate 0.8.4 open_repo() having rewritten .gitignore on the clone.
+        std::fs::write(clone_dir.path().join(".gitignore"), GITIGNORE_CONTENT).unwrap();
+        assert!(clone_engine.status(&cloned).unwrap().is_dirty());
+
+        let res = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(matches!(res, PullResult::FastForward));
+        assert!(!clone_engine.status(&cloned).unwrap().is_dirty());
+    }
+
+    #[test]
+    fn non_admin_commit_does_not_refresh_gitignore() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+
+        let id_b = uuid::Uuid::new_v4();
+        let key_b = crate::crypto::signature::generate_ed25519_keypair().0;
+        let member_a = uuid::Uuid::new_v4();
+        let member_b = uuid::Uuid::new_v4();
+        let mf = |m: uuid::Uuid, role: &str| {
+            serde_json::json!({
+                "id": m.to_string(),
+                "display_name": role,
+                "role": role,
+                "trust": "self",
+            })
+        };
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("meta/members/{member_a}.json")),
+            mf(member_a, "owner").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join(format!("meta/members/{member_b}.json")),
+            mf(member_b, "editor").to_string(),
+        )
+        .unwrap();
+        for (m, d) in [(member_a, id_a), (member_b, id_b)] {
+            let p = dir.path().join(format!("meta/members/{m}/devices"));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(
+                p.join(format!("{d}.json")),
+                serde_json::json!({
+                    "device_id": d.to_string(),
+                    "member_id": m.to_string(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join(".gitignore"), b"meta/device-privkey.json\n").unwrap();
+        engine_a.commit_all_unfiltered(&repo_a, "old gitignore + roster").unwrap();
+
+        let (_remote, clone_dir, _clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+        enroll_device(clone_dir.path(), &id_b, &key_b);
+        let editor_engine = SyncEngine::new(clone_dir.path(), &id_b.to_string(), None);
+
+        std::fs::create_dir_all(clone_dir.path().join("entries")).unwrap();
+        std::fs::write(clone_dir.path().join("entries/item.enc"), b"cipher").unwrap();
+        editor_engine.commit_all(&cloned, "editor item").unwrap();
+
+        assert_eq!(
+            std::fs::read(clone_dir.path().join(".gitignore")).unwrap(),
+            b"meta/device-privkey.json\n"
+        );
+        assert!(!editor_engine.status(&cloned).unwrap().is_dirty());
     }
 
     /// An empty pulled diff must skip the checkout entirely: git2 treats

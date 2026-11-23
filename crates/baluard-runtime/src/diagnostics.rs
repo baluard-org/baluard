@@ -968,6 +968,7 @@ mod tests {
                 pending: 0,
                 conflicts_resolved: 1,
                 access_denied_streak: 0,
+                pull_seq: 0,
             },
             has_remote: true,
             remote_host: Some("github.com".into()),

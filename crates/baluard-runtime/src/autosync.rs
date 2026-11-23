@@ -160,6 +160,9 @@ pub struct AutoSyncStatus {
     /// Consecutive pulls refused by the remote (auth-class failures).
     /// Reset to zero by any success. Feeds the removal notice.
     pub access_denied_streak: u32,
+    /// Monotonic counter bumped whenever a background pull applies remote changes.
+    #[serde(default)]
+    pub pull_seq: u64,
 }
 
 /// Internal mutable state behind the handle lock.
@@ -175,6 +178,7 @@ struct Inner {
     last_sync: Option<u64>,
     pending: u32,
     conflicts_resolved: u32,
+    pull_seq: u64,
     /// Consecutive access-denied pulls (see [`PullReport::AccessDenied`]).
     access_denied_streak: u32,
     /// Last failed cycle: scrubbed reason + unix seconds. Cleared by any
@@ -292,6 +296,7 @@ impl AutoSyncHandle {
                 last_sync: None,
                 pending: 0,
                 conflicts_resolved: 0,
+                pull_seq: 0,
                 access_denied_streak: 0,
                 last_error: None,
                 stamp_persist_ms: None,
@@ -322,6 +327,7 @@ impl AutoSyncHandle {
             pending: g.pending,
             conflicts_resolved: g.conflicts_resolved,
             access_denied_streak: g.access_denied_streak,
+            pull_seq: g.pull_seq,
         }
     }
 
@@ -738,9 +744,7 @@ impl AutoSyncHandle {
             SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
                 let _cycle_guard = lock_guard;
-                let out = run_pull_only(&vault_path, &device_id, devkey_seal.as_deref(), enroll_vk);
-                // The closure owns the seal; Zeroizing wipes it on drop.
-                out
+                run_pull_only_with_pending(&vault_path, &device_id, devkey_seal.as_deref(), enroll_vk)
             }),
         )
         .await;
@@ -753,7 +757,7 @@ impl AutoSyncHandle {
         // alone once left the mobile toast guessing (2026-11-13 incident).
         let mut detail: Option<String> = None;
         match outcome {
-            Ok(Ok(Ok(r))) => {
+            Ok(Ok(Ok((r, needs_push)))) => {
                 report = r;
                 if matches!(
                     r,
@@ -763,17 +767,18 @@ impl AutoSyncHandle {
                     g.access_denied_streak = 0;
                     g.last_sync = Some(now_secs());
                     g.last_error = None;
-                    // Don't clobber Dirty/Syncing; only settle to Idle from
-                    // Offline — and never report Idle while mutations sit
-                    // unpushed (their push went Offline earlier). KeptLocal
-                    // always goes Dirty: its merge commit awaits a push and
-                    // pending counts mutation nudges, not resolutions.
-                    if r == PullReport::KeptLocal && g.state != AutoSyncState::Syncing {
-                        g.state = AutoSyncState::Dirty;
-                    } else if g.state == AutoSyncState::Offline {
-                        if g.pending > 0 {
+                    if matches!(r, PullReport::Pulled | PullReport::KeptLocal) {
+                        g.pull_seq = g.pull_seq.saturating_add(1);
+                    }
+                    // Don't clobber Syncing/NeedsDecision; go Dirty whenever
+                    // local commits sit unpushed (enrollment/offline) or KeptLocal
+                    // awaits push.
+                    if g.state != AutoSyncState::Syncing
+                        && g.state != AutoSyncState::NeedsDecision
+                    {
+                        if g.pending > 0 || needs_push {
                             g.state = AutoSyncState::Dirty;
-                        } else {
+                        } else if g.state == AutoSyncState::Offline {
                             g.state = AutoSyncState::Idle;
                         }
                     }
@@ -788,6 +793,11 @@ impl AutoSyncHandle {
                     Self::record_failure(&mut g, "remote refused access", detail.as_deref());
                 } else if r == PullReport::Skipped {
                     detail = Some(SKIPPED_DETAIL.to_string());
+                    if g.state != AutoSyncState::Syncing
+                        && g.state != AutoSyncState::NeedsDecision
+                    {
+                        g.state = AutoSyncState::Dirty;
+                    }
                     log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
                 }
             }
@@ -1188,9 +1198,7 @@ impl AutoSyncHandle {
                 SYNC_OP_TIMEOUT,
                 tokio::task::spawn_blocking(move || {
                     let _cycle_guard = lock_guard;
-                    let out = run_pull_only(&vault_path, &dn, devkey_seal.as_deref(), enroll_vk);
-                    // The closure owns the seal; Zeroizing wipes it on drop.
-                    out
+                    run_pull_only_with_pending(&vault_path, &dn, devkey_seal.as_deref(), enroll_vk)
                 }),
             )
             .await;
@@ -1199,7 +1207,7 @@ impl AutoSyncHandle {
                 return;
             }
             match outcome {
-                Ok(Ok(Ok(r))) => {
+                Ok(Ok(Ok((r, needs_push)))) => {
                     if matches!(
                         r,
                         PullReport::Pulled | PullReport::UpToDate | PullReport::KeptLocal
@@ -1207,16 +1215,20 @@ impl AutoSyncHandle {
                         fresh = true;
                         g.access_denied_streak = 0;
                         g.last_sync = Some(now_secs());
-                        // A mutation may be sitting unpushed (its push went
-                        // Offline; the local commit already landed), and a
-                        // kept-local resolution leaves a merge commit that
-                        // pending never counted. Going Idle would report
-                        // "synced" while ahead — go Dirty so the loop's next
-                        // slice runs a push cycle.
-                        if g.pending > 0 || r == PullReport::KeptLocal {
-                            g.state = AutoSyncState::Dirty;
-                        } else {
-                            g.state = AutoSyncState::Idle;
+                        if matches!(r, PullReport::Pulled | PullReport::KeptLocal) {
+                            g.pull_seq = g.pull_seq.saturating_add(1);
+                        }
+                        // Unpushed commits (enrollment, offline commit, KeptLocal)
+                        // must transition to Dirty so the next slice runs a full
+                        // commit -> pull -> push cycle.
+                        if g.state != AutoSyncState::Syncing
+                            && g.state != AutoSyncState::NeedsDecision
+                        {
+                            if g.pending > 0 || needs_push {
+                                g.state = AutoSyncState::Dirty;
+                            } else {
+                                g.state = AutoSyncState::Idle;
+                            }
                         }
                     } else if r == PullReport::Offline {
                         g.state = AutoSyncState::Offline;
@@ -1224,7 +1236,12 @@ impl AutoSyncHandle {
                         g.access_denied_streak = g.access_denied_streak.saturating_add(1);
                         g.state = AutoSyncState::Offline;
                     } else if r == PullReport::Skipped {
-                        log::debug!("[autosync] background pull skipped: dirty or ineligible");
+                        if g.state != AutoSyncState::Syncing
+                            && g.state != AutoSyncState::NeedsDecision
+                        {
+                            g.state = AutoSyncState::Dirty;
+                        }
+                        log::debug!("[autosync] background pull skipped: dirty worktree; scheduling sync cycle");
                     }
                 }
                 Ok(Ok(Err(ref e))) => log::warn!("[autosync] background pull failed: {e}"),
@@ -1356,6 +1373,42 @@ pub(crate) fn run_pull_only(
     devkey_seal: Option<&[u8; 32]>,
     enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<PullReport, String> {
+    run_pull_only_with_pending(vault_path, device_id, devkey_seal, enroll_vk).map(|(r, _)| r)
+}
+
+#[cfg(feature = "git-sync")]
+fn repo_needs_push(vault_path: &Path, _device_id: &str) -> bool {
+    use baluard_core::sync::engine::SyncEngine;
+
+    let Ok(repo) = git2::Repository::open(vault_path) else {
+        return false;
+    };
+    let branch = SyncEngine::resolve_remote_branch(&repo, "origin");
+    if branch.is_empty() {
+        return false;
+    }
+    let Some(local_oid) = repo.head().ok().and_then(|h| h.target()) else {
+        return false;
+    };
+    let Some(remote_oid) = repo
+        .find_reference(&format!("refs/remotes/origin/{branch}"))
+        .ok()
+        .and_then(|r| r.target())
+    else {
+        return false;
+    };
+    repo.graph_ahead_behind(local_oid, remote_oid)
+        .map(|(ahead, _)| ahead > 0)
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "git-sync")]
+fn run_pull_only_with_pending(
+    vault_path: &Path,
+    device_id: &str,
+    devkey_seal: Option<&[u8; 32]>,
+    enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
+) -> Result<(PullReport, bool), String> {
     use baluard_core::sync::engine::{
         PullResult, SyncEngine, is_access_denied_error, is_network_error,
     };
@@ -1369,8 +1422,8 @@ pub(crate) fn run_pull_only(
         // Access-denied FIRST: a provider strike surfaces as an HTTP
         // status inside a Network-class error, so the network arm would
         // shadow it if it came first (review F1).
-        Err(ref e) if is_access_denied_error(e) => return Ok(PullReport::AccessDenied),
-        Err(ref e) if is_network_error(e) => return Ok(PullReport::Offline),
+        Err(ref e) if is_access_denied_error(e) => return Ok((PullReport::AccessDenied, false)),
+        Err(ref e) if is_network_error(e) => return Ok((PullReport::Offline, false)),
         Err(e) => return Err(format_sync_err(&e)),
     };
     match engine.pull(&repo, "origin") {
@@ -1388,7 +1441,7 @@ pub(crate) fn run_pull_only(
             // next cycle retries instead of pushing a corrupt tree.
             engine
                 .resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files)
-                .map(|_| PullReport::KeptLocal)
+                .map(|_| (PullReport::KeptLocal, true))
                 .map_err(|e| format!("conflict resolution failed: {e}"))
         }
         // P5b: the pull wrote cipher files through the engine, bypassing
@@ -1398,14 +1451,18 @@ pub(crate) fn run_pull_only(
         // force a full O(N) re-decrypt at the next list.
         Ok(PullResult::FastForward) | Ok(PullResult::Merged) => {
             SyncEngine::invalidate_local_index(vault_path);
-            Ok(PullReport::Pulled)
+            let needs_push = repo_needs_push(vault_path, device_id);
+            Ok((PullReport::Pulled, needs_push))
         }
-        Ok(PullResult::AlreadyUpToDate) => Ok(PullReport::UpToDate),
+        Ok(PullResult::AlreadyUpToDate) => {
+            let needs_push = repo_needs_push(vault_path, device_id);
+            Ok((PullReport::UpToDate, needs_push))
+        }
         // Access-denied before network: same shadowing rule as above.
-        Err(ref e) if is_access_denied_error(e) => Ok(PullReport::AccessDenied),
-        Err(ref e) if is_network_error(e) => Ok(PullReport::Offline),
-        // A dirty-worktree refusal is transient: the debounced commit
-        // clears it and the next tick retries. Not a sync failure.
+        Err(ref e) if is_access_denied_error(e) => Ok((PullReport::AccessDenied, false)),
+        Err(ref e) if is_network_error(e) => Ok((PullReport::Offline, false)),
+        // A dirty-worktree refusal is transient: transitioning to Dirty lets
+        // the coordinator sweep and push on the next sync cycle.
         Err(ref e)
             if matches!(
                 e,
@@ -1414,7 +1471,7 @@ pub(crate) fn run_pull_only(
                 )
             ) =>
         {
-            Ok(PullReport::Skipped)
+            Ok((PullReport::Skipped, true))
         }
         Err(e) => Err(format_sync_err(&e)),
     }
@@ -1428,6 +1485,16 @@ fn run_pull_only(
     _enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
 ) -> Result<PullReport, String> {
     Ok(PullReport::Pulled)
+}
+
+#[cfg(not(feature = "git-sync"))]
+fn run_pull_only_with_pending(
+    _vault_path: &Path,
+    _device_name: &str,
+    _devkey_seal: Option<&[u8; 32]>,
+    _enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
+) -> Result<(PullReport, bool), String> {
+    Ok((PullReport::Pulled, false))
 }
 
 fn now_secs() -> u64 {
@@ -1694,5 +1761,106 @@ mod tests {
         // No .baluard marker in the tempdir: the registry persist no-ops.
         h.record_success().await;
         assert!(h.last_sync_secs().await.is_some());
+    }
+
+    #[cfg(feature = "git-sync")]
+    fn make_sync_pair() -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        String,
+        baluard_core::sync::engine::SyncEngine,
+        git2::Repository,
+        baluard_core::sync::engine::SyncEngine,
+        git2::Repository,
+    ) {
+        use baluard_core::sync::engine::SyncEngine;
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().join("vault.git");
+        let bare = git2::Repository::init_opts(
+            &remote_path,
+            git2::RepositoryInitOptions::new()
+                .bare(true)
+                .initial_head("main"),
+        )
+        .unwrap();
+        let remote_url = format!("file://{}", remote_path.display());
+
+        let origin_dir = tempfile::tempdir().unwrap();
+        let id_a = uuid::Uuid::new_v4().to_string();
+        let engine_a = SyncEngine::new(origin_dir.path(), &id_a, None);
+        let repo_a = engine_a.init_repo().unwrap();
+        std::fs::write(origin_dir.path().join("a.enc"), b"v1").unwrap();
+        engine_a.commit_all(&repo_a, "init").unwrap();
+        repo_a.remote("origin", &remote_url).unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        let branch = SyncEngine::resolve_default_branch(&repo_a);
+        bare.reference_symbolic(
+            "HEAD",
+            &format!("refs/heads/{branch}"),
+            true,
+            "set default branch",
+        )
+        .unwrap();
+
+        let clone_dir = tempfile::tempdir().unwrap();
+        let id_b = uuid::Uuid::new_v4().to_string();
+        let cloned = git2::Repository::clone(&remote_url, clone_dir.path()).unwrap();
+        std::fs::create_dir_all(clone_dir.path().join("meta")).unwrap();
+        std::fs::write(clone_dir.path().join("meta/device-id"), &id_b).unwrap();
+        let engine_b = SyncEngine::new(clone_dir.path(), &id_b, None);
+
+        (
+            remote_dir, origin_dir, clone_dir, id_b, engine_a, repo_a, engine_b, cloned,
+        )
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[tokio::test]
+    async fn pull_now_transitions_to_dirty_when_local_is_ahead() {
+        let (_remote_dir, _origin_dir, _clone_dir, id_b, _engine_a, _repo_a, engine_b, cloned) =
+            make_sync_pair();
+        let clone_path = cloned.workdir().unwrap().to_path_buf();
+
+        // Simulate commit_enrollment_bundle: local commit ahead 1 of origin.
+        std::fs::write(clone_path.join("b.enc"), b"local").unwrap();
+        engine_b.commit_all(&cloned, "local commit").unwrap();
+
+        let h = AutoSyncHandle::new(&clone_path);
+        h.activate(id_b.clone(), None, None).await;
+        let report = h.pull_now(id_b).await;
+        assert_eq!(report, PullReport::UpToDate);
+        assert_eq!(
+            h.status().await.state,
+            AutoSyncState::Dirty,
+            "ahead>0 after pull_now must mark Dirty so background_loop pushes"
+        );
+        h.deactivate().await;
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[tokio::test]
+    async fn pull_now_transitions_to_dirty_when_skipped_for_dirty_worktree() {
+        let (_remote_dir, origin_dir, _clone_dir, id_b, engine_a, repo_a, _engine_b, cloned) =
+            make_sync_pair();
+        let clone_path = cloned.workdir().unwrap().to_path_buf();
+
+        std::fs::write(origin_dir.path().join("a.enc"), b"v2-remote").unwrap();
+        engine_a.commit_all(&repo_a, "remote update").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        std::fs::write(clone_path.join("a.enc"), b"v2-local").unwrap();
+
+        let h = AutoSyncHandle::new(&clone_path);
+        h.activate(id_b.clone(), None, None).await;
+        let report = h.pull_now(id_b).await;
+        assert_eq!(report, PullReport::Skipped);
+        assert_eq!(
+            h.status().await.state,
+            AutoSyncState::Dirty,
+            "Skipped (DirtyWorktree) must mark Dirty so background_loop heals via sync cycle"
+        );
+        h.deactivate().await;
     }
 }

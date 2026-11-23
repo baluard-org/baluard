@@ -421,6 +421,7 @@ const [customError, setCustomError] = createSignal(null);
     setError(null);
     try {
       await daemon("sync.pull");
+      window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
       await daemon("sync.push");
       toastSuccess(t("sync.statusActive"));
       await loadState();
@@ -632,6 +633,7 @@ const [customError, setCustomError] = createSignal(null);
     setError(null);
     try {
       const pullRes = await daemon("sync.pull");
+      window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
       let pullMsg = null;
       try {
         pullMsg = JSON.parse(pullRes);

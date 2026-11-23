@@ -143,4 +143,30 @@ describe("VaultContext single-entry mutations", () => {
     expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full");
     unmount();
   });
+
+  it("refreshes ciphers when baluard:vault-synced is dispatched", async () => {
+    const { ctx, unmount } = mountVault();
+    vi.mocked(daemon).mockImplementation(async (action) => {
+      if (action === "vault.list_full") {
+        return JSON.stringify({
+          ciphers: [{ id: "c1", name: "HidroShopCL", cipher_type: "login", tags: [] }],
+          folders: [],
+          tags: [],
+          trash: [],
+          archived: [],
+        });
+      }
+      if (action === "collections.list") return JSON.stringify({ collections: [] });
+      if (action === "vault.is_admin_device") return JSON.stringify({ is_admin: true });
+      if (action === "vaults.list_full_all") return JSON.stringify({ vaults: [] });
+      return "{}";
+    });
+
+    window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
+    await vi.waitFor(() => {
+      expect(vi.mocked(daemon)).toHaveBeenCalledWith("vault.list_full", expect.anything());
+      expect(ctx.ciphers().map((c) => c.name)).toEqual(["HidroShopCL"]);
+    });
+    unmount();
+  });
 });

@@ -21,6 +21,7 @@ export default function SyncButton() {
     window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "start" }));
     try {
       await daemon("sync.pull");
+      window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
       await daemon("sync.push");
       toastSuccess(t("sync.statusActive"));
       window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "success" }));
