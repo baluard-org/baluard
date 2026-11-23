@@ -91,6 +91,8 @@ export default function CipherDetail(props) {
       setTimeout(() => {
         setRepromptOk((v) => (v === until ? 0 : v));
         setRevealPass(false);
+        setShowHistory(false);
+        setRevealedHistory(null);
       }, 30000);
       if (typeof runGrant === "function") runGrant();
     });
