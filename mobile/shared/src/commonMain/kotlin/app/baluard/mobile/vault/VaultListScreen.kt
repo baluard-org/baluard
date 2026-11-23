@@ -63,9 +63,16 @@ import androidx.compose.ui.platform.testTag
 /**
  * Generic filtered entry list behind the home hub: renders the slice for
  * [kind] (TOTP, favorites, type, folder, tag, archive, trash) with search,
- * 25-item display chunks that extend as the user scrolls, and row actions
- * for the hidden lists (unarchive / restore).
+ * desktop-parity display windowing (500 first, +100 per scroll page), and
+ * row actions for the hidden lists (unarchive / restore).
  */
+// Display window parity with desktop (VaultView.jsx): the metadata set is
+// fully in memory, so pagination is a rendering courtesy — 500 rows first,
+// +100 per scroll page past 85% depth. The window only grows (no clamp at
+// exhaustion) so rows added by a later sync stay visible at the bottom.
+private const val LIST_INITIAL_COUNT = 500
+private const val LIST_PAGE_SIZE = 100
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EntryListScreen(
@@ -90,9 +97,10 @@ fun EntryListScreen(
     var confirmEmptyTrash by remember { mutableStateOf(false) }
     var restoreTarget by remember { mutableStateOf<MobileCipherMeta?>(null) }
 
-    // Display chunk: the metadata set is fully in memory; pagination is a
-    // rendering courtesy (25 first, +25 as the user approaches the end).
-    var loaded by remember(kind) { mutableStateOf(25) }
+    // Display window: starts at LIST_INITIAL_COUNT, grows by LIST_PAGE_SIZE
+    // while scrolling (see the constants above), and resets when the filter
+    // reshapes the list, otherwise a stale window strands the viewport.
+    var loaded by remember(kind) { mutableStateOf(LIST_INITIAL_COUNT) }
 
     LaunchedEffect(vault, kind, revision) {
         when (kind) {
@@ -124,12 +132,22 @@ fun EntryListScreen(
     }
     val shown = visible.take(loaded)
 
-    // Extend the chunk when the user scrolls near the rendered end.
-    LaunchedEffect(listState, visible.size) {
+    // Extend the window when the scroll passes 85% of the rendered depth
+    // (desktop parity: VaultView.jsx onListScroll).
+    LaunchedEffect(listState, kind, visible.size) {
         snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .collect { last ->
-                if (visible.size > loaded && last >= loaded - 3) loaded += 25
+                if (visible.size > loaded && last >= (loaded * 0.85f).toInt()) {
+                    loaded += LIST_PAGE_SIZE
+                }
             }
+    }
+
+    // Search reshapes the list: drop back to the first window and scroll,
+    // matching the desktop reset on searchQuery changes.
+    LaunchedEffect(query) {
+        loaded = LIST_INITIAL_COUNT
+        listState.scrollToItem(0)
     }
 
     val title = when (kind) {
@@ -279,7 +297,7 @@ fun EntryListScreen(
                         },
                     )
                 }
-                if (visible.size > 25) {
+                if (visible.size > LIST_INITIAL_COUNT) {
                     item(key = "showing") {
                         Text(
                             text = t("list.showing", shown.size, visible.size),
