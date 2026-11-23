@@ -11,6 +11,11 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.5 - 2026-11-23
+
+- Desktop and Android: colors across the app now meet the WCAG 2.2 AA contrast standard, so text, links, buttons, and status colors stay readable in light and dark mode.
+- Android: the whole app follows the desktop design language, with the same dark palette and a matching light theme.
+
 ## 0.8.4 - 2026-11-22
 
 - Desktop: vault diagnostics moved to About, Advanced, matching the mobile app, and Sync goes back to sync-only settings.
