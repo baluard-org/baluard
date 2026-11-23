@@ -68,8 +68,8 @@
         color: #f3f4f6;
         font-variant-numeric: tabular-nums;
       }
-      .otp-ring.expiring .otp-ring-sweep { stroke: #ef4444; }
-      .otp-ring.expiring .otp-ring-sec { color: #ef4444; }
+      .otp-ring.expiring .otp-ring-sweep { stroke: #f87171; }
+      .otp-ring.expiring .otp-ring-sec { color: #f87171; }
       .status {
         position: fixed;
         display: none;

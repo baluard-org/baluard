@@ -15,26 +15,35 @@
           --color-accent: #cfc6f9;
           --color-danger: #ef4444;
           --color-success: #10b981;
+          /* Strong variants: text/icons on tinted surfaces (WCAG 1.4.3);
+             dark aliases the base tones, matching desktop app.css. */
+          --color-primary-strong: #b3e55c;
+          --color-accent-strong: #cfc6f9;
+          --color-danger-strong: #f87171;
         }
 
         @media (prefers-color-scheme: light) {
           :root {
-            /* Light Mode - Clean White / Slate / Dark Teal Accent */
-            --color-bg: #f4f6f6;
-            --color-sidebar: #e9ecec;
-            --color-list: #ffffff;
-            --color-detail: #f8fafc;
-            --color-card: #ffffff;
-            --color-border: #d1dbdb;
-            --color-border-focus: #102427;
-            --color-text: #102427;
-            --color-muted: #495c5f;
-            --color-primary: #102427;
-            --color-primary-text: #ffffff;
-            --color-primary-hover: #1b383c;
-            --color-accent: #7c3aed;
-            --color-danger: #ef4444;
-            --color-success: #10b981;
+            /* Light Mode: Catppuccin Latte with a green accent family,
+               mirroring desktop app.css (WCAG AA-checked values). */
+            --color-bg: #eff1f5;
+            --color-sidebar: #e6e9ef;
+            --color-list: #dce0e8;
+            --color-detail: #ccd0da;
+            --color-card: #e6e9ef;
+            --color-border: #bcc0cc;
+            --color-border-focus: #256015;
+            --color-text: #4c4f69;
+            --color-muted: #55586a;
+            --color-primary: #40a02b;      /* fill token: buttons */
+            --color-primary-text: #102427; /* ink on green fills */
+            --color-primary-hover: #55b83b;
+            --color-accent: #66bf4f;       /* fill token */
+            --color-danger: #b70f2a;
+            --color-success: #40a02b;
+            --color-primary-strong: #256015;
+            --color-accent-strong: #256015;
+            --color-danger-strong: #a90e26;
           }
         }
 
@@ -487,11 +496,11 @@
         /* View-in-app opens the desktop app, not the clipboard: keep it
            visually distinct from the copy icon buttons (accent, not muted). */
         .btn-icon--view {
-          color: var(--color-accent);
+          color: var(--color-accent-strong);
           border-color: var(--color-accent);
 
           &:hover {
-            color: var(--color-accent);
+            color: var(--color-accent-strong);
             background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
             border-color: var(--color-accent);
           }
@@ -531,7 +540,7 @@
         }
 
         .toast-copied {          font-size: 11px;
-          color: var(--color-success);
+          color: var(--color-primary-strong);
           font-weight: 500;
           margin-top: 4px;
           display: flex;
@@ -552,7 +561,7 @@
           gap: 5px;
           font-size: 11px;
           font-weight: 600;
-          color: var(--color-accent);
+          color: var(--color-accent-strong);
           background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
           border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
           padding: 3px 9px;
@@ -606,7 +615,7 @@
 
           svg {
             flex-shrink: 0;
-            color: var(--color-primary);
+            color: var(--color-primary-strong);
           }
         }
 
@@ -668,7 +677,7 @@
             justify-content: center;
             background-color: color-mix(in srgb, var(--color-primary) 12%, var(--color-sidebar));
             border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
-            color: var(--color-primary);
+            color: var(--color-primary-strong);
           }
 
           .match-info {
@@ -699,7 +708,7 @@
           }
 
           &:hover:not([aria-disabled="true"]) .pk-option-arrow {
-            color: var(--color-primary);
+            color: var(--color-primary-strong);
             transform: translateX(2px);
           }
         }
@@ -718,7 +727,7 @@
             background-color: rgba(239, 68, 68, 0.06);
 
             .pk-status-icon {
-              color: var(--color-danger);
+              color: var(--color-danger-strong);
               background-color: rgba(239, 68, 68, 0.12);
               border-color: rgba(239, 68, 68, 0.3);
             }
@@ -734,7 +743,7 @@
             justify-content: center;
             background-color: var(--color-sidebar);
             border: 1px solid var(--color-border);
-            color: var(--color-accent);
+            color: var(--color-accent-strong);
           }
 
           .pk-status-body {

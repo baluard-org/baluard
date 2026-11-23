@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Dark mode splash window background (before Compose draws).
-     Brand dark: Deep Forest Teal (#091315). -->
+     Brand dark app background (#14292C), matching Theme.kt. -->
 <resources>
-    <color name="splash_bg">#091315</color>
+    <color name="splash_bg">#14292C</color>
     <!-- Autofill dataset popup rows: the row draws its own dark surface,
          so its text is always the light variant (contrast guaranteed). -->
-    <color name="autofill_row_bg">#1C1B1F</color>
-    <color name="autofill_text_primary">#E6E1E5</color>
-    <color name="autofill_text_secondary">#CAC4D0</color>
+    <color name="autofill_row_bg">#0F2022</color>
+    <color name="autofill_text_primary">#F3F4F6</color>
+    <color name="autofill_text_secondary">#A2B7BA</color>
 </resources>
