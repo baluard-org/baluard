@@ -702,7 +702,7 @@ internal val ES: Map<String, String> = mapOf(
     "home.allTags" to "Todas las etiquetas",
     "home.switchVault" to "Cambiar de bóveda",
     "home.vaults" to "Bóvedas",
-    "home.viewAll" to "Ver todas ({0})",
+    "home.viewAll" to "Ver todas",
     "home.fromVault" to "De {0}",
     "home.noneYet" to "Nada por aquí todavía.",
     "list.showing" to "Mostrando {0} de {1}",

@@ -678,7 +678,7 @@ internal val FR: Map<String, String> = mapOf(
     "home.detach" to "Détacher le coffre",
     "home.detachTitle" to "Retirer {0} ?",
     "home.detachDesc" to "Ce coffre ne sera plus affiché sur cet appareil, mais ses données restent conservées sur le disque.",
-    "home.viewAll" to "Tout afficher ({0})",
+    "home.viewAll" to "Tout afficher",
     "home.fromVault" to "Du coffre {0}",
     "home.noneYet" to "Aucun pour le moment",
     "list.showing" to "Affichage de {0} sur {1}",

@@ -520,25 +520,28 @@ fun VaultHomeScreen(
             Spacer(Modifier.height(14.dp))
 
             // ── Favorites (entries inline, capped) ──
-            HomeSectionHeader(t("home.favorites"), favorites.size)
+            HomeSectionHeader(t("home.favorites"), favorites.size, trailing = {
+                if (favorites.size > 3) {
+                    Text(
+                        text = t("home.viewAll"),
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onOpenKind(EntryListKind.Favorites) }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                }
+            })
             if (favorites.isEmpty()) {
                 HubEmptyCard(Icons.Default.Star)
             }
-            favorites.take(25).forEach { meta ->
+            favorites.take(3).forEach { meta ->
                 CipherRowCard(
                     meta = meta,
                     typeLabel = t(typeLabelKey(normalizeTypeTag(meta.cipherType))),
                     onClick = { onCipherClick(meta.id) },
                     faviconBytes = rememberCipherFavicon(listViewModel, vault, meta.id),
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .fillMaxWidth(),
-                )
-            }
-            if (favorites.size > 25) {
-                BaluardOutlinedButton(
-                    text = t("home.viewAll", favorites.size),
-                    onClick = { onOpenKind(EntryListKind.Favorites) },
                     modifier = Modifier
                         .padding(horizontal = 16.dp, vertical = 4.dp)
                         .fillMaxWidth(),
@@ -835,13 +838,21 @@ private fun TopBarActionIcon(
 }
 
 @Composable
-private fun HomeSectionHeader(label: String, count: Int) {
-    Text(
-        text = "${label.uppercase()} ($count)",
-        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 6.dp),
-    )
+private fun HomeSectionHeader(label: String, count: Int, trailing: (@Composable () -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp, top = 18.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "${label.uppercase()} ($count)",
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        trailing?.invoke()
+    }
 }
 
 @Composable

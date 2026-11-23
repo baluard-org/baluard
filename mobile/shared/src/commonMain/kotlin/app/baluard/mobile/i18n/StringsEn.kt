@@ -687,7 +687,7 @@ internal val EN: Map<String, String> = mapOf(
     "home.detach" to "Remove from list",
     "home.detachTitle" to "Remove {0}?",
     "home.detachDesc" to "This vault disappears from the list. Its files stay on this device, and you can add it again by syncing from your remote.",
-    "home.viewAll" to "View all ({0})",
+    "home.viewAll" to "View all",
     "home.fromVault" to "From {0}",
     "home.noneYet" to "Nothing here yet.",
     "list.showing" to "Showing {0} of {1}",

@@ -651,7 +651,7 @@ internal val PT: Map<String, String> = mapOf(
     "home.detach" to "Remover da lista",
     "home.detachTitle" to "Remover {0}?",
     "home.detachDesc" to "Este cofre desaparece da lista. Os arquivos dele continuam neste dispositivo e você pode adicioná-lo de novo sincronizando do seu remoto.",
-    "home.viewAll" to "Ver todos ({0})",
+    "home.viewAll" to "Ver todos",
     "home.fromVault" to "De {0}",
     "home.noneYet" to "Nenhum item ainda",
     "list.showing" to "Exibindo {0} de {1}",
