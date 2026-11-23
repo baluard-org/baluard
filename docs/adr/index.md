@@ -118,3 +118,5 @@ Numbered in design chronology. Each record carries its context, decision, and co
 | [0112](0112-local-folder-sync-transport.md) | Local Folder Sync Transport (Dropbox, Drive, iCloud Drive, Syncthing) |
 | [0113](0113-optional-p2p-sync-transport.md) | Optional P2P Sync Transport Across Desktop, Mobile, and CLI |
 | [0114](0114-browser-tethered-to-mobile.md) | Browser Extension Tethered to the Mobile App (unlock authority over a relay) |
+| [0115](0115-dependency-advisory-backlog.md) | Dependency Advisory Backlog (accepted-risk families) |
+| [0116](0116-mcp-agent-server.md) | MCP Agent Server (coding agents read logins and TOTP under per-read approval) |

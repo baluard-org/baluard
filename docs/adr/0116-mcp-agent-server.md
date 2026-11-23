@@ -1,0 +1,46 @@
+# ADR 0116. MCP Agent Server
+
+> Status: Proposed (2026-11-22). Design doc: [docs/designs/mcp-server.md](../designs/mcp-server.md). Implementation gates on this ADR reaching Accepted.
+
+## Context
+
+ADR 0083 gave cooperative local agents human-approved, read-only vault access through `baluard run`, and deferred MCP ("Defer MCP stdio until after beta"). Coding agents now speak MCP natively, and the people who most need agent access are the least able to hand-edit JSON config or drive a terminal. Two front doors are missing: a desktop-hosted server a non-technical user can pair from Settings, and a CLI stdio server a technical user can register once. Vault access must keep landing on 0083's stack — human approval, scoped grants, caps, hash-chain audit — not a new trust model.
+
+The protocol implementation is `rmcp`, the official Rust MCP SDK (MIT/Apache-2.0), pinned exactly in the daemon and CLI front-ends only; the transport-free primitives live in a new `baluard-mcp` crate depending on core types alone.
+
+## Decision
+
+Ship one MCP server surface with two transports. CLI: `baluard mcp serve` over stdio. Desktop: the daemon hosts Streamable HTTP on a fixed default loopback port with a pairing token minted at connect time. Both transports resolve to the same daemon path: pending approval request, desktop modal, grant, tool calls, audit.
+
+Tool surface, v1, read-only: `search_items(query)` returns ids, names, usernames, and URIs under a non-empty-query requirement and a 20-result cap; `get_login(item_id)` returns the 0083 injection set (username, password, custom fields, seed-like custom values stripped); `get_totp(item_id)` returns the current code, never the seed, with a clean error when no TOTP exists. Everything else answers `denied`. Search never carries a secret; only explicit get calls do.
+
+`search_items` runs under a session grant that is lock-bounded — it dies on lock, auto-lock, and daemon restart — and never authorizes a secret read. `get_login` and `get_totp` require per-read human approval. Each timed approval is scoped strictly to (agent, vault, item, tool) and carries a user-chosen duration: just this read, 5, 15, 30, or 60 minutes, absolute TTL, never sliding. The tool call blocks while pending; the server-side approval timeout is 30 seconds (below typical client timeouts), progress keepalives ride `progressToken` when offered, and a client `notifications/cancelled` or dropped connection dismisses the pending modal and aborts grant creation, so a late human approval can never activate an orphaned grant. Outcomes stay `denied`, `timeout`, and `locked`. A locked vault answers `locked`; agent calls never wake the vault and never extend auto-lock. With no desktop approver attached, stdio falls back to 0083's out-of-process-tree CLI approver, else fails closed.
+
+Yolo is a per-agent auto-approve for the risky tools (`get_login`, `get_totp`), scoped to one named pairing, never global. Its state is strictly volatile — an in-memory entry with a monotonic-clock expiry, never persisted; cleared unconditionally on lock, auto-lock, and daemon restart. It is enabled only from the Settings agent row behind a user reprompt, with a duration from the same ladder (5-minute default); the approval modal never offers it. Fail-closed gating applies: absent, malformed, or expired state means prompts. Yolo removes the human gate, not the backstops: caps still trip deterministically, audit marks every auto-approved call plus the yolo lifecycle (enable, expiry, kill switch), and the UX is loud — red warning on enable, persistent banner and tray indicator, one-tap kill switch.
+
+Caps: 100 secret reads per 24 h per agent with a 10-per-minute burst limiter; 500 searches per 24 h. Cap trips throttle with deterministic `denied` results and never auto-revoke. Every tool call extends the device-local hash-chain audit with metadata only (agent, tool, item id, verdict, denial reason; never the search query text); an audit-append failure fails closed before any secret returns or yolo enables.
+
+Identity and transport hardening: the stdio transport binds grants to the agent executable via daemon-side resolution — the daemon first verifies the connecting peer executable is `baluard` via SO_PEERCRED, then inspects that peer's parent chain itself, never trusting a client-declared PPID, rejecting `ppid <= 1`, and using libproc on macOS; the stdio session pins one vault at handshake, and Windows stdio is deferred post-v1. `baluard mcp serve` pins the default daemon socket path, scrubs inherited `BALUARD_*` variables, refuses stored CLI session tokens, and fails closed without a daemon. The HTTP transport validates the `Host` header, rejects browser `Origin` headers, answers `404` for stale `Mcp-Session-Id`s, bounds session tables, and requires a pairing token that carries a `blrd_mcp_` prefix, is stored hashed with constant-time verification, and dies on one-tap revocation. Pairing binds to one vault at pair time. v1 ships copy-ready config snippets only, targeting user-global MCP configs, never project-scoped `.mcp.json`.
+
+### Amendments to ADR 0083
+
+Each statement below is superseded exactly as far as this ADR says and no further:
+
+- Grant granularity: "an absolute 15-minute TTL from approval; reapproval renews it" — for MCP grants only, the TTL becomes the approval-time duration above; `baluard run` keeps the fixed 15-minute TTL. `search_items` runs under a lock-bounded session grant that carries no timed TTL and never authorizes a secret read.
+- Bearer tokens: "Bind each grant to peer PID, executable path, and process start time using SO_PEERCRED, never a bearer token" — the desktop HTTP transport cannot see the agent's process, so it authenticates pairings with a loopback-bound, hashed, revocable token instead; the stdio transport keeps the full executable binding, resolved from the SO_PEERCRED peer's parent process (the coding agent), not the direct socket peer as `baluard run` does.
+- Search metadata: "Refuse Login URIs" (the `baluard run` injection refusal) — `search_items` returns usernames and URIs as metadata, never secrets, without 0083's per-item approval; the acceptance of that relaxation is recorded in Consequences.
+- Output scrubbing: 0083's stdout/stderr `[REDACTED]` scrubbing applies to daemon and CLI logs and error messages; MCP tool return payloads intentionally carry secrets and are exempt from it.
+- Platform scope: "For 0.1.0, support Linux and macOS only; Windows has no daemon IPC" — Windows named-pipe daemon IPC has shipped for desktop and CLI daemon communication; desktop HTTP MCP runs on Windows over loopback TCP, and Windows stdio parent binding is deferred post-v1.
+- Deferral: "Defer MCP stdio until after beta" is retired by this ADR.
+
+0083's elicitation rule stands unchanged: MCP elicitation may only point at Baluard's approval UI; daemon-side desktop or CLI approval remains the trust root. The per-vault allow-all opt-out stays out of MCP in v1; yolo is the sanctioned shortcut.
+
+## Consequences
+
+Less-technical users pair a coding agent from Settings without touching a terminal; technical users register `baluard mcp serve` once. Agents read logins and TOTP codes under per-read human approval with a per-agent auto-approve escape hatch that expires by construction. The yolo surface adds a new failure shape: a stolen pairing token plus an active yolo window reads secrets without prompts, bounded by caps, audit marking, revocation, and the kill switch — the design accepts this residual as the price of the shortcut and says so in the desktop warning. Allowing `search_items` to return usernames and URIs under the per-agent search cap without per-read approval means a prompt-injected or token-stealing client can enumerate account inventory (sites and usernames) across queries without touching passwords; the non-empty-query rule, the 20-result cap, and audit marking bound the enumeration rate. `rmcp` becomes a new pinned dependency in the daemon and CLI graphs. Implementation gates on the hermetic test set in the design doc (cancellation mid-modal, rebinding rejection, stale session ids, `ppid <= 1`, yolo expiry and restart clearing, cap trips in and out of yolo, audit fail-closed).
+
+## References
+
+- [ADR 0083](0083-agents-never-hold-the-vault.md) — agents never hold the vault; the base this ADR amends
+- [Design doc](../designs/mcp-server.md) — full design, review record, and test matrix
+- `baluard-mcp` (new crate), `baluard mcp serve`, `AgentGrants`, `AgentApprovalModal`
