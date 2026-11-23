@@ -279,48 +279,6 @@ export default function CipherDetail(props) {
               />
             </Show>
 
-            {/* Password history (past values, masked until revealed) */}
-            <Show when={(cipher()?.password_history?.length || 0) > 0}>
-              <button
-                onClick={() => { if (repromptLocked()) { openReprompt(); return; } setShowHistory(!showHistory()); setRevealedHistory(null); }}
-                class="text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer self-start"
-              >
-                {showHistory() ? "▾ " : "▸ "}{t("entry.passwordHistory", { count: cipher()?.password_history?.length ?? 0 })}
-              </button>
-              <Show when={showHistory()}>
-                <div class="space-y-1.5">
-                  <For each={cipher()?.password_history || []}>
-                    {(h, i) => (
-                      <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)]">
-                        <span class="text-[10px] text-[var(--color-muted)] shrink-0 w-20">{formatDateIso(h.last_used_date) ?? "—"}</span>
-                        <span class="flex-1 font-mono text-xs text-[var(--color-text)] truncate select-all">
-                          {revealedHistory() === i() ? h.password : "••••••••"}
-                        </span>
-                        <button
-                          onClick={() => setRevealedHistory(revealedHistory() === i() ? null : i())}
-                          class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                          title={revealedHistory() === i() ? t("entry.historyHide") : t("entry.historyShow")}
-                        >
-                          <Show when={revealedHistory() === i()} fallback={<IconEye class="w-3.5 h-3.5" />}>
-                            <IconEyeOff class="w-3.5 h-3.5" />
-                          </Show>
-                        </button>
-                        <button
-                          onClick={async () => { const idx = i(); await copyToClipboard(h.password); setCopiedHistoryIdx(idx); setTimeout(() => setCopiedHistoryIdx((v) => (v === idx ? null : v)), 1800); }}
-                          class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                          title={t("entry.copyValue")}
-                        >
-                          <Show when={copiedHistoryIdx() === i()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
-                            <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-success)]" /></span>
-                          </Show>
-                        </button>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </Show>
-            </Show>
-
             <Show when={totpSeedOf(cipher())}>
               <TotpWidget cipher={cipher()} />
             </Show>
@@ -883,6 +841,50 @@ export default function CipherDetail(props) {
             </For>
           </div>
         </Show>
+        {/* Password history (past values, masked until revealed) */}
+        <Show when={(cipher()?.password_history?.length || 0) > 0}>
+          <div class="space-y-3 pt-2">
+            <button
+              onClick={() => { if (repromptLocked()) { openReprompt(); return; } setShowHistory(!showHistory()); setRevealedHistory(null); }}
+              class={`${SECTION_LABEL} hover:text-[var(--color-text)] transition-colors cursor-pointer`}
+            >
+              {showHistory() ? "▾ " : "▸ "}{t("entry.passwordHistory", { count: cipher()?.password_history?.length ?? 0 })}
+            </button>
+            <Show when={showHistory()}>
+              <div class="space-y-1.5">
+                <For each={cipher()?.password_history || []}>
+                  {(h, i) => (
+                    <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)]">
+                      <span class="text-[10px] text-[var(--color-muted)] shrink-0 w-20">{formatDateIso(h.last_used_date) ?? "—"}</span>
+                      <span class="flex-1 font-mono text-xs text-[var(--color-text)] truncate select-all">
+                        {revealedHistory() === i() ? h.password : "••••••••"}
+                      </span>
+                      <button
+                        onClick={() => setRevealedHistory(revealedHistory() === i() ? null : i())}
+                        class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                        title={revealedHistory() === i() ? t("entry.historyHide") : t("entry.historyShow")}
+                      >
+                        <Show when={revealedHistory() === i()} fallback={<IconEye class="w-3.5 h-3.5" />}>
+                          <IconEyeOff class="w-3.5 h-3.5" />
+                        </Show>
+                      </button>
+                      <button
+                        onClick={async () => { const idx = i(); await copyToClipboard(h.password); setCopiedHistoryIdx(idx); setTimeout(() => setCopiedHistoryIdx((v) => (v === idx ? null : v)), 1800); }}
+                        class="p-1 rounded-lg text-[var(--color-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                        title={t("entry.copyValue")}
+                      >
+                        <Show when={copiedHistoryIdx() === i()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
+                          <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-success)]" /></span>
+                        </Show>
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
+
       </div>
 
       {/* Collection move (§4.8-5) */}
