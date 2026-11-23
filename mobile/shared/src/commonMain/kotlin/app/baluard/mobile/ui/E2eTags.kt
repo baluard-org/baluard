@@ -39,5 +39,6 @@ object E2eTags {
     const val EDIT_NAME = "e2e/edit/name"
     const val EDIT_SAVE = "e2e/edit/save"
     const val EDIT_DELETE = "e2e/edit/delete"
+    const val EDIT_FAVORITE = "e2e/edit/favorite"
     const val EDIT_PASSWORD = "e2e/edit/password"
 }

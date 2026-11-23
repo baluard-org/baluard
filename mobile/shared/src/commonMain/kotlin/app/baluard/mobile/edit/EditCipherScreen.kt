@@ -188,6 +188,7 @@ fun EditCipherScreen(
                     checked = form.favorite,
                     enabled = !saving,
                     onToggle = { viewModel.setFavorite(it) },
+                    checkboxModifier = Modifier.testTag(E2eTags.EDIT_FAVORITE),
                 )
 
                 Spacer(Modifier.height(12.dp))
@@ -850,7 +851,7 @@ private fun linkedTargetLabelKey(target: String): String = when (target) {
 }
 
 @Composable
-private fun CheckboxRow(label: String, checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+private fun CheckboxRow(label: String, checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit, checkboxModifier: Modifier = Modifier) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -865,6 +866,7 @@ private fun CheckboxRow(label: String, checked: Boolean, enabled: Boolean, onTog
             checked = checked,
             onCheckedChange = onToggle,
             enabled = enabled,
+            modifier = checkboxModifier,
             colors = CheckboxDefaults.colors(
                 checkedColor = MaterialTheme.colorScheme.primary,
                 checkmarkColor = MaterialTheme.colorScheme.onPrimary,
