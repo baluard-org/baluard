@@ -93,7 +93,7 @@ pub(crate) fn exe_path_for_pid(pid: u32) -> Option<String> {
         let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
         // SAFETY: buf holds PROC_PIDPATHINFO_MAXSIZE bytes; proc_pidpath writes at most bufsize bytes and returns the length written.
         let len = unsafe {
-            libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32)
+            libc::proc_pidpath(pid as libc::c_int, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32)
         };
         if len <= 0 {
             return None;
