@@ -1472,8 +1472,21 @@
       "run_finished": "Comando concluído",
       "revoked": "Acesso revogado",
       "yolo_enabled": "Aprovações desativadas",
-      "yolo_disabled": "Aprovações ativadas"
-    }
+      "yolo_disabled": "Aprovações ativadas",
+      "mcp_paired": "Agente MCP vinculado",
+      "mcp_revoked": "Vínculo do agente MCP removido",
+      "mcp_read": "Leitura de entrada via MCP",
+      "mcp_search": "Busca de entrada via MCP",
+      "mcp_session": "Sessão MCP via stdio",
+      "mcp_yolo_enabled": "Aprovação automática MCP ativada",
+      "mcp_yolo_killed": "Aprovação automática MCP interrompida",
+      "mcp_session_requested": "Sessão MCP solicitada"
+    },
+    "readDuration": "Aprovar por",
+    "readJustThis": "Somente esta leitura",
+    "readMinutes": "{n} minutos",
+    "approvePlain": "Aprovar",
+    "readTitle": "Solicitação de leitura"
   },
   "signing": {
     "expired": "Expirado",
@@ -1551,5 +1564,30 @@
     "lastError": "Última falha de sincronização",
     "kitSigner": "Assinador do kit",
     "kitSignerPresent": "Ativo até o primeiro envio"
-  }
+  },
+  "mcp.title": "Agentes MCP",
+  "mcp.desc": "Permite que agentes de código (como Claude Code ou Cursor) leiam entradas deste cofre com sua aprovação a cada leitura.",
+  "mcp.serverRunning": "Endpoint de agentes ativo na porta {port}",
+  "mcp.serverError": "Falha no endpoint de agentes: {error}",
+  "mcp.pair": "Vincular agente",
+  "mcp.pairNamePlaceholder": "ex.: Claude Code neste notebook",
+  "mcp.tokenTitle": "{name} foi vinculado. Token de uso único:",
+  "mcp.tokenNote": "Copie agora. Ele é guardado com hash e não pode ser exibido novamente.",
+  "mcp.snippetTitle": "Cole isto na configuração de usuário do agente",
+  "mcp.snippetNote": "Use a config de usuário, nunca a de um projeto: o token hereda as permissões do arquivo.",
+  "mcp.copy": "Copiar",
+  "mcp.copied": "Copiado",
+  "mcp.dismiss": "Pronto",
+  "mcp.pairings": "Agentes vinculados",
+  "mcp.noPairings": "Nenhum agente vinculado ainda.",
+  "mcp.revoke": "Revogar",
+  "mcp.revoked": "Vínculo do agente removido.",
+  "mcp.paired": "Agente vinculado.",
+  "mcp.pairedAt": "vinculado {date}",
+  "mcp.autoApprove": "Aprovação automática",
+  "mcp.autoApproveWarning": "Este agente lerá entradas sem perguntar até a janela expirar. Quem tiver o token do vínculo terá o mesmo acesso. Você pode parar a qualquer momento com a chave ou Revogar.",
+  "mcp.durationMinutes": "{n} min",
+  "mcp.expiresIn": "aprovação automática termina em {n} min",
+  "mcp.yoloEnabled": "Aprovação automática ativada.",
+  "mcp.yoloDisabled": "Aprovação automática desativada."
 }

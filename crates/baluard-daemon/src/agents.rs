@@ -2,7 +2,7 @@
 //! this module owns requests, human decisions, grant lifecycle, and polling.
 
 use crate::agent_run::process_chain;
-use crate::handler::{err_response, ok_resp};
+use crate::handler::{err_response, extract_slug, ok_resp};
 use crate::host::{SharedVaultHost, SnapshotError};
 use crate::proto::{GatewayRequest, GatewayResponse};
 use crate::state::SharedVaultState;
@@ -49,6 +49,10 @@ struct AgentRequestPayload {
 #[derive(serde::Deserialize)]
 struct RequestIdPayload {
     request_id: String,
+    /// MCP read approvals only: the chosen ladder duration in seconds;
+    /// 0 (or absent) means just this read, which records no grant.
+    #[serde(default)]
+    duration_secs: Option<u64>,
 }
 
 async fn target_state(
@@ -325,6 +329,7 @@ pub async fn handle_agent_route(
                         "pid": p.peer.pid,
                         "need": p.need,
                         "item_ids": p.item_ids,
+                        "purpose": p.purpose.as_tag(),
                     })
                 })
                 .collect();
@@ -355,20 +360,24 @@ pub async fn handle_agent_route(
                 return err_response("agent request is no longer pending");
             };
             let audit_pending = pending.clone();
-            // A credential request mints a grant token; an SSH sign
-            // request only releases the sign. Minting a grant for a
-            // sign would leave a live, unreachable grant behind that
-            // also suppresses blur-locking for the vault.
-            let token =
-                if audit_pending.purpose == baluard_runtime::agents::PendingPurpose::Credential {
-                    state.agent_mint(
-                        audit_pending.peer.clone(),
-                        audit_pending.item_ids.clone(),
-                        DEFAULT_TTL_SECS,
-                    )
-                } else {
-                    String::new()
-                };
+            // A credential request mints a grant token; an SSH sign request
+            // only releases the sign. Minting a grant for a sign would
+            // leave a live, unreachable grant behind that also suppresses
+            // blur-locking for the vault. MCP purposes complete through
+            // the MCP registry (scoped read grant / volatile session).
+            let token = match audit_pending.purpose {
+                baluard_runtime::agents::PendingPurpose::Credential => state.agent_mint(
+                    audit_pending.peer.clone(),
+                    audit_pending.item_ids.clone(),
+                    DEFAULT_TTL_SECS,
+                ),
+                baluard_runtime::agents::PendingPurpose::SshSign => String::new(),
+                purpose @ (baluard_runtime::agents::PendingPurpose::McpRead
+                | baluard_runtime::agents::PendingPurpose::McpSession) => {
+                    let _ = purpose;
+                    crate::mcp::complete_mcp_approval(&audit_pending, payload.duration_secs)
+                }
+            };
             if let Err(error) = audit(
                 "approved",
                 audit_pending.vault_slug.as_deref().unwrap_or(&slug),
@@ -496,6 +505,39 @@ pub async fn handle_agent_route(
         "agents.run_poll" => crate::agent_run::run_poll(req, host, peer).await,
         "agents.run_signal" => crate::agent_run::run_signal(req, host, peer).await,
         "agents.inject" => crate::agent_run::inject(req, host, peer).await,
+        "agents.mcp_start" => {
+            // ADR 0116 stdio session bootstrap: peer-bound, no user token.
+            let slug = extract_slug(&req.payload).unwrap_or_default();
+            let slug = if slug.is_empty() {
+                match host.active_slug().await {
+                    Some(s) => s,
+                    None => return err_response("no active vault"),
+                }
+            } else {
+                slug
+            };
+            crate::mcp::stdio_session_start(host, peer, &slug).await
+        }
+        "agents.mcp_call" => {
+            #[derive(serde::Deserialize)]
+            struct McpCallPayload {
+                tool: String,
+                #[serde(default)]
+                args: serde_json::Value,
+            }
+            let payload: McpCallPayload = match serde_json::from_str(&req.payload) {
+                Ok(p) => p,
+                Err(e) => return err_response(format!("Invalid MCP call: {e}")),
+            };
+            crate::mcp::stdio_tool_call(
+                host,
+                peer,
+                &req.session_token,
+                &payload.tool,
+                &payload.args,
+            )
+            .await
+        }
         "agents.set_yolo" => {
             let payload: YoloPayload = match serde_json::from_str(&req.payload) {
                 Ok(p) => p,

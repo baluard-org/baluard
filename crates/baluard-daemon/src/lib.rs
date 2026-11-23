@@ -21,6 +21,8 @@ mod agent_audit;
 mod agent_run;
 mod agents;
 pub mod handler;
+pub mod mcp;
+pub mod mcp_http;
 mod scrub;
 pub mod socket_path;
 mod ssh_agent_keys;

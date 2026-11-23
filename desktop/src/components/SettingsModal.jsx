@@ -18,6 +18,7 @@ import IconInfo from "./IconInfo.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
 import AgentSettingsRow from "./AgentSettingsRow.jsx";
+import McpPairingsSection from "./McpPairingsSection.jsx";
 import DeviceFleetPanel from "./DeviceFleetPanel.jsx";
 import SyncTab from "./SyncTab.jsx";
 import PeopleTab from "./PeopleTab.jsx";
@@ -1272,6 +1273,7 @@ export default function SettingsModal() {
 
                 <UpdateSettingsRow />
                 <AgentSettingsRow />
+                <McpPairingsSection />
               </Show>
 
               <Show when={activeTab() === "data"}>

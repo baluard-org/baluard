@@ -13,6 +13,9 @@ path = "src/main.rs"
 [dependencies]
 baluard-core = { path = "../baluard-core", features = ["git-sync"] }
 baluard-proto = { path = "../baluard-proto" }
+baluard-mcp = { path = "../baluard-mcp" }
+rmcp = { version = "=0.16.0", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1", default-features = false, features = ["rt", "io-std", "time"] }
 prost = { workspace = true }
 clap.workspace = true
 serde_json.workspace = true

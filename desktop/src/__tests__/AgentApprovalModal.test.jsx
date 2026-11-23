@@ -83,8 +83,57 @@ describe("AgentApprovalModal", () => {
     await fireEvent.click(document.querySelector('[data-testid="agent-approve"]'));
     await fireEvent.click(document.querySelector('[data-testid="agent-deny"]'));
     flush();
-    expect(onApprove).toHaveBeenCalledWith("req-1");
+    expect(onApprove).toHaveBeenCalledWith("req-1", undefined);
     expect(onDeny).toHaveBeenCalledWith("req-1");
+  });
+
+  it("hides the duration picker for credential requests", async () => {
+    const onApprove = vi.fn();
+    const screen = render(() => (
+      <AgentApprovalModal
+        request={request}
+        requests={[request]}
+        itemName={(id) => id}
+        onApprove={onApprove}
+        onDeny={vi.fn()}
+      />
+    ));
+    await waitFor(() => expect(document.querySelector('[data-testid="agent-approve"]')).toBeTruthy());
+    expect(document.querySelector('[data-testid="agent-duration"]')).toBeNull();
+    fireEvent.click(document.querySelector('[data-testid="agent-approve"]'));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(1));
+    // Non-MCP approvals carry no duration at all.
+    expect(onApprove.mock.calls[0][1]).toBeUndefined();
+  });
+
+  it("shows the ladder for MCP reads and sends the chosen duration", async () => {
+    const onApprove = vi.fn();
+    const mcpRequest = { ...request, purpose: "mcp_read" };
+    const screen = render(() => (
+      <AgentApprovalModal
+        request={mcpRequest}
+        requests={[mcpRequest]}
+        itemName={(id) => id}
+        onApprove={onApprove}
+        onDeny={vi.fn()}
+      />
+    ));
+    const picker = await waitFor(() => {
+      const el = document.querySelector('[data-testid="agent-duration"]');
+      expect(el).toBeTruthy();
+      return el;
+    });
+    const select = picker.querySelector("select");
+    expect(select).toBeTruthy();
+    // Default is just this read (0).
+    fireEvent.click(document.querySelector('[data-testid="agent-approve"]'));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledWith("req-1", 0));
+    // Picking a window sends it through. Solid 2 batches signal writes,
+    // so the picker's update must flush before the approval reads it.
+    fireEvent.input(select, { target: { value: "15" } });
+    flush();
+    fireEvent.click(document.querySelector('[data-testid="agent-approve"]'));
+    await waitFor(() => expect(onApprove).toHaveBeenLastCalledWith("req-1", 15));
   });
 
   it("offers batch approval only for multiple pending requests", async () => {

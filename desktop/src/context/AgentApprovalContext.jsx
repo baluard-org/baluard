@@ -84,11 +84,16 @@ export function AgentApprovalProvider(props) {
     },
   );
 
-  async function decide(action, requestId) {
+  async function decide(action, requestId, durationSecs = undefined) {
     if (busy()) return;
     setBusy(true);
     try {
-      await daemon(action, { request_id: requestId });
+      await daemon(action, {
+        request_id: requestId,
+        // MCP reads (ADR 0116) carry the chosen ladder duration; the
+        // credential purpose ignores the extra key.
+        ...(durationSecs !== undefined ? { duration_secs: durationSecs } : {}),
+      });
       setPending((rows) => rows.filter((row) => row.request_id !== requestId));
       refreshAudit();
       toastSuccess(t(action === "agents.approve" ? "agents.approved" : "agents.denied"));
@@ -154,7 +159,7 @@ export function AgentApprovalProvider(props) {
     events,
     yolo,
     busy,
-    approve: (id) => decide("agents.approve", id),
+    approve: (id, durationSecs) => decide("agents.approve", id, durationSecs),
     deny: (id) => decide("agents.deny", id),
     approveAll,
     revoke,

@@ -1472,8 +1472,21 @@
       "run_finished": "Command finished",
       "revoked": "Access revoked",
       "yolo_enabled": "Approval prompts disabled",
-      "yolo_disabled": "Approval prompts enabled"
-    }
+      "yolo_disabled": "Approval prompts enabled",
+      "mcp_paired": "MCP agent paired",
+      "mcp_revoked": "MCP agent pairing removed",
+      "mcp_read": "MCP entry read",
+      "mcp_search": "MCP entry search",
+      "mcp_session": "MCP stdio session",
+      "mcp_yolo_enabled": "MCP auto-approve enabled",
+      "mcp_yolo_killed": "MCP auto-approve stopped",
+      "mcp_session_requested": "MCP session requested"
+    },
+    "readDuration": "Approve for",
+    "readJustThis": "Just this read",
+    "readMinutes": "{n} minutes",
+    "approvePlain": "Approve",
+    "readTitle": "Entry read request"
   },
   "signing": {
     "expired": "Expired",
@@ -1551,5 +1564,30 @@
     "lastError": "Last sync failure",
     "kitSigner": "Kit signer",
     "kitSignerPresent": "Active until first push"
-  }
+  },
+  "mcp.title": "MCP agents",
+  "mcp.desc": "Let coding agents (like Claude Code or Cursor) read entries from this vault with your approval per read.",
+  "mcp.serverRunning": "Agent endpoint running on port {port}",
+  "mcp.serverError": "Agent endpoint failed: {error}",
+  "mcp.pair": "Pair an agent",
+  "mcp.pairNamePlaceholder": "e.g. Claude Code on this laptop",
+  "mcp.tokenTitle": "{name} is paired. One-time token:",
+  "mcp.tokenNote": "Copy this now. It is stored hashed and cannot be shown again.",
+  "mcp.snippetTitle": "Paste this into the agent's user-level config",
+  "mcp.snippetNote": "Use your user config, never a project config file: the token inherits the file's permissions.",
+  "mcp.copy": "Copy",
+  "mcp.copied": "Copied",
+  "mcp.dismiss": "Done",
+  "mcp.pairings": "Paired agents",
+  "mcp.noPairings": "No agents paired yet.",
+  "mcp.revoke": "Revoke",
+  "mcp.revoked": "Agent pairing removed.",
+  "mcp.paired": "Agent paired.",
+  "mcp.pairedAt": "paired {date}",
+  "mcp.autoApprove": "Auto-approve",
+  "mcp.autoApproveWarning": "This agent will read entries without asking until the window expires. Anyone holding its pairing token gets the same access. You can stop it any time with the switch or Revoke.",
+  "mcp.durationMinutes": "{n} min",
+  "mcp.expiresIn": "auto-approve ends in {n} min",
+  "mcp.yoloEnabled": "Auto-approve on.",
+  "mcp.yoloDisabled": "Auto-approve off."
 }

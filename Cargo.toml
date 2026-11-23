@@ -7,6 +7,7 @@ members = [
     "crates/baluard-cli",
     "crates/baluard-daemon",
     "crates/baluard-nmh",
+    "crates/baluard-mcp",
     "crates/baluard-portable-launcher",
 ]
 resolver = "2"

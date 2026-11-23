@@ -394,6 +394,14 @@ async fn run(socket_path: &str, vault_path: &str, active_slug: &Option<String>) 
 
     log::info!("baluard-daemon listening on {socket_path}");
     log::info!("Vault path: {vault_path}");
+
+    // MCP agent endpoint (ADR 0116). Loopback-only; bind failure is
+    // logged and non-fatal so the vault IPC service survives, and
+    // mcp.status surfaces the error to Settings.
+    match baluard_daemon::mcp_http::spawn_server(host.clone()).await {
+        Ok(port) => log::info!("[mcp] listening on 127.0.0.1:{port}"),
+        Err(e) => log::warn!("[mcp] server disabled: {e}"),
+    }
     let _ = vault_path; // kept for log line; host is source of truth
 
     // SSH-agent listener. Binds regardless of vault state: settings are

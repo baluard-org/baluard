@@ -469,6 +469,8 @@ const HOST_ONLY_ACTIONS: &[&str] = &[
     "agents.audit",
     "agents.list",
     "agents.run",
+    "agents.mcp_start",
+    "agents.mcp_call",
     "agents.run_start",
     "agents.run_poll",
     "agents.run_signal",
@@ -548,6 +550,8 @@ const HOST_ACTIONS: &[&str] = &[
     "agents.audit",
     "agents.list",
     "agents.run",
+    "agents.mcp_start",
+    "agents.mcp_call",
     "agents.run_start",
     "agents.run_poll",
     "agents.run_signal",
@@ -746,7 +750,7 @@ fn extract_backend(payload: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn extract_slug(payload: &str) -> Option<String> {
+pub(crate) fn extract_slug(payload: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(payload).ok()?;
     v.get("slug")
         .and_then(|s| s.as_str())
@@ -887,6 +891,13 @@ async fn route_host_request_inner(
 
     if req.action.starts_with("agents.") || req.action.starts_with("agent.policy.") {
         return crate::agents::handle_agent_route(&req, host, peer).await;
+    }
+
+    // ADR 0116: MCP management routes are user-session surfaces (pairing,
+    // revocation, yolo); tool calls never take this path (they arrive over
+    // the HTTP transport or the stdio session routes).
+    if req.action.starts_with("mcp.") {
+        return crate::mcp::handle_mcp_route(&req, host, peer).await;
     }
 
     // ── Host-level routes: no target vault needed ──

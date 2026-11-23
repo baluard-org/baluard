@@ -2,6 +2,7 @@
 
 mod client;
 mod commands;
+mod mcp_stdio;
 mod update;
 
 use baluard_core::types::{CipherInput, CipherKind, LoginData};
@@ -122,6 +123,18 @@ enum AgentAction {
     },
 }
 
+/// MCP server subcommands (ADR 0116).
+#[derive(Subcommand)]
+enum McpAction {
+    /// Serve the MCP stdio endpoint for the coding agent that spawned this
+    /// process. Access is read-only and human-approved on first connect.
+    Serve {
+        /// Vault slug to pin the session to (defaults to the active vault).
+        #[arg(long)]
+        vault: Option<String>,
+    },
+}
+
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // Pre-existing: Commands has unit + struct variants of widely different sizes
 enum Commands {
@@ -129,6 +142,12 @@ enum Commands {
     Agent {
         #[command(subcommand)]
         action: AgentAction,
+    },
+
+    /// Run an MCP (Model Context Protocol) server for coding agents.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
     },
 
     /// Set up the OpenSSH agent the daemon serves for this machine.
@@ -2072,6 +2091,10 @@ fn main() {
     };
 
     let result = match cli.command {
+        Commands::Mcp {
+            action: McpAction::Serve { vault },
+        } => mcp_stdio::run(vault)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() }),
         Commands::Agent { action } => {
             commands::agent::handle_agent_action(action, cli.socket.as_deref())
         }

@@ -1,10 +1,14 @@
-import { Show, For } from "solid-js";
+import { Show, For, createSignal } from "solid-js";
 import ConsolePanel from "./ConsolePanel.jsx";
 import { Button } from "./Primitives.jsx";
 import { useI18n } from "../i18n/index.jsx";
 
+const LADDER = [0, 5, 15, 30, 60];
+
 export default function AgentApprovalModal(props) {
   const { t } = useI18n();
+  const [duration, setDuration] = createSignal(0);
+  const isMcpRead = () => props.request?.purpose === "mcp_read";
   return (
     <ConsolePanel
       show={Boolean(props.request)}
@@ -16,7 +20,7 @@ export default function AgentApprovalModal(props) {
         {(request) => (
           <div class="w-full max-w-lg mx-auto flex flex-col">
             <h3 id="agent-approval-title" class="text-sm font-bold uppercase tracking-wider text-[var(--color-text)] mb-1 font-mono">
-              {t("agents.title")}
+              {isMcpRead() ? t("agents.readTitle") : t("agents.title")}
             </h3>
             <p class="text-xs text-[var(--color-muted)] mb-4 font-mono">{request().claimed_name}</p>
             <div class="rounded border border-[var(--color-border)] bg-black/20 p-3 mb-4">
@@ -42,10 +46,28 @@ export default function AgentApprovalModal(props) {
               <Button
                 data-testid="agent-approve"
                 disabled={props.busy}
-                onClick={() => props.onApprove?.(request().request_id)}
+                onClick={() => props.onApprove?.(request().request_id, isMcpRead() ? duration() : undefined)}
                 class="flex-1 py-2.5 font-mono text-xs uppercase"
-              >{t("agents.approve")}</Button>
+              >{isMcpRead() ? t("agents.approvePlain") : t("agents.approve")}</Button>
             </div>
+            <Show when={isMcpRead()}>
+              <div class="mt-3 flex items-center gap-2" data-testid="agent-duration">
+                <span class="text-[10px] uppercase text-[var(--color-muted)]">{t("agents.readDuration")}</span>
+                <select
+                  class="flex-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+                  value={duration()}
+                  onInput={(e) => setDuration(Number(e.currentTarget.value))}
+                >
+                  <For each={LADDER}>
+                    {(mins) => (
+                      <option value={mins}>
+                        {mins === 0 ? t("agents.readJustThis") : t("agents.readMinutes", { n: mins })}
+                      </option>
+                    )}
+                  </For>
+                </select>
+              </div>
+            </Show>
             <Show when={(props.requests?.length || 0) > 1}>
               <Button
                 data-testid="agent-approve-all"

@@ -86,7 +86,7 @@ Every tool call extends the existing device-local hash-chain audit: agent identi
 
 ## SDK and dependencies
 
-The protocol implementation is `rmcp`, the official Rust MCP SDK (modelcontextprotocol/rust-sdk), MIT/Apache-2.0, which ships stdio and Streamable HTTP. Exact-pinned per house policy in the daemon and CLI front-ends only, justified in ADR 0116 alongside a cargo-audit pass. Hand-rolling JSON-RPC was rejected: HTTP session semantics and capability negotiation are exactly the edge cases an official SDK exists to own.
+The protocol implementation is `rmcp`, the official Rust MCP SDK (modelcontextprotocol/rust-sdk), MIT/Apache-2.0, which ships stdio and Streamable HTTP. Exact-pinned per house policy in the daemon and CLI front-ends only, justified in ADR 0116 alongside a cargo-audit pass. Hand-rolling JSON-RPC was rejected: HTTP session semantics and capability negotiation are exactly the edge cases an official SDK exists to own. Pin: `=0.16.0` — the patched lines need MSRV 1.88. The pinned line's DNS-rebinding advisory (RUSTSEC-2026-0189) is covered by this design's own Host/Origin guard, and the client-side advisory (RUSTSEC-2026-0462) does not apply because no client transport is compiled; both are recorded accepted risks pending the workspace MSRV bump (ADR 0116).
 
 ## Security notes
 

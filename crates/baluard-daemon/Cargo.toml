@@ -10,6 +10,10 @@ description = "Baluard background IPC daemon (Unix socket / Named Pipes server)"
 baluard-core = { path = "../baluard-core", features = ["git-sync", "passkey-ceremony"] }
 baluard-proto = { path = "../baluard-proto" }
 baluard-runtime = { path = "../baluard-runtime" }
+baluard-mcp = { path = "../baluard-mcp" }
+rmcp = { version = "=0.16.0", default-features = false, features = ["server", "macros", "base64", "transport-io", "transport-streamable-http-server"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+http = "1"
 log = "0.4"
 env_logger = "0.11"
 tokio = { workspace = true }

@@ -1084,6 +1084,10 @@ impl VaultState {
         if let Some(ref mut handle) = *guard {
             handle.lock();
         }
+        // ADR 0116: MCP yolo windows, read grants, and stdio sessions die
+        // on lock with everything else. Fires even when the vault was
+        // never opened (the volatile state cannot exist, so it is a no-op).
+        baluard_mcp::registry::GLOBAL.vault_locked_by_path(&self.vault_path);
         // R7-2: Invalidate session token on lock
         let mut token_guard = self.session_token.write().await;
         *token_guard = None;

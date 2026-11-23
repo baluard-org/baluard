@@ -45,4 +45,16 @@ ignore = [
     # The RSA import acceptance itself: Marvin timing side channel, no fixed
     # release upstream (0.10 rc included) - ADR 0111.
     "RUSTSEC-2023-0071",
+    # ADR 0116 (MCP agent server): rmcp is pinned at 0.16.0 because every
+    # patched line (>=1.4.0) requires MSRV 1.88 against the workspace 1.85
+    # floor. RUSTSEC-2026-0189 (DNS rebinding, Streamable HTTP server) is
+    # mitigated by the baluard-daemon HTTP guard itself: loopback-only
+    # bind, Host-header validation, and browser-Origin rejection
+    # implemented as axum middleware in front of rmcp (the spec-mandated
+    # defense the CVE says the SDK lacks). Upgrade to rmcp >=1.4.0 rides
+    # the next workspace MSRV bump. RUSTSEC-2026-0462 is Streamable HTTP
+    # CLIENT buffering; the client transport is not compiled in (server +
+    # transport-io features only, verified via cargo tree -e features).
+    "RUSTSEC-2026-0189",
+    "RUSTSEC-2026-0462",
 ]

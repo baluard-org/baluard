@@ -1472,8 +1472,21 @@
       "run_finished": "Commande terminée",
       "revoked": "Accès révoqué",
       "yolo_enabled": "Demandes d'approbation désactivées",
-      "yolo_disabled": "Demandes d'approbation activées"
-    }
+      "yolo_disabled": "Demandes d'approbation activées",
+      "mcp_paired": "Agent MCP associé",
+      "mcp_revoked": "Association de l'agent MCP supprimée",
+      "mcp_read": "Lecture d'entrée via MCP",
+      "mcp_search": "Recherche d'entrée via MCP",
+      "mcp_session": "Session MCP via stdio",
+      "mcp_yolo_enabled": "Auto-approbation MCP activée",
+      "mcp_yolo_killed": "Auto-approbation MCP arrêtée",
+      "mcp_session_requested": "Session MCP demandée"
+    },
+    "readDuration": "Approuver pour",
+    "readJustThis": "Cette lecture seulement",
+    "readMinutes": "{n} minutes",
+    "approvePlain": "Approuver",
+    "readTitle": "Demande de lecture"
   },
   "signing": {
     "expired": "Expiré",
@@ -1551,5 +1564,30 @@
     "lastError": "Dernier échec de synchronisation",
     "kitSigner": "Signataire du kit",
     "kitSignerPresent": "Actif jusqu'au premier envoi"
-  }
+  },
+  "mcp.title": "Agents MCP",
+  "mcp.desc": "Permet aux agents de code (comme Claude Code ou Cursor) de lire des entrées de ce coffre avec votre approbation à chaque lecture.",
+  "mcp.serverRunning": "Point d'accès agents actif sur le port {port}",
+  "mcp.serverError": "Échec du point d'accès agents : {error}",
+  "mcp.pair": "Associer un agent",
+  "mcp.pairNamePlaceholder": "p. ex. Claude Code sur ce portable",
+  "mcp.tokenTitle": "{name} est associé. Jeton à usage unique :",
+  "mcp.tokenNote": "Copiez-le maintenant. Il est stocké haché et ne peut plus être affiché.",
+  "mcp.snippetTitle": "Collez ceci dans la configuration utilisateur de l'agent",
+  "mcp.snippetNote": "Utilisez votre config utilisateur, jamais celle d'un projet : le jeton hérite des permissions du fichier.",
+  "mcp.copy": "Copier",
+  "mcp.copied": "Copié",
+  "mcp.dismiss": "Terminé",
+  "mcp.pairings": "Agents associés",
+  "mcp.noPairings": "Aucun agent associé pour l'instant.",
+  "mcp.revoke": "Révoquer",
+  "mcp.revoked": "Association de l'agent supprimée.",
+  "mcp.paired": "Agent associé.",
+  "mcp.pairedAt": "associé {date}",
+  "mcp.autoApprove": "Auto-approbation",
+  "mcp.autoApproveWarning": "Cet agent lira des entrées sans demander jusqu'à la fin de la fenêtre. Quiconque détient son jeton d'association obtient le même accès. Vous pouvez l'arrêter à tout moment via l'interrupteur ou Révoquer.",
+  "mcp.durationMinutes": "{n} min",
+  "mcp.expiresIn": "auto-approbation finie dans {n} min",
+  "mcp.yoloEnabled": "Auto-approbation activée.",
+  "mcp.yoloDisabled": "Auto-approbation désactivée."
 }

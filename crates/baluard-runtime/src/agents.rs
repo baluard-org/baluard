@@ -113,6 +113,8 @@ pub const AGENT_ALLOWED_ACTIONS: &[&str] = &[
     "agents.run_signal",
     "agents.inject",
     "agents.revoke_own",
+    "agents.mcp_start",
+    "agents.mcp_call",
 ];
 
 impl AgentGrants {
@@ -267,6 +269,25 @@ pub enum PendingPurpose {
     Credential,
     /// SSH sign request: approval releases the sign, no grant token.
     SshSign,
+    /// MCP secret read (ADR 0116): approval records the chosen ladder
+    /// duration as the outcome; the waiting tool call turns it into a
+    /// volatile grant scoped to (pairing, item, tool).
+    McpRead,
+    /// CLI stdio MCP session: approval mints a volatile session token
+    /// bound to the resolved parent process.
+    McpSession,
+}
+
+impl PendingPurpose {
+    /// Stable wire tag for the desktop pending list.
+    pub fn as_tag(&self) -> &'static str {
+        match self {
+            Self::Credential => "credential",
+            Self::SshSign => "ssh_sign",
+            Self::McpRead => "mcp_read",
+            Self::McpSession => "mcp_session",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -384,6 +384,11 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "agents.revoke",
     "agents.list",
     "agents.set_yolo",
+    // ADR 0116: MCP agent-access management (pairing, revocation, yolo).
+    "mcp.status",
+    "mcp.pair",
+    "mcp.revoke",
+    "mcp.yolo_set",
     // The SSH agent policy is device-local state, not vault data.
     "agent.policy.get",
     "agent.policy.set",
