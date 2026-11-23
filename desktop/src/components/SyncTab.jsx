@@ -779,7 +779,7 @@ const [customError, setCustomError] = createSignal(null);
       <div class="flex items-center justify-end -mt-1">
         <ExternalLink
           href="https://baluard.app/what-the-git/"
-          class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer outline-none"
+          class="inline-flex items-center gap-1 text-[11px] font-medium text-[var(--color-muted)] hover:text-[var(--color-primary-strong)] transition-colors cursor-pointer outline-none"
         >
           <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10" />
@@ -1005,7 +1005,7 @@ const [customError, setCustomError] = createSignal(null);
                         </Button>
                       </div>
                       <Show when={customProbeOk()}>
-                        <p class="text-[10px] text-[var(--color-success)]">
+                        <p class="text-[10px] text-[var(--color-primary-strong)]">
                           {t("sync.customProbeOk")}
                         </p>
                       </Show>
@@ -1037,7 +1037,7 @@ const [customError, setCustomError] = createSignal(null);
                       <Show when={customChanged()}>
                         {(chg) => (
                           <div class="rounded-lg border border-[var(--color-danger)] p-3 space-y-1">
-                            <p class="text-[10px] font-medium text-[var(--color-danger)]">
+                            <p class="text-[10px] font-medium text-[var(--color-danger-strong)]">
                               {t("sync.customChangedTitle")}
                             </p>
                             <p class="text-[10px] leading-relaxed text-[var(--color-text)]">
@@ -1050,7 +1050,7 @@ const [customError, setCustomError] = createSignal(null);
                         )}
                       </Show>
                       <Show when={customError()}>
-                        <p class="text-[10px] text-[var(--color-danger)] break-all">{customError()}</p>
+                        <p class="text-[10px] text-[var(--color-danger-strong)] break-all">{customError()}</p>
                       </Show>
                     </div>
                   </Show>
@@ -1109,7 +1109,7 @@ const [customError, setCustomError] = createSignal(null);
                   <h5 class="text-xs font-bold text-[var(--color-text)]">{t("sync.deviceFlowTitle", { provider: providerLabel(selectedProvider()) })}</h5>
                   <p class="text-[10px] text-[var(--color-muted)]">{t("sync.deviceFlowInstructions")}</p>
                   <div class="flex items-center justify-center gap-2 py-2">
-                    <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
+                    <span class="text-lg font-mono font-bold text-[var(--color-primary-strong)] tracking-widest">{authSession().user_code}</span>
                     <CopyButton value={authSession().user_code?.replace(/-/g, "")} />
                   </div>
                   <div class="flex justify-center">
@@ -1200,7 +1200,7 @@ const [customError, setCustomError] = createSignal(null);
 
               <Show when={subState() === "creating"}>
                 <div class="flex items-center justify-center gap-2 py-6">
-                  <IconSpinner class="w-4 h-4 text-[var(--color-primary)]" />
+                  <IconSpinner class="w-4 h-4 text-[var(--color-primary-strong)]" />
                   <span class="text-xs text-[var(--color-muted)]">{t("sync.settingUp")}</span>
                 </div>
               </Show>
@@ -1222,7 +1222,7 @@ const [customError, setCustomError] = createSignal(null);
                   <Show when={repoWebUrl(syncStatus()?.remote_url)}>
                     <ExternalLink
                       href={repoWebUrl(syncStatus().remote_url)}
-                      class="inline-flex items-center gap-1 text-[10px] text-[var(--color-primary)] hover:underline mt-0.5"
+                      class="inline-flex items-center gap-1 text-[10px] text-[var(--color-primary-strong)] hover:underline mt-0.5"
                     >
                       {repoOwnerName(syncStatus().remote_url)}
                     </ExternalLink>
@@ -1270,8 +1270,8 @@ const [customError, setCustomError] = createSignal(null);
 
               <Show when={subState() === "syncing"}>
                 <div class="flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[var(--color-primary)]/10">
-                  <IconSpinner class="w-4 h-4 text-[var(--color-primary)]" />
-                  <span class="text-sm text-[var(--color-primary)] font-bold">{t("sync.syncInProgress")}</span>
+                  <IconSpinner class="w-4 h-4 text-[var(--color-primary-strong)]" />
+                  <span class="text-sm text-[var(--color-primary-strong)] font-bold">{t("sync.syncInProgress")}</span>
                 </div>
               </Show>
 

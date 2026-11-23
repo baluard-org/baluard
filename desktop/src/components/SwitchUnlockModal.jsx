@@ -166,7 +166,7 @@ export default function SwitchUnlockModal(props) {
         <div class="bg-[var(--color-sidebar)] border border-[var(--color-border)] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
           <div class="flex items-center gap-3 mb-4">
             <div class="w-10 h-10 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
-              <IconLock class="w-5 h-5 text-[var(--color-primary)]" />
+              <IconLock class="w-5 h-5 text-[var(--color-primary-strong)]" />
             </div>
             <div class="min-w-0">
               <h3 id="switch-unlock-title" class="text-lg font-bold text-[var(--color-text)] leading-tight">

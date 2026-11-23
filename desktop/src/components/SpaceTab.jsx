@@ -130,7 +130,7 @@ export default function SpaceTab() {
   function policyHint(key) {
     return (
       <Show when={recommendedFor(key) !== undefined}>
-        <span class="text-[10px] text-[var(--color-primary)] mt-0.5">
+        <span class="text-[10px] text-[var(--color-primary-strong)] mt-0.5">
           {t("space.policyHint", { value: policyValue(key) })}
         </span>
       </Show>
@@ -345,7 +345,7 @@ export default function SpaceTab() {
             {spaceTeam() == null ? "\u2026" : spaceTeam().flipped ? t("space.teamOn") : t("space.teamOff")}
           </span>
           <Show when={spaceTeam() && !spaceTeam().flipped && spaceTeam().missing_wrap_pubkey > 0}>
-            <span class="text-[10px] text-[var(--color-danger)] mt-0.5">
+            <span class="text-[10px] text-[var(--color-danger-strong)] mt-0.5">
               {t("space.teamMissing", { n: spaceTeam().missing_wrap_pubkey })}
             </span>
           </Show>

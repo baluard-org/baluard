@@ -69,6 +69,7 @@ import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.components.CipherRowCard
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.SyncIconButton
+import app.baluard.mobile.ui.theme.BaluardTheme
 import app.baluard.mobile.sync.SyncPhase
 import app.baluard.mobile.ui.components.BaluardDivider
 import app.baluard.mobile.ui.components.BaluardSearchField
@@ -235,20 +236,20 @@ fun VaultHomeScreen(
                 Icon(
                     imageVector = Icons.Default.Folder,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = BaluardTheme.colors.textPrimary,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "$vaultName (${ciphers.size})",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = BaluardTheme.colors.textPrimary,
                     modifier = Modifier.weight(1f),
                 )
                 Icon(
                     imageVector = Icons.Default.SwapHoriz,
                     contentDescription = t("home.switchVault"),
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = BaluardTheme.colors.textPrimary,
                     modifier = Modifier.size(16.dp),
                 )
             }
@@ -333,14 +334,14 @@ fun VaultHomeScreen(
                                 Icon(
                                     imageVector = Icons.Default.AddCircle,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = BaluardTheme.colors.textPrimary,
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
                                     text = t("onboarding.createVault"),
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                             }
                             Row(
@@ -356,14 +357,14 @@ fun VaultHomeScreen(
                                 Icon(
                                     imageVector = Icons.Default.Add,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = BaluardTheme.colors.textPrimary,
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
                                     text = t("home.addVault"),
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                             }
                         }
@@ -412,7 +413,7 @@ fun VaultHomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag(E2eTags.LIST_SEARCH)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
             )
 
             if (query.isNotBlank()) {
@@ -525,7 +526,7 @@ fun VaultHomeScreen(
                     Text(
                         text = t("home.viewAll"),
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = BaluardTheme.colors.textPrimary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { onOpenKind(EntryListKind.Favorites) }
@@ -603,7 +604,7 @@ fun VaultHomeScreen(
                             label = folder.name,
                             count = count,
                             icon = Icons.Default.Folder,
-                            iconColor = MaterialTheme.colorScheme.secondary,
+                            iconColor = BaluardTheme.colors.textPrimary,
                             onClick = { onOpenKind(EntryListKind.Folder(folder.id)) },
                         )
                         if (index < sorted.size - 1) {
@@ -674,7 +675,7 @@ fun VaultHomeScreen(
                     label = t("home.allTags"),
                     count = tagCounts.size,
                     icon = Icons.Default.LocalOffer,
-                    iconColor = Color(0xFF8B5CF6),
+                    iconColor = BaluardTheme.colors.textPrimary,
                     onClick = onOpenTags,
                 )
             }
@@ -691,7 +692,7 @@ fun VaultHomeScreen(
                     label = t("home.archive"),
                     count = archived.size,
                     icon = Icons.Default.Archive,
-                    iconColor = Color(0xFFD97706),
+                    iconColor = BaluardTheme.colors.onWarning,
                     onClick = { onOpenKind(EntryListKind.Archive) },
                 )
                 BaluardDivider(
@@ -1006,7 +1007,7 @@ fun TagListScreen(
                         label = tag,
                         count = count,
                         icon = Icons.Default.LocalOffer,
-                        iconColor = Color(0xFF8B5CF6),
+                        iconColor = BaluardTheme.colors.textPrimary,
                         onClick = { onTag(tag) },
                     )
                     if (index < counts.size - 1) {

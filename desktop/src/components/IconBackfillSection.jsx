@@ -172,7 +172,7 @@ export default function IconBackfillSection() {
           <div class="p-3 rounded-xl bg-[var(--color-sidebar)]/60 border border-[var(--color-border)] space-y-2">
             <div class="flex items-center justify-between text-[10px]">
               <span class="flex items-center gap-1.5 text-[var(--color-text)] font-bold">
-                <IconSpinner class="w-3.5 h-3.5 text-[var(--color-primary)]" />
+                <IconSpinner class="w-3.5 h-3.5 text-[var(--color-primary-strong)]" />
                 {t("sync.iconsRunning", {
                   done: iconsState()?.done ?? 0,
                   total: iconsState()?.total ?? 0,

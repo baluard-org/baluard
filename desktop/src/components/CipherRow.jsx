@@ -28,7 +28,7 @@ export default function CipherRow(props) {
           <Show when={props.cipher.type === "signingKey" && props.cipher.expires_at != null && Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) <= 30}>
             <span
               data-testid="row-expiry-badge"
-              class={`shrink-0 px-1.5 py-px rounded-full text-[10px] font-semibold border ${Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) < 0 ? "bg-red-500/15 text-red-500 border-red-500/30" : "bg-amber-500/15 text-amber-500 border-amber-500/30"}`}
+              class={`shrink-0 px-1.5 py-px rounded-full text-[10px] font-semibold border ${Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) < 0 ? "bg-red-500/15 text-[var(--color-danger-strong)] border-red-500/30" : "bg-amber-500/15 text-amber-500 border-amber-500/30"}`}
             >
               {Math.floor((props.cipher.expires_at * 1000 - Date.now()) / 86_400_000) < 0 ? t("signing.expired") : t("signing.expiresSoon")}
             </span>

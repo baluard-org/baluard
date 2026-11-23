@@ -203,7 +203,7 @@ export default function RecoverVaultScreen() {
 								class="w-full px-3 py-2.5 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] text-sm text-[var(--color-text)] font-mono resize-none"
 							/>
 							<Show when={phrase().trim() && phraseWords().length !== 24}>
-								<p class="text-xs text-[var(--color-danger)] mt-1">
+								<p class="text-xs text-[var(--color-danger-strong)] mt-1">
 									{t("recover.badPhrase")}
 								</p>
 							</Show>

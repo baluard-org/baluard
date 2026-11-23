@@ -47,7 +47,7 @@ export default function CopyableField(props) {
             <IconCopy class="w-4 h-4" />
           }>
             <span class="copy-feedback">
-              <IconCheck class="w-4 h-4 text-[var(--color-success)]" />
+              <IconCheck class="w-4 h-4 text-[var(--color-primary-strong)]" />
             </span>
           </Show>
         </button>

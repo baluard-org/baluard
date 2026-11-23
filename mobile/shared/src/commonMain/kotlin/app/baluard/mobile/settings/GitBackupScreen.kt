@@ -65,6 +65,7 @@ import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.components.BaluardTopBar
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.toast.Toast
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Git backup as a full settings page (the old single AlertDialog crushed
@@ -593,7 +594,7 @@ fun GitBackupScreen(
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = BaluardTheme.colors.textPrimary,
                             )
                         }
 
@@ -611,7 +612,7 @@ fun GitBackupScreen(
                                     style = MaterialTheme.typography.titleLarge,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 BaluardOutlinedButton(
@@ -640,14 +641,14 @@ fun GitBackupScreen(
                                 Spacer(Modifier.height(8.dp))
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 t("common.cancel"),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable(enabled = !gitConnectBusy) {

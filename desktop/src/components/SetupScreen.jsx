@@ -193,7 +193,7 @@ export default function SetupScreen() {
               <h5 class="text-sm font-bold text-[var(--color-text)]">{t("sync.deviceFlowTitle", { provider: providerLabel(t, selectedProvider()) })}</h5>
               <p class="text-xs text-[var(--color-muted)]">{t("sync.deviceFlowInstructions")}</p>
               <div class="flex items-center justify-center gap-2 py-2">
-                <span class="text-lg font-mono font-bold text-[var(--color-primary)] tracking-widest">{authSession().user_code}</span>
+                <span class="text-lg font-mono font-bold text-[var(--color-primary-strong)] tracking-widest">{authSession().user_code}</span>
                 <CopyButton value={authSession().user_code?.replace(/-/g, "")} />
               </div>
               <div class="flex justify-center">
@@ -264,7 +264,7 @@ export default function SetupScreen() {
               </Show>
               <Show when={subState() === "creating"}>
                 <div class="flex items-center justify-center gap-2 py-4">
-                  <IconSpinner class="w-4 h-4 text-[var(--color-primary)]" />
+                  <IconSpinner class="w-4 h-4 text-[var(--color-primary-strong)]" />
                   <span class="text-sm text-[var(--color-muted)]">{t("sync.settingUp")}</span>
                 </div>
               </Show>
@@ -285,7 +285,7 @@ export default function SetupScreen() {
               <span class="text-xs text-red-300 leading-relaxed">{error()}</span>
             </div>
             <Show when={phase() !== "connected"}>
-              <button type="button" onClick={reset} class="mb-6 text-xs text-[var(--color-primary)] hover:underline cursor-pointer">
+              <button type="button" onClick={reset} class="mb-6 text-xs text-[var(--color-primary-strong)] hover:underline cursor-pointer">
                 {t("entry.cancel")}
               </button>
             </Show>

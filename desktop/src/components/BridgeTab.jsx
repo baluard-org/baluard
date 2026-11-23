@@ -163,7 +163,7 @@ export default function BridgeTab() {
       <Show when={pending()}>
         <div class={`p-4 rounded-lg border space-y-3 ${extConnected() ? "border-[var(--color-primary)] bg-[var(--color-primary)]/5" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
           <Show when={extConnected()} fallback={<div class="text-sm font-semibold">{t("bridge.waitingForExtension")}</div>}>
-            <div class="text-sm font-semibold text-[var(--color-primary)]">{t("bridge.extensionConnected")}</div>
+            <div class="text-sm font-semibold text-[var(--color-primary-strong)]">{t("bridge.extensionConnected")}</div>
             <div class="text-xs text-[var(--color-muted)]">{t("bridge.extensionConnectedHint")}</div>
           </Show>
           <Show when={!extConnected()}>
@@ -198,7 +198,7 @@ export default function BridgeTab() {
       </Show>
 
       <Show when={error()}>
-        <div class="text-xs text-red-500">{error()}</div>
+        <div class="text-xs text-[var(--color-danger-strong)]">{error()}</div>
       </Show>
 
       <div class="space-y-2">
@@ -217,7 +217,7 @@ export default function BridgeTab() {
                   {browserLabel(p.browser)} · {t("bridge.pairedOn")} {new Date((p.created_at || 0) * 1000).toLocaleDateString()}
                 </div>
               </div>
-              <Button onClick={() => revoke(p.pairing_id)} variant="ghost" class="text-red-500">
+              <Button onClick={() => revoke(p.pairing_id)} variant="ghost" class="text-[var(--color-danger-strong)]">
                 {t("bridge.revoke")}
               </Button>
             </div>

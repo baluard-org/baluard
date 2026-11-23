@@ -455,7 +455,7 @@ export default function VaultView() {
               <button
                 data-testid="new-folder"
                 onClick={() => setShowNewFolder(!showNewFolder())}
-                class="p-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
+                class="p-1 rounded-md border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
                 title={t("vault.newFolder")}
               >
                 <IconPlus class="w-3 h-3" />
@@ -464,7 +464,7 @@ export default function VaultView() {
             <div class="space-y-0.5 mt-1">
               <Show when={showNewFolder()}>
                 <div class="flex items-center gap-1 py-1.5 rounded-xl" style={{ "padding-left": "14px", "padding-right": "6px" }}>
-                  <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
+                  <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary-strong)] opacity-50" />
                   <input
                     data-testid="new-folder-input"
                     class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
@@ -495,7 +495,7 @@ export default function VaultView() {
                 class={`w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-left cursor-pointer transition-colors min-h-[30px] border ${vault.selectedFolder() === NO_FOLDER ? "bg-[var(--color-card)] border-[var(--color-border)] text-[var(--color-text)] shadow-sm" : "border-transparent text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-slate-800/10"}`}
                 style={{ "padding-left": "14px", "padding-right": "14px" }}
               >
-                <IconFolder filled={vault.selectedFolder() === NO_FOLDER} class={`w-3.5 h-3.5 shrink-0 transition-colors ${vault.selectedFolder() === NO_FOLDER ? "text-[var(--color-primary)]" : ""}`} />
+                <IconFolder filled={vault.selectedFolder() === NO_FOLDER} class={`w-3.5 h-3.5 shrink-0 transition-colors ${vault.selectedFolder() === NO_FOLDER ? "text-[var(--color-primary-strong)]" : ""}`} />
                 <span>{t("entry.noFolder")}</span>
               </button>
               <Show when={vault.tags() && vault.tags().length > 0}>
@@ -505,7 +505,7 @@ export default function VaultView() {
                     <Show when={vault.selectedTag()}>
                       <button
                         onClick={() => vault.setSelectedTag(null)}
-                        class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
+                        class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
                       >
                         {t("entry.clearTagFilter")}
                       </button>
@@ -541,7 +541,7 @@ export default function VaultView() {
                     <Show when={vault.selectedCollection()}>
                       <button
                         onClick={() => vault.setSelectedCollection(null)}
-                        class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
+                        class="px-2 py-0.5 text-[9px] font-bold normal-case border border-[var(--color-border)] bg-[var(--color-card)] rounded-md text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer"
                       >
                         {t("shared.clearCollectionFilter")}
                       </button>
@@ -563,7 +563,7 @@ export default function VaultView() {
                   <Show when={vault.isAdmin() === false}>
                     <button
                       onClick={() => setShowAskAccess(true)}
-                      class="w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] hover:bg-slate-800/10 cursor-pointer min-h-[30px]"
+                      class="w-full flex items-center gap-1 py-1.5 rounded-xl text-xs font-bold text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] hover:bg-slate-800/10 cursor-pointer min-h-[30px]"
                       style={{ "padding-left": "14px", "padding-right": "6px" }}
                     >
                       <IconPlus class="w-3.5 h-3.5 shrink-0" />
@@ -780,7 +780,7 @@ export default function VaultView() {
             <Match when={vault.activePane() === "welcome"}>
               <div class="flex-1 flex flex-col items-center justify-center text-[var(--color-muted)] p-8">
                 <div class="w-20 h-20 rounded-3xl bg-[var(--color-sidebar)] border border-[var(--color-border)] flex items-center justify-center text-slate-500 mb-6 shadow-inner">
-                  <IconLock class="w-10 h-10 text-[var(--color-primary)] opacity-85" />
+                  <IconLock class="w-10 h-10 text-[var(--color-primary-strong)] opacity-85" />
                 </div>
                 <p class="text-xs text-[var(--color-muted)] mt-2 max-w-xs text-center leading-relaxed font-semibold">
                   {t("entry.selectPrompt")}

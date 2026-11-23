@@ -94,6 +94,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
+import app.baluard.mobile.ui.theme.BaluardTheme
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
@@ -369,10 +371,10 @@ fun BaluardPrimaryButton(
         enabled = enabled && !loading,
         shape = shape,
         colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary,
-            disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
-            disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
+            containerColor = BaluardTheme.colors.fillPrimary,
+            contentColor = BaluardTheme.colors.onFillPrimary,
+            disabledContainerColor = BaluardTheme.colors.fillPrimary.copy(alpha = 0.35f),
+            disabledContentColor = BaluardTheme.colors.onFillPrimary.copy(alpha = 0.5f),
         ),
         modifier = modifier
             .fillMaxWidth()
@@ -380,7 +382,7 @@ fun BaluardPrimaryButton(
     ) {
         if (loading) {
             CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.onPrimary,
+                color = BaluardTheme.colors.onFillPrimary,
                 modifier = Modifier.size(20.dp),
                 strokeWidth = 2.dp,
             )
@@ -530,11 +532,11 @@ fun BaluardTextField(
             }
         },
         colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
-            focusedBorderColor = MaterialTheme.colorScheme.primary,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            focusedBorderColor = BaluardTheme.colors.textPrimary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
             errorBorderColor = MaterialTheme.colorScheme.error,
         ),
         modifier = modifier.fillMaxWidth(),
@@ -650,12 +652,22 @@ fun CategoryBadge(
 ) {
     val accentColor = (typeAccentColors[typeTag.lowercase()] ?: defaultAccentColors)
         .firstOrNull() ?: MaterialTheme.colorScheme.primary
+    val isDark = BaluardTheme.colors.isDark
+    val badgeTextColor = if (isDark) {
+        lerp(accentColor, Color.White, 0.45f)
+    } else {
+        lerp(accentColor, Color(0xFF102427), 0.35f)
+    }
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(accentColor.copy(alpha = 0.15f))
-            .border(1.dp, accentColor.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
+            .background(accentColor.copy(alpha = if (isDark) 0.18f else 0.12f))
+            .border(
+                1.dp,
+                accentColor.copy(alpha = if (isDark) 0.42f else 0.32f),
+                RoundedCornerShape(6.dp),
+            )
             .padding(horizontal = 8.dp, vertical = 2.dp),
     ) {
         Text(
@@ -664,7 +676,7 @@ fun CategoryBadge(
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,
             ),
-            color = accentColor,
+            color = badgeTextColor,
         )
     }
 }
@@ -807,7 +819,7 @@ fun CipherRowCard(
         modifier = modifier
             .fillMaxWidth()
             // Surface(shape) clips; an extra Modifier.clip doubles the path work.
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -842,7 +854,7 @@ fun CipherRowCard(
                         Icon(
                             imageVector = Icons.Default.Star,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = BaluardTheme.colors.textPrimary,
                             modifier = Modifier.size(14.dp),
                         )
                     }
@@ -858,7 +870,7 @@ fun CipherRowCard(
                             color = if (expiryDays < 0) {
                                 MaterialTheme.colorScheme.error
                             } else {
-                                MaterialTheme.colorScheme.tertiary
+                                BaluardTheme.colors.onWarning
                             },
                             maxLines = 1,
                         )
@@ -888,7 +900,7 @@ fun CipherRowCard(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 modifier = Modifier.size(18.dp),
             )
 
@@ -1027,10 +1039,12 @@ fun BaluardSearchField(
         singleLine = true,
         shape = RoundedCornerShape(12.dp),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            focusedBorderColor = MaterialTheme.colorScheme.primary,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+            // Fill must contrast with the page background or the field reads as
+            // inert text (surfaceContainer is within 2/255 of background in dark).
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            focusedBorderColor = BaluardTheme.colors.textPrimary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
         ),
         modifier = modifier.fillMaxWidth(),
     )

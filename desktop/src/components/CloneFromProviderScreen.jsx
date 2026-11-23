@@ -307,7 +307,7 @@ export default function CloneFromProviderScreen(props) {
           >
             <IconArrowLeft class="w-5 h-5" />
           </button>
-          <IconDownload class="w-6 h-6 text-[var(--color-primary)]" />
+          <IconDownload class="w-6 h-6 text-[var(--color-primary-strong)]" />
           <h1 class="text-xl font-bold text-[var(--color-text)]">
             {t("clone.title")}
           </h1>
@@ -385,7 +385,7 @@ export default function CloneFromProviderScreen(props) {
                   {t("sync.deviceFlowInstructions")}
                 </p>
                 <div class="flex items-center justify-center gap-2 my-3">
-                  <p class="text-2xl font-mono font-bold tracking-widest text-[var(--color-primary)]">
+                  <p class="text-2xl font-mono font-bold tracking-widest text-[var(--color-primary-strong)]">
                     {authInfo().session.user_code}
                   </p>
                   <CopyButton
@@ -395,7 +395,7 @@ export default function CloneFromProviderScreen(props) {
                 </div>
                 <ExternalLink
                   href={authInfo().session.verification_uri}
-                  class="text-sm text-[var(--color-primary)] underline"
+                  class="text-sm text-[var(--color-primary-strong)] underline"
                 >
                   {authInfo().session.verification_uri}
                 </ExternalLink>
@@ -410,7 +410,7 @@ export default function CloneFromProviderScreen(props) {
                 <Show when={authInfo()?.url}>
                   <ExternalLink
                     href={authInfo().url}
-                    class="text-sm text-[var(--color-primary)] underline"
+                    class="text-sm text-[var(--color-primary-strong)] underline"
                   >
                     {t("clone.webOAuthRelink")}
                   </ExternalLink>
@@ -480,7 +480,7 @@ export default function CloneFromProviderScreen(props) {
         <Show when={step() === "unlock"}>
           <div class="py-2">
             <div class="flex items-center gap-2 mb-4 text-[var(--color-text)]">
-              <IconLock class="w-5 h-5 text-[var(--color-primary)]" />
+              <IconLock class="w-5 h-5 text-[var(--color-primary-strong)]" />
               <p class="text-sm">{t("clone.enrollBody")}</p>
             </div>
             <form
@@ -609,7 +609,7 @@ export default function CloneFromProviderScreen(props) {
               </div>
             </Show>
             <Show when={clashError()}>
-              <p class="text-sm text-[var(--color-danger)] mt-3">
+              <p class="text-sm text-[var(--color-danger-strong)] mt-3">
                 {clashError()}
               </p>
             </Show>

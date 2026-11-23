@@ -97,10 +97,10 @@ export default function TotpWidget(props) {
             <button
               data-testid="totp-copy"
               onClick={copy}
-              class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+              class="p-1.5 rounded-lg text-[var(--color-accent-strong)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
               title={t("entry.copyCode")}
             >
-              <Show when={!copied()} fallback={<span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>}>
+              <Show when={!copied()} fallback={<span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-primary-strong)]" /></span>}>
                 <IconCopy class="w-4 h-4" />
               </Show>
             </button>
@@ -120,7 +120,7 @@ export default function TotpWidget(props) {
           <button
             data-testid="totp-retry"
             onClick={() => setRetryNonce((n) => n + 1)}
-            class="p-1.5 rounded-lg text-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+            class="p-1.5 rounded-lg text-[var(--color-accent-strong)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
             title={t("entry.retry")}
           >
             <IconRefresh class="w-4 h-4" />

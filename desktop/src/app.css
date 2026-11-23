@@ -193,6 +193,12 @@
   --color-warning: #fcd34d;       /* derived: app's dark warning tone */
   --color-danger: #ef4444;
   --color-success: #10b981;
+  /* Strong variants: for text/icons on tinted surfaces (WCAG 1.4.3). Dark
+     aliases the base tones (they already clear 4.5:1 everywhere); light
+     darkens the green family to pass on all four surfaces. */
+  --color-primary-strong: #b3e55c;
+  --color-accent-strong: #cfc6f9;
+  --color-danger-strong: #f87171;
 
   --motion-duration-fast: 150ms;
   --motion-duration-normal: 200ms;
@@ -211,18 +217,22 @@
   --color-card: #e6e9ef;          /* Mantle */
   --color-surface: #ccd0da;       /* Surface0 */
   --color-border: #bcc0cc;        /* Surface1 */
-  --color-border-focus: #40a02b;  /* Green */
+  --color-border-focus: #256015;  /* Green, focus ring >= 3:1 on all surfaces */
   --color-text: #4c4f69;          /* Text */
   --color-text-secondary: #5c5f77;/* Subtext1 */
-  --color-text-muted: #6c6f85;    /* Subtext0 */
-  --color-muted: #6c6f85;         /* Subtext0 */
-  --color-primary: #40a02b;       /* Green */
+  --color-text-muted: #55586a;    /* darkened Subtext0: 4.5:1 on every surface */
+  --color-muted: #55586a;
+  --color-primary: #40a02b;       /* Green: FILL token — keep for buttons/fills */
   --color-primary-text: #102427;  /* Dark text on green fills */
   --color-primary-hover: #55b83b; /* Green, lighter tint */
-  --color-accent: #66bf4f;        /* Green, soft companion */
-  --color-warning: #df8e1d;       /* Yellow */
-  --color-danger: #d20f39;        /* Red */
+  --color-accent: #66bf4f;        /* Green, soft companion: FILL token (totp bar) */
+  --color-warning: #7c4d0d;       /* Yellow darkened to 4.5:1 on all surfaces */
+  --color-danger: #b70f2a;        /* Red darkened: text >= 4.5:1 everywhere, white on fill 6.7:1 */
   --color-success: #40a02b;       /* Green */
+  /* Strong variants for text/icons on tinted surfaces (WCAG 1.4.3) */
+  --color-primary-strong: #256015; /* 4.9-6.7:1 on all four surfaces */
+  --color-accent-strong: #256015;
+  --color-danger-strong: #a90e26;  /* 4.9:1 even on detail */
 }
 
 /* Global focus outlines for keyboard navigation accessibility */

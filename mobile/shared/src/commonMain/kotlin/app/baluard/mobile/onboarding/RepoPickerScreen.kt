@@ -40,6 +40,7 @@ import app.baluard.mobile.i18n.t
 import app.baluard.mobile.ui.components.BaluardAmbientBackground
 import app.baluard.mobile.ui.components.BaluardCard
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Vault-repo picker styled after Baluard design language.
@@ -69,7 +70,7 @@ fun RepoPickerScreen(
                         modifier = Modifier.fillMaxWidth().padding(12.dp),
                     ) {
                         CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.primary,
+                            color = BaluardTheme.colors.textPrimary,
                             modifier = Modifier.size(48.dp),
                             strokeWidth = 3.dp,
                         )
@@ -158,7 +159,7 @@ fun RepoPickerScreen(
                                 Icon(
                                     imageVector = Icons.Default.Folder,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = BaluardTheme.colors.textPrimary,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }

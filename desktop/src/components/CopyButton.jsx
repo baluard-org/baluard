@@ -37,7 +37,7 @@ export default function CopyButton(props) {
         <IconCopy class={props.iconClass || "w-4 h-4"} />
       }>
         <span class="copy-btn__feedback copy-feedback">
-          <IconCheck class={props.iconClass || "w-4 h-4 text-[var(--color-success)]"} />
+          <IconCheck class={props.iconClass || "w-4 h-4 text-[var(--color-primary-strong)]"} />
         </span>
       </Show>
       <Show when={props.label && !copied()}>

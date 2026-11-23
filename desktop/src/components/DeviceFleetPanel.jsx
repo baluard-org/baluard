@@ -83,10 +83,10 @@ export default function DeviceFleetPanel() {
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-3">
                     <div class="w-10 h-10 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] flex items-center justify-center">
-                      <IconMonitor class="w-5 h-5 text-[var(--color-primary)]" />
+                      <IconMonitor class="w-5 h-5 text-[var(--color-primary-strong)]" />
                     </div>
                     <div>
-                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name} <Show when={device.id === vault.selfDeviceId()}><span class="text-[10px] font-normal text-[var(--color-primary)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-md ml-1">{t("devices.thisDevice")}</span></Show></p>
+                      <p class="text-sm font-bold text-[var(--color-text)]">{device.name} <Show when={device.id === vault.selfDeviceId()}><span class="text-[10px] font-normal text-[var(--color-primary-strong)] bg-[var(--color-primary)]/10 px-1.5 py-0.5 rounded-md ml-1">{t("devices.thisDevice")}</span></Show></p>
                       <p class="text-xs text-[var(--color-muted)] font-mono">{device.id?.substring(0, 8)}...</p>
                     </div>
                   </div>

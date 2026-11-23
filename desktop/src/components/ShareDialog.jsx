@@ -152,7 +152,7 @@ export default function ShareDialog(props) {
                         onClick={() => setFlavor("guest")}
                         class={`flex-1 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer ${
                           flavor() === "guest"
-                            ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                            ? "border-[var(--color-primary)] text-[var(--color-primary-strong)]"
                             : "border-[var(--color-border)] text-[var(--color-muted)]"
                         }`}
                       >
@@ -163,7 +163,7 @@ export default function ShareDialog(props) {
                         onClick={() => setFlavor("contact")}
                         class={`flex-1 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer ${
                           flavor() === "contact"
-                            ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                            ? "border-[var(--color-primary)] text-[var(--color-primary-strong)]"
                             : "border-[var(--color-border)] text-[var(--color-muted)]"
                         }`}
                       >
@@ -206,7 +206,7 @@ export default function ShareDialog(props) {
                             onClick={() => setExpiry(secs)}
                             class={`px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer ${
                               expiry() === secs
-                                ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                                ? "border-[var(--color-primary)] text-[var(--color-primary-strong)]"
                                 : "border-[var(--color-border)] text-[var(--color-muted)]"
                             }`}
                           >

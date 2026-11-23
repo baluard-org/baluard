@@ -191,7 +191,7 @@ export default function ContactsTab() {
                   <div class="flex justify-end gap-2 mt-2">
                     <button
                       onClick={() => setRevealed(revealed() === c.identity_signing_pubkey ? null : c.identity_signing_pubkey)}
-                      class="text-[10px] font-bold text-[var(--color-primary)] cursor-pointer"
+                      class="text-[10px] font-bold text-[var(--color-primary-strong)] cursor-pointer"
                     >
                       {revealed() === c.identity_signing_pubkey ? t("contacts.hideCode") : t("contacts.showCode")}
                     </button>
@@ -199,7 +199,7 @@ export default function ContactsTab() {
                       <button
                         onClick={() => markVerified(c.identity_signing_pubkey)}
                         disabled={busy()}
-                        class="text-[10px] font-bold text-[var(--color-primary)] cursor-pointer disabled:opacity-50"
+                        class="text-[10px] font-bold text-[var(--color-primary-strong)] cursor-pointer disabled:opacity-50"
                       >
                         {t("contacts.markVerified")}
                       </button>

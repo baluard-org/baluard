@@ -941,7 +941,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
             <button
               onClick={loadReview}
               disabled={reviewBusy()}
-              class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20 text-[10px] font-bold text-[var(--color-primary)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed transition-all shadow-sm"
+              class="px-3 py-1.5 rounded-lg bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/20 text-[10px] font-bold text-[var(--color-primary-strong)] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed transition-all shadow-sm"
             >
               {reviewBusy() ? t("people.reviewRunning") : t("people.reviewRun")}
             </button>
@@ -1156,7 +1156,7 @@ const [verifyBusy, setVerifyBusy] = createSignal(false);
                     {new Date(e.at * 1000).toLocaleString()}
                   </span>
                   <span class="font-bold shrink-0">{e.actor}</span>
-                  <span class="text-[10px] font-bold border rounded-full px-2 py-0.5 text-[var(--color-primary)] border-[var(--color-primary)]/30 shrink-0">
+                  <span class="text-[10px] font-bold border rounded-full px-2 py-0.5 text-[var(--color-primary-strong)] border-[var(--color-primary)]/30 shrink-0">
                     {t(TL_KINDS[e.kind] || e.kind)}
                   </span>
                   <span class="flex-1">{e.detail}</span>

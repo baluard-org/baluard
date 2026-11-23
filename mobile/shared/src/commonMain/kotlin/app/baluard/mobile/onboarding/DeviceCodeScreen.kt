@@ -48,6 +48,7 @@ import app.baluard.mobile.ui.components.BaluardCard
 import app.baluard.mobile.ui.components.BaluardLogoBadge
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * RFC 8628 device-code screen styled after Baluard design language.
@@ -146,7 +147,7 @@ fun DeviceCodeScreen(
                                 letterSpacing = 4.sp,
                             ),
                             fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = BaluardTheme.colors.textPrimary,
                         )
                     }
 
@@ -209,7 +210,7 @@ fun DeviceCodeScreen(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
                                 strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = BaluardTheme.colors.textPrimary,
                             )
                             Spacer(Modifier.size(10.dp))
                             Text(

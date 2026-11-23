@@ -136,7 +136,7 @@ export default function McpPairingsSection() {
       <Show
         when={server()?.running}
         fallback={
-          <div class="text-xs text-[var(--color-danger)]" data-testid="mcp-server-error">
+          <div class="text-xs text-[var(--color-danger-strong)]" data-testid="mcp-server-error">
             {t("mcp.serverError", { error: server()?.error || "" })}
           </div>
         }

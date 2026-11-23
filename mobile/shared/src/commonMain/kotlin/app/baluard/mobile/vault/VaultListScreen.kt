@@ -58,6 +58,7 @@ import app.baluard.mobile.ui.components.BaluardTopBar
 import app.baluard.mobile.ui.components.CipherRowCard
 import app.baluard.mobile.ui.components.SyncIconButton
 import app.baluard.mobile.ui.E2eTags
+import app.baluard.mobile.ui.theme.BaluardTheme
 import androidx.compose.ui.platform.testTag
 
 /**
@@ -278,7 +279,7 @@ fun EntryListScreen(
                                     Icon(
                                         imageVector = Icons.Default.Unarchive,
                                         contentDescription = t("detail.unarchive"),
-                                        tint = MaterialTheme.colorScheme.primary,
+                                        tint = BaluardTheme.colors.textPrimary,
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
@@ -288,7 +289,7 @@ fun EntryListScreen(
                                     Icon(
                                         imageVector = Icons.Default.Restore,
                                         contentDescription = t("detail.restore"),
-                                        tint = MaterialTheme.colorScheme.primary,
+                                        tint = BaluardTheme.colors.textPrimary,
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }

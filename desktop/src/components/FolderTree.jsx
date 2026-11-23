@@ -108,7 +108,7 @@ export function FolderNode(props) {
             <svg class={`w-3 h-3 transition-transform ${expanded() ? "rotate-90" : ""}`} fill="currentColor" viewBox="0 0 20 20"><path d="M6 4l8 6-8 6V4z"/></svg>
           </button>
         ) : (depth() > 0 ? <span class="w-4 shrink-0" /> : null)}
-        <IconFolder filled={isSelected()} class={`w-3.5 h-3.5 shrink-0 transition-colors ${isSelected() ? "text-[var(--color-primary)]" : ""}`} />
+        <IconFolder filled={isSelected()} class={`w-3.5 h-3.5 shrink-0 transition-colors ${isSelected() ? "text-[var(--color-primary-strong)]" : ""}`} />
 
         <Show when={renaming()} fallback={
           <span class="truncate flex-1 min-w-0">{props.node.name}</span>
@@ -137,7 +137,7 @@ export function FolderNode(props) {
         <Show when={hovered() && !renaming()}>
           <div class="ml-auto flex items-center gap-0.5 shrink-0 pl-1">
             <button title={t("entry.addSubfolder")}
-              class="p-0.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
+              class="p-0.5 rounded border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-muted)] hover:text-[var(--color-primary-strong)] hover:bg-[var(--color-sidebar)] transition-all cursor-pointer flex items-center justify-center"
               onClick={e => { e.stopPropagation(); setExpanded(true); setAddingChild(true); }}>
               <IconPlus class="w-3 h-3" />
             </button>
@@ -170,7 +170,7 @@ export function FolderNode(props) {
           style={{ "padding-left": `${14 + (depth() + 1) * 16}px` }}
         >
           <span class="w-4 shrink-0" />
-          <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary)] opacity-50" />
+          <IconFolder class="w-3.5 h-3.5 shrink-0 text-[var(--color-primary-strong)] opacity-50" />
           <input
             class="flex-1 min-w-0 bg-transparent border-b border-[var(--color-primary)] text-xs text-[var(--color-text)] outline-none placeholder:text-[var(--color-muted)] pb-px"
             placeholder={t("entry.subfolderPlaceholder")}

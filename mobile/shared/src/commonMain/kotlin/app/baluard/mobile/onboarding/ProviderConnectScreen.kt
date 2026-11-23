@@ -57,6 +57,7 @@ import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.BackPressHandler
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Provider picker styled after Baluard design language.
@@ -379,13 +380,13 @@ private fun ProviderSelectCard(
                     modifier = Modifier
                         .size(22.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.primary),
+                        .background(BaluardTheme.colors.fillPrimary),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = t("common.selected"),
-                        tint = MaterialTheme.colorScheme.onPrimary,
+                        tint = BaluardTheme.colors.onFillPrimary,
                         modifier = Modifier.size(14.dp),
                     )
                 }

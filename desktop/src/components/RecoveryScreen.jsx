@@ -182,7 +182,7 @@ export default function RecoveryScreen() {
             <Show when={copied()} fallback={
               <IconCopy class="w-4 h-4" />
             }>
-              <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>
+              <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-primary-strong)]" /></span>
             </Show>
           </button>
         </div>
@@ -195,7 +195,7 @@ export default function RecoveryScreen() {
           <button
             type="button"
             onClick={() => handleDownload("txt")}
-            class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary-strong)] transition-all cursor-pointer"
           >
             <IconDownload class="w-4 h-4" />
             {t("recovery.downloadTxt")}
@@ -203,7 +203,7 @@ export default function RecoveryScreen() {
           <button
             type="button"
             onClick={() => handleDownload("pdf")}
-            class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+            class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] text-sm font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary-strong)] transition-all cursor-pointer"
           >
             <IconDownload class="w-4 h-4" />
             {t("recovery.downloadPdf")}
@@ -227,7 +227,7 @@ export default function RecoveryScreen() {
                 title={t("common.copy")}
               >
                 <Show when={kitCopied()} fallback={<IconCopy class="w-4 h-4" />}>
-                  <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>
+                  <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-primary-strong)]" /></span>
                 </Show>
               </button>
             </div>
@@ -235,7 +235,7 @@ export default function RecoveryScreen() {
               <button
                 type="button"
                 onClick={() => handleKitDownload("txt")}
-                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary-strong)] transition-all cursor-pointer"
               >
                 <IconDownload class="w-3.5 h-3.5" />
                 {t("recovery.downloadTxt")}
@@ -243,7 +243,7 @@ export default function RecoveryScreen() {
               <button
                 type="button"
                 onClick={() => handleKitDownload("pdf")}
-                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+                class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] text-xs font-medium text-[var(--color-text)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary-strong)] transition-all cursor-pointer"
               >
                 <IconDownload class="w-3.5 h-3.5" />
                 {t("recovery.downloadPdf")}
@@ -292,7 +292,7 @@ export default function RecoveryScreen() {
           </fieldset>
 
           <Show when={allVerified()}>
-            <div class="flex items-center gap-2 text-sm text-[var(--color-success)] font-semibold">
+            <div class="flex items-center gap-2 text-sm text-[var(--color-primary-strong)] font-semibold">
               <IconCheck class="w-4 h-4" />
               {t("recovery.verified")}
             </div>

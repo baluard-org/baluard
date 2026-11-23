@@ -82,6 +82,7 @@ import app.baluard.mobile.ui.components.CipherAvatar
 import app.baluard.mobile.ui.components.CopyableFieldRow
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.UpgradeSheet
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Decrypted cipher detail styled after Baluard design language.
@@ -214,7 +215,7 @@ fun CipherDetailScreen(
                                 Icon(
                                     imageVector = Icons.Default.Star,
                                     contentDescription = t("vault.favorite"),
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = BaluardTheme.colors.textPrimary,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
@@ -437,7 +438,7 @@ fun CipherDetailScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(Modifier.width(10.dp))
@@ -471,7 +472,7 @@ fun CipherDetailScreen(
                                     Icon(
                                         imageVector = Icons.Default.Download,
                                         contentDescription = t("detail.downloadAttachment"),
-                                        tint = MaterialTheme.colorScheme.primary,
+                                        tint = BaluardTheme.colors.textPrimary,
                                         modifier = Modifier.size(18.dp),
                                     )
                                 }
@@ -500,7 +501,7 @@ fun CipherDetailScreen(
                             Icon(
                                 imageVector = Icons.Default.Link,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(Modifier.width(10.dp))
@@ -532,7 +533,7 @@ fun CipherDetailScreen(
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                                     contentDescription = t("detail.openInBrowser"),
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = BaluardTheme.colors.textPrimary,
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
@@ -586,14 +587,14 @@ fun CipherDetailScreen(
                             Icon(
                                 imageVector = Icons.Default.OpenInFull,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier.size(14.dp),
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 text = t("detail.viewNotes"),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = BaluardTheme.colors.textPrimary,
                             )
                         }
                     }

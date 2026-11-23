@@ -27,6 +27,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +59,7 @@ import app.baluard.mobile.ui.components.BaluardTopBar
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.toast.Toast
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * People & access (§4.8-7): the mobile admin surface. Invite members,
@@ -376,17 +378,23 @@ fun PeopleScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.padding(top = 6.dp),
                                 ) {
-                                    Button(onClick = {
-                                        scope.launch {
-                                            runCatching {
-                                                repo.joinRequestsApprove(vault, req.reqId)
-                                            }.onSuccess {
-                                                Toast.success(t("people.joinApproved"))
-                                                refreshAll()
-                                                onSyncNudge()
-                                            }.onFailure { Toast.error(it.message ?: t("error.generic")) }
-                                        }
-                                    }) { Text(t("people.approve")) }
+                                    Button(
+                                        onClick = {
+                                            scope.launch {
+                                                runCatching {
+                                                    repo.joinRequestsApprove(vault, req.reqId)
+                                                }.onSuccess {
+                                                    Toast.success(t("people.joinApproved"))
+                                                    refreshAll()
+                                                    onSyncNudge()
+                                                }.onFailure { Toast.error(it.message ?: t("error.generic")) }
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = BaluardTheme.colors.fillPrimary,
+                                            contentColor = BaluardTheme.colors.onFillPrimary,
+                                        ),
+                                    ) { Text(t("people.approve")) }
                                     OutlinedButton(onClick = {
                                         scope.launch {
                                             runCatching {
@@ -423,7 +431,7 @@ fun PeopleScreen(
                                         else -> t("people.askRead")
                                     },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                                 if (ask.note.isNotBlank()) {
                                     Text(
@@ -436,17 +444,23 @@ fun PeopleScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.padding(top = 6.dp),
                                 ) {
-                                    Button(onClick = {
-                                        scope.launch {
-                                            runCatching {
-                                                repo.collectionRequestApprove(vault, ask.requestId, ask.requesterMemberId, "read")
-                                            }.onSuccess {
-                                                Toast.success(t("people.askApproved", ask.requesterName))
-                                                refreshAll()
-                                                onSyncNudge()
-                                            }.onFailure { Toast.error(it.message ?: t("error.generic")) }
-                                        }
-                                    }) { Text(t("people.grantRead")) }
+                                    Button(
+                                        onClick = {
+                                            scope.launch {
+                                                runCatching {
+                                                    repo.collectionRequestApprove(vault, ask.requestId, ask.requesterMemberId, "read")
+                                                }.onSuccess {
+                                                    Toast.success(t("people.askApproved", ask.requesterName))
+                                                    refreshAll()
+                                                    onSyncNudge()
+                                                }.onFailure { Toast.error(it.message ?: t("error.generic")) }
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = BaluardTheme.colors.fillPrimary,
+                                            contentColor = BaluardTheme.colors.onFillPrimary,
+                                        ),
+                                    ) { Text(t("people.grantRead")) }
                                     OutlinedButton(onClick = {
                                         scope.launch {
                                             runCatching {
@@ -683,6 +697,10 @@ fun PeopleScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Button(
+                        colors = ButtonDefaults.buttonColors(
+                        containerColor = BaluardTheme.colors.fillPrimary,
+                        contentColor = BaluardTheme.colors.onFillPrimary,
+                        ),
                             enabled = !inviteBusy,
                             onClick = {
                                 scope.launch {
@@ -800,6 +818,10 @@ fun PeopleScreen(
                                     )
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                                         Button(
+                                        colors = ButtonDefaults.buttonColors(
+                                        containerColor = BaluardTheme.colors.fillPrimary,
+                                        contentColor = BaluardTheme.colors.onFillPrimary,
+                                        ),
                                             enabled = !grantBusy && grantMemberId != null,
                                             onClick = {
                                                 scope.launch {
@@ -947,6 +969,10 @@ fun PeopleScreen(
             },
             confirmButton = {
                 Button(
+                colors = ButtonDefaults.buttonColors(
+                containerColor = BaluardTheme.colors.fillPrimary,
+                contentColor = BaluardTheme.colors.onFillPrimary,
+                ),
                     // Desktop TypedConfirmModal parity: the word must be
                     // non-empty AND trim-match the member name, so an
                     // empty-name row or keyboard whitespace cannot

@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,6 +35,7 @@ import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.components.BaluardTopBar
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.toast.Toast
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Collections (§4.8-9): the mobile admin CRUD surface — mint, rename,
@@ -130,6 +132,10 @@ fun CollectionsScreen(
                             }
                         }
                         Button(
+                        colors = ButtonDefaults.buttonColors(
+                        containerColor = BaluardTheme.colors.fillPrimary,
+                        contentColor = BaluardTheme.colors.onFillPrimary,
+                        ),
                             onClick = { showCreate = true },
                             enabled = !busy,
                             modifier = Modifier.fillMaxWidth(),
@@ -146,6 +152,10 @@ fun CollectionsScreen(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
+                            colors = ButtonDefaults.buttonColors(
+                            containerColor = BaluardTheme.colors.fillPrimary,
+                            contentColor = BaluardTheme.colors.onFillPrimary,
+                            ),
                                 onClick = {
                                     val entries = collections.map {
                                         MobileCatalogInput(collectionId = it.info.id, name = it.info.name)

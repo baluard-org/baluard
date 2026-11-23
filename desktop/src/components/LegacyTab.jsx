@@ -220,7 +220,7 @@ export default function LegacyTab() {
           <Show when={phase() === "open"} fallback={
             <p class="text-sm text-[var(--color-text)]">{t("legacy.armedQuiet", { days: status()?.window_days ?? 0 })}</p>
           }>
-            <p class="text-sm font-semibold text-[var(--color-danger)]">{t("legacy.windowElapsed")}</p>
+            <p class="text-sm font-semibold text-[var(--color-danger-strong)]">{t("legacy.windowElapsed")}</p>
           </Show>
           <p class="text-xs text-[var(--color-muted)]">
             {t("legacy.silenceSoFar", { days: status()?.silence_days ?? 0 })}

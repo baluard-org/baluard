@@ -123,8 +123,12 @@ fun RecoveryPhraseScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF7F1D1D).copy(alpha = 0.2f))
-                    .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.4f),
+                        RoundedCornerShape(12.dp),
+                    )
                     .padding(14.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -138,7 +142,7 @@ fun RecoveryPhraseScreen(
                     Text(
                         text = warning,
                         style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                        color = Color(0xFFFCA5A5),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
                     )
                 }
             }

@@ -116,7 +116,7 @@ export default function LegacyContactOpen({ onClose }) {
         </Show>
 
         <Show when={error()}>
-          <p class="text-xs text-[var(--color-danger)]" data-testid="legacy-open-error">{error()}</p>
+          <p class="text-xs text-[var(--color-danger-strong)]" data-testid="legacy-open-error">{error()}</p>
         </Show>
 
         <div class="flex gap-2 justify-end">

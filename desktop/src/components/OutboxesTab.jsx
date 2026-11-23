@@ -335,7 +335,7 @@ export default function OutboxesTab() {
                             <button
                               type="button"
                               onClick={() => openEntry(l.outbox_id, row)}
-                              class="block w-full text-left text-xs text-[var(--color-text)] hover:text-[var(--color-primary)] cursor-pointer py-0.5"
+                              class="block w-full text-left text-xs text-[var(--color-text)] hover:text-[var(--color-primary-strong)] cursor-pointer py-0.5"
                             >
                               {entryName(row.item)}
                             </button>

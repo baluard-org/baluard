@@ -970,21 +970,21 @@ export default function SettingsModal() {
                   <div class="grid grid-cols-3 gap-3">
                     <button
                       onClick={() => changeTheme("system")}
-                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "system" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
+                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "system" ? "bg-[var(--color-sidebar)] text-[var(--color-primary-strong)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconMonitor class="w-4 h-4" />
                       <span class="text-xs font-bold">{t("settings.themeSystem")}</span>
                     </button>
                     <button
                       onClick={() => changeTheme("dark")}
-                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
+                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "dark" ? "bg-[var(--color-sidebar)] text-[var(--color-primary-strong)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconMoon class="w-4 h-4" />
                       <span class="text-xs font-bold">{t("settings.darkMode")}</span>
                     </button>
                     <button
                       onClick={() => changeTheme("light")}
-                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "light" ? "bg-[var(--color-sidebar)] text-[var(--color-primary)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
+                      class={`flex items-center justify-center gap-2 p-3 rounded-xl border transition-all cursor-pointer ${theme() === "light" ? "bg-[var(--color-sidebar)] text-[var(--color-primary-strong)] border-[var(--color-primary)]" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:border-[var(--color-text)]"}`}
                     >
                       <IconSunFull class="w-4 h-4" />
                       <span class="text-xs font-bold">{t("settings.lightMode")}</span>
@@ -1010,7 +1010,7 @@ export default function SettingsModal() {
                       </For>
                     </select>
                     <Show when={saved()}>
-                      <span class="text-[10px] text-[var(--color-primary)] font-bold shrink-0">{t("settings.saved")}</span>
+                      <span class="text-[10px] text-[var(--color-primary-strong)] font-bold shrink-0">{t("settings.saved")}</span>
                     </Show>
                   </div>
                 </div>
@@ -1046,7 +1046,7 @@ export default function SettingsModal() {
 
                   {/* Audit C3: platforms without a per-read keychain gate */}
                   <Show when={biometricEnabled() && !biometricReadGated()}>
-                    <div class="mt-2 p-2.5 rounded-lg border border-[var(--color-danger)] bg-[var(--color-sidebar)] text-[10px] text-[var(--color-danger)] leading-relaxed">
+                    <div class="mt-2 p-2.5 rounded-lg border border-[var(--color-danger)] bg-[var(--color-sidebar)] text-[10px] text-[var(--color-danger-strong)] leading-relaxed">
                       {t("settings.quickUnlockNoReadGate")}
                     </div>
                   </Show>
@@ -1437,7 +1437,7 @@ export default function SettingsModal() {
                       class="motion-fade p-3 rounded-xl bg-[var(--color-sidebar)]/70 border border-[var(--color-border)] space-y-2"
                     >
                       <div class="flex items-center gap-2 text-xs font-semibold text-[var(--color-text)]">
-                        <IconSpinner class="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
+                        <IconSpinner class="w-3.5 h-3.5 text-[var(--color-primary-strong)] shrink-0" />
                         <span>{t("settings.importing")}</span>
                       </div>
                       <div class="h-1 w-full rounded-full bg-[var(--color-border)] overflow-hidden">

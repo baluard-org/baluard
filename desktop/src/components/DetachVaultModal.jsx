@@ -186,7 +186,7 @@ export default function DetachVaultModal(props) {
             </Show>
 
             <Show when={credError()}>
-              <p class="text-sm text-[var(--color-danger)] mb-3">{credError()}</p>
+              <p class="text-sm text-[var(--color-danger-strong)] mb-3">{credError()}</p>
             </Show>
 
             <div class="flex gap-3">

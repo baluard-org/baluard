@@ -213,7 +213,7 @@ export default function GeneratorModal(props) {
               <Show when={mode() === MODE_PASSWORD}>
                 <div class="space-y-3 mb-4">
                   <div class="flex items-center justify-between text-xs">
-                    <span class="text-[var(--color-muted)]">{t("generator.length")}: <strong class="text-[var(--color-primary)]">{len()}</strong></span>
+                    <span class="text-[var(--color-muted)]">{t("generator.length")}: <strong class="text-[var(--color-primary-strong)]">{len()}</strong></span>
                     <input type="range" min="8" max="64" value={len()} onInput={e => setLen(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
                   </div>
                   <div class="grid grid-cols-3 gap-2">
@@ -228,7 +228,7 @@ export default function GeneratorModal(props) {
               <Show when={mode() === MODE_PASSPHRASE}>
                 <div class="space-y-3 mb-4">
                   <div class="flex items-center justify-between text-xs">
-                    <span class="text-[var(--color-muted)]">{t("generator.words")}: <strong class="text-[var(--color-primary)]">{wordCount()}</strong></span>
+                    <span class="text-[var(--color-muted)]">{t("generator.words")}: <strong class="text-[var(--color-primary-strong)]">{wordCount()}</strong></span>
                     <input type="range" min="3" max="12" value={wordCount()} onInput={e => setWordCount(parseInt(e.target.value))} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
                   </div>
                   <div class="flex items-center justify-between text-xs">
@@ -269,7 +269,7 @@ export default function GeneratorModal(props) {
               <button
                 data-testid="generator-history-toggle"
                 onClick={() => setShowHistory(!showHistory())}
-                class="mt-3 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-colors cursor-pointer text-center"
+                class="mt-3 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-primary-strong)] transition-colors cursor-pointer text-center"
               >
                 {t("generator.history")}
               </button>
@@ -302,7 +302,7 @@ export default function GeneratorModal(props) {
                           {/* Copy */}
                           <button
                             onClick={() => handleHistoryCopy(entry.value, entry.created_at)}
-                            class="shrink-0 p-1 text-[var(--color-muted)] hover:text-[var(--color-primary)] cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            class="shrink-0 p-1 text-[var(--color-muted)] hover:text-[var(--color-primary-strong)] cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
                             title={t("generator.copy")}
                           >
                             <Show when={historyCopied() === entry.created_at} fallback={<IconCopy class="w-3 h-3" />}>

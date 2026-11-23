@@ -62,7 +62,7 @@ function CopyNotesButton(props) {
       title={t("entry.copyNotes")}
     >
       <Show when={copied()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
-        <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-success)]" /></span>
+        <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-primary-strong)]" /></span>
       </Show>
     </button>
   );
@@ -239,7 +239,7 @@ export default function CipherDetail(props) {
               </Show>
               <For each={cipher()?.tags || []}>
                 {tag => (
-                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20">
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary-strong)] border border-[var(--color-primary)]/20">
                     {tag}
                   </span>
                 )}
@@ -299,7 +299,7 @@ export default function CipherDetail(props) {
                   <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] space-y-2">
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2 min-w-0 flex-1">
-                        <IconFingerprint class="w-4 h-4 text-[var(--color-primary)] shrink-0" />
+                        <IconFingerprint class="w-4 h-4 text-[var(--color-primary-strong)] shrink-0" />
                         <Show when={renamingPk()?.credential_id === pk.credential_id} fallback={
                           <span class="text-sm font-semibold text-[var(--color-text)] truncate">{pk.name || pk.rp_name || pk.rp_id}</span>
                         }>
@@ -360,7 +360,7 @@ export default function CipherDetail(props) {
                         <button
                           onClick={() => savePasskeyRename()}
                           disabled={renameSaving() || !renamingPk()?.value.trim()}
-                          class="text-xs text-[var(--color-primary)] hover:underline mr-3 cursor-pointer disabled:opacity-50 disabled:no-underline"
+                          class="text-xs text-[var(--color-primary-strong)] hover:underline mr-3 cursor-pointer disabled:opacity-50 disabled:no-underline"
                         >{t("passkey.saveRename")}</button>
                         <button
                           onClick={() => setRenamingPk(null)}
@@ -381,7 +381,7 @@ export default function CipherDetail(props) {
                             isOnlyAuth: !hasPassword && !hasOtherPasskeys,
                           });
                         }}
-                        class="text-xs text-red-500 hover:text-red-400 transition-colors cursor-pointer"
+                        class="text-xs text-[var(--color-danger-strong)] hover:text-red-400 transition-colors cursor-pointer"
                       >{t("passkey.deleteBtn")}</button>
                       </Show>
                     </div>
@@ -527,7 +527,7 @@ export default function CipherDetail(props) {
                   <Show when={state()}>
                     <div
                       data-testid="signing-expiry-badge"
-                      class={`text-xs font-semibold px-2.5 py-1 rounded-full w-fit ${state() === "expired" ? "bg-red-500/15 text-red-500" : "bg-amber-500/15 text-amber-500"}`}
+                      class={`text-xs font-semibold px-2.5 py-1 rounded-full w-fit ${state() === "expired" ? "bg-red-500/15 text-[var(--color-danger-strong)]" : "bg-amber-500/15 text-amber-500"}`}
                     >
                       {state() === "expired" ? t("signing.expired") : t("signing.expiresSoon")}
                     </div>
@@ -687,7 +687,7 @@ export default function CipherDetail(props) {
                       <div class="p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-border)] flex items-center justify-between group hover:border-[var(--color-primary)] transition-all">
                         <ExternalLink
                           href={launchHref(uri())}
-                          class="min-w-0 flex-1 text-sm text-[var(--color-accent)] hover:underline font-semibold truncate"
+                          class="min-w-0 flex-1 text-sm text-[var(--color-accent-strong)] hover:underline font-semibold truncate"
                         >
                           {uri()}
                         </ExternalLink>
@@ -697,7 +697,7 @@ export default function CipherDetail(props) {
                           title={t("entry.copyValue")}
                         >
                           <Show when={copiedUriIdx() === idx()} fallback={<IconCopy class="w-4 h-4" />}>
-                            <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-success)]" /></span>
+                            <span class="copy-feedback"><IconCheck class="w-4 h-4 text-[var(--color-primary-strong)]" /></span>
                           </Show>
                         </button>
                         <ExternalLink
@@ -876,7 +876,7 @@ export default function CipherDetail(props) {
                         title={t("entry.copyValue")}
                       >
                         <Show when={copiedHistoryIdx() === i()} fallback={<IconCopy class="w-3.5 h-3.5" />}>
-                          <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-success)]" /></span>
+                          <span class="copy-feedback"><IconCheck class="w-3.5 h-3.5 text-[var(--color-primary-strong)]" /></span>
                         </Show>
                       </button>
                     </div>

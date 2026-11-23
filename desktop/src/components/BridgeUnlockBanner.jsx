@@ -33,13 +33,13 @@ function BridgeUnlockBanner(props) {
         </p>
         <div class="flex items-center gap-2 shrink-0">
           <button
-            class="text-xs font-medium text-[var(--color-primary)] hover:underline"
+            class="text-xs font-medium text-[var(--color-primary-strong)] hover:underline"
             onClick={act}
           >
             {t("bridgeUnlock.unlockNow")}
           </button>
           <button
-            class="text-xs text-[var(--color-text-secondary)] hover:underline"
+            class="text-xs text-[var(--color-text)] hover:underline"
             onClick={dismiss}
           >
             {t("bridgeUnlock.dismiss")}

@@ -195,7 +195,7 @@ export default function VaultSwitcher(props) {
             aria-expanded={open()}
             title={t("vault.vaultSwitcher.tooltip")}
           >
-            <IconLock class="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
+            <IconLock class="w-3.5 h-3.5 text-[var(--color-primary-strong)] shrink-0" />
             <span class="flex-1 min-w-0 text-xs font-bold text-[var(--color-text)] truncate">
               {activeName()}
             </span>
@@ -273,14 +273,14 @@ export default function VaultSwitcher(props) {
                   {t(STATE_LABEL_KEY[row.presence] || "vault.vaultSwitcher.stateClosed")}
                 </span>
                 <Show when={row.active}>
-                  <IconCheck class="w-3.5 h-3.5 text-[var(--color-primary)] shrink-0" />
+                  <IconCheck class="w-3.5 h-3.5 text-[var(--color-primary-strong)] shrink-0" />
                 </Show>
                 {/* Close button: only for open (in-map) vaults, not the active one. */}
                 <Show when={!row.active && row.presence !== "closed"}>
                   <button
                     type="button"
                     onClick={(e) => closeVault(row.slug, e)}
-                    class="p-0.5 rounded text-[var(--color-muted)] hover:text-red-500 transition-colors shrink-0 cursor-pointer focus:ring-1 focus:ring-red-500"
+                    class="p-0.5 rounded text-[var(--color-muted)] hover:text-[var(--color-danger-strong)] transition-colors shrink-0 cursor-pointer focus:ring-1 focus:ring-red-500"
                     title={t("vault.vaultSwitcher.closeVault", { name: row.display_name })}
                     aria-label={t("vault.vaultSwitcher.closeVault", { name: row.display_name })}
                   >
@@ -294,7 +294,7 @@ export default function VaultSwitcher(props) {
                 <button
                   type="button"
                   onClick={(e) => openDetach(row, e)}
-                  class="p-0.5 rounded text-[var(--color-muted)] hover:text-red-500 transition-colors shrink-0 cursor-pointer focus:ring-1 focus:ring-red-500"
+                  class="p-0.5 rounded text-[var(--color-muted)] hover:text-[var(--color-danger-strong)] transition-colors shrink-0 cursor-pointer focus:ring-1 focus:ring-red-500"
                   title={t("vault.vaultSwitcher.detachVault", { name: row.display_name })}
                   aria-label={t("vault.vaultSwitcher.detachVault", { name: row.display_name })}
                 >

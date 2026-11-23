@@ -352,7 +352,7 @@ export default function AddEditCipherForm(props) {
           <Show when={showGen()}>
             <div class="mt-3 p-4 rounded-xl bg-[var(--color-sidebar)] border border-[var(--color-border)] space-y-4">
               <div class="flex items-center justify-between text-xs text-[var(--color-text)]">
-                <span>{t("entry.genLength")} <strong class="text-[var(--color-primary)] text-sm">{genLen()}</strong></span>
+                <span>{t("entry.genLength")} <strong class="text-[var(--color-primary-strong)] text-sm">{genLen()}</strong></span>
                 <input type="range" min="8" max="64" value={genLen()} onInput={e => { setGenLen(parseInt(e.target.value)); handleGenerate(); }} class="w-2/3 h-1.5 rounded bg-slate-700 outline-none accent-[var(--color-primary)] cursor-pointer" />
               </div>
               <div class="grid grid-cols-3 gap-2">
@@ -370,7 +370,7 @@ export default function AddEditCipherForm(props) {
           <div class="flex items-center justify-between mb-1.5">
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.uris")}</label>
             <button type="button" onClick={addUri} class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1">
-              <IconPlus class="w-3 h-3 text-[var(--color-primary)]" /> {t("entry.addUri")}
+              <IconPlus class="w-3 h-3 text-[var(--color-primary-strong)]" /> {t("entry.addUri")}
             </button>
           </div>
           <For each={uris()}>
@@ -402,7 +402,7 @@ export default function AddEditCipherForm(props) {
                   <option value="regex">{t("entry.matchRegex")}</option>
                   <option value="never">{t("entry.matchNever")}</option>
                 </select>
-                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center motion-fade" title={t("entry.removeUri")}>
+                <button type="button" onClick={() => removeUri(index())} class="px-3 py-3 text-[var(--color-muted)] hover:text-[var(--color-danger-strong)] hover:bg-red-500/20 rounded-xl border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center motion-fade" title={t("entry.removeUri")}>
                   <IconX class="w-4 h-4" />
                 </button>
               </div>
@@ -488,7 +488,7 @@ export default function AddEditCipherForm(props) {
           {/* Reprompt toggle */}
           <div class="flex items-center justify-between">
             <label class="text-xs font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("entry.requirePasswordToView")}</label>
-            <button onClick={() => update("reprompt", !newCipher().reprompt)} class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary)]"}`}>
+            <button onClick={() => update("reprompt", !newCipher().reprompt)} class={`p-1.5 rounded-lg transition-colors cursor-pointer ${newCipher().reprompt ? "text-[var(--color-primary-strong)]" : "text-[var(--color-muted)] hover:text-[var(--color-primary-strong)]"}`}>
               <svg class="w-5 h-5" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" fill={newCipher().reprompt ? "currentColor" : "none"} d="M20.618 4.984A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke={newCipher().reprompt ? "var(--color-primary-text)" : "currentColor"} d="M9 12l2 2 4-4" />
@@ -535,9 +535,9 @@ export default function AddEditCipherForm(props) {
             <div class="vault-tags flex flex-wrap gap-1.5 p-2 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)] min-h-[46px] transition-all focus-within:border-[var(--color-primary)]">
               <For each={newCipher().tags || []}>
                 {tag => (
-                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/20 motion-fade">
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-primary)]/10 text-[var(--color-primary-strong)] border border-[var(--color-primary)]/20 motion-fade">
                     {tag}
-                    <button type="button" onClick={() => removeTag(tag)} class="hover:text-[var(--color-primary-hover)] cursor-pointer">×</button>
+                    <button type="button" onClick={() => removeTag(tag)} class="hover:text-[var(--color-primary-strong)] cursor-pointer">×</button>
                   </span>
                 )}
               </For>
@@ -603,7 +603,7 @@ export default function AddEditCipherForm(props) {
                               // Trigger state/effect update
                               handleGenerate();
                             }}
-                            class="text-[10px] font-bold text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer"
+                            class="text-[10px] font-bold text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] cursor-pointer"
                           >
                             {t("entry.generatePassword")}
                           </button>
@@ -684,7 +684,7 @@ export default function AddEditCipherForm(props) {
                 }}
                 class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--color-sidebar)] hover:bg-[var(--color-border)] border border-[var(--color-border)] text-[var(--color-text)] transition-all cursor-pointer flex items-center gap-1"
               >
-                <IconPlus class="w-3 h-3 text-[var(--color-primary)]" />
+                <IconPlus class="w-3 h-3 text-[var(--color-primary-strong)]" />
                 {t("entry.addField")}
               </button>
             </div>
@@ -798,7 +798,7 @@ export default function AddEditCipherForm(props) {
                       <input placeholder={t("entry.fieldValuePlaceholder")} class="flex-1 px-3 py-2 rounded-lg bg-[var(--color-card)] border border-[var(--color-border)] text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-primary)]" value={field.value} onInput={e => { Object.assign(fieldsRef[i()], { value: e.target.value }); }} {...SECURE_INPUT} />
                     </Show>
                   </Show>
-                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center motion-fade" title={t("entry.removeField")}>
+                  <button type="button" onClick={() => { fieldsRef = fieldsRef.filter((_, j) => j !== i()); setFields([...fieldsRef]); }} class="px-3 py-2 text-[var(--color-muted)] hover:text-[var(--color-danger-strong)] hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 flex items-center justify-center motion-fade" title={t("entry.removeField")}>
                     <IconX class="w-4 h-4" />
                   </button>
                 </div>
@@ -817,7 +817,7 @@ export default function AddEditCipherForm(props) {
               data-testid="add-attachment-btn"
               onClick={pickAttachment}
               disabled={saving()}
-              class="text-xs text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40"
+              class="text-xs text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40"
             >
               <IconPlus class="w-3.5 h-3.5" /> {t("entry.addAttachment")}
             </button>
@@ -843,7 +843,7 @@ export default function AddEditCipherForm(props) {
                     data-testid={`remove-existing-attachment-${attach.id}`}
                     onClick={() => setRemovedAttachmentIds((prev) => [...prev, attach.id])}
                     disabled={saving()}
-                    class="p-1.5 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+                    class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-danger-strong)] hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-40"
                     title={t("entry.removeAttachment")}
                   >
                     <IconX class="w-4 h-4" />
@@ -855,10 +855,10 @@ export default function AddEditCipherForm(props) {
               {(attach, i) => (
                 <div class="flex items-center justify-between p-3 rounded-xl bg-[var(--color-card)] border border-[var(--color-primary)]/40">
                   <div class="flex items-center gap-2 min-w-0">
-                    <IconLinkSimple class="w-4 h-4 text-[var(--color-primary)] shrink-0" />
+                    <IconLinkSimple class="w-4 h-4 text-[var(--color-primary-strong)] shrink-0" />
                     <div class="min-w-0">
                       <div class="text-xs font-semibold text-[var(--color-text)] truncate">{attach.filename}</div>
-                      <div class="text-[10px] text-[var(--color-primary)]">
+                      <div class="text-[10px] text-[var(--color-primary-strong)]">
                         {formatAttachSize(attach.size, t)} · {t("entry.pendingAttachment")}
                       </div>
                     </div>
@@ -868,7 +868,7 @@ export default function AddEditCipherForm(props) {
                     data-testid={`remove-pending-attachment-${i()}`}
                     onClick={() => setPendingAttachments((prev) => prev.filter((_, j) => j !== i()))}
                     disabled={saving()}
-                    class="p-1.5 text-[var(--color-muted)] hover:text-red-500 hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+                    class="p-1.5 text-[var(--color-muted)] hover:text-[var(--color-danger-strong)] hover:bg-red-500/20 rounded-lg border border-transparent hover:border-red-500/40 transition-all cursor-pointer shrink-0 disabled:opacity-40"
                     title={t("entry.removeAttachment")}
                   >
                     <IconX class="w-4 h-4" />

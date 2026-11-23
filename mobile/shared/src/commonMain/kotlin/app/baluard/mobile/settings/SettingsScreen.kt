@@ -134,6 +134,7 @@ import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.ToggleRow
 import app.baluard.mobile.ui.components.UpgradeSheet
 import app.baluard.mobile.ui.BackPressHandler
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /** i18n key for a pending sensitive-op kind; unknown kinds fall
  * through to the raw identifier (t() renders unknown keys verbatim). */
@@ -258,7 +259,7 @@ val entitlement by Entitlements.state.collectAsState()
                             Icon(
                                 imageVector = Icons.Default.CloudSync,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier.size(22.dp),
                             )
                         }
@@ -2242,7 +2243,7 @@ val entitlement by Entitlements.state.collectAsState()
                             Text(
                                 text = t("space.policyHint", "$label: $rec"),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = BaluardTheme.colors.textPrimary,
                             )
                         }
                     }
@@ -3279,7 +3280,7 @@ val entitlement by Entitlements.state.collectAsState()
                         Icon(
                             imageVector = Icons.Default.Shield,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = BaluardTheme.colors.textPrimary,
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -3407,7 +3408,7 @@ private fun SiteIconBackfillSection(vault: MobileVault, repo: VaultRepository, o
                     }
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = BaluardTheme.colors.textPrimary,
             )
         }
 
@@ -3490,7 +3491,7 @@ private fun SettingsCategoryIndex(canManageSpace: Boolean, onSelect: (SettingsCa
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = BaluardTheme.colors.textPrimary,
                         modifier = Modifier.size(21.dp),
                     )
                 }

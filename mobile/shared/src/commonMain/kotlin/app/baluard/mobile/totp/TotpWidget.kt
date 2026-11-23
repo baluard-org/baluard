@@ -48,6 +48,7 @@ import app.baluard.mobile.monetization.Entitlements
 import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.CopiedBadge
 import app.baluard.mobile.ui.components.rememberCopied
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Live TOTP widget styled with Baluard card, progress bar, and copy-on-tap.
@@ -92,7 +93,7 @@ fun TotpWidget(
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = BaluardTheme.colors.textPrimary,
                     )
                     Text(
                         text = t("totp.loading"),
@@ -120,7 +121,7 @@ fun TotpWidget(
                                 Icon(
                                     imageVector = Icons.Default.Timer,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = BaluardTheme.colors.textPrimary,
                                     modifier = Modifier.size(14.dp),
                                 )
                                 Spacer(Modifier.width(4.dp))
@@ -130,7 +131,7 @@ fun TotpWidget(
                                         fontWeight = FontWeight.ExtraBold,
                                         letterSpacing = 0.5.sp,
                                     ),
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                             }
                             Spacer(Modifier.height(4.dp))

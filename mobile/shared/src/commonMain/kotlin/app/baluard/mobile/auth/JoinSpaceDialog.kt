@@ -41,6 +41,7 @@ import app.baluard.mobile.platform.copyToClipboard
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.toast.Toast
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Member-side join ceremony (§4.8-2 parity on mobile). The vault clone
@@ -235,7 +236,7 @@ fun JoinSpaceDialog(
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace,
                             ),
-                            color = MaterialTheme.colorScheme.primary,
+                            color = BaluardTheme.colors.textPrimary,
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(8.dp))

@@ -188,7 +188,7 @@ export default function AskAccessModal(props) {
                       <span class="ml-auto text-[var(--color-muted)]">{t("shared.pending")}</span>
                       <button
                         onClick={() => void withdraw(r.id)}
-                        class="text-[var(--color-primary)] hover:text-[var(--color-primary-hover)] cursor-pointer font-semibold"
+                        class="text-[var(--color-primary-strong)] hover:text-[var(--color-primary-strong)] cursor-pointer font-semibold"
                       >
                         {t("shared.withdraw")}
                       </button>

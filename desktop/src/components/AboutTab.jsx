@@ -42,7 +42,7 @@ export default function AboutTab() {
         <p class="text-xs font-bold text-[var(--color-text)]">{t("settings.aboutTitle")}</p>
         <div class="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-sidebar)]/30 p-6 flex items-center gap-4">
           <div class="shrink-0 w-12 h-12 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center">
-            <IconInfo class="w-6 h-6 text-[var(--color-primary)]" />
+            <IconInfo class="w-6 h-6 text-[var(--color-primary-strong)]" />
           </div>
           <div class="min-w-0">
             <p data-testid="about-version" class="text-lg font-bold text-[var(--color-text)] truncate">

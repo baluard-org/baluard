@@ -93,6 +93,7 @@ import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.components.CipherAvatar
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.E2eTags
+import app.baluard.mobile.ui.theme.BaluardTheme
 import androidx.compose.ui.platform.testTag
 
 // Wire tags in UI order come from the shared schema (detail/cipherTypeWireTags);
@@ -495,7 +496,7 @@ fun EditCipherScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(Modifier.width(10.dp))
@@ -531,7 +532,7 @@ fun EditCipherScreen(
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = BaluardTheme.colors.textPrimary,
                                 modifier = Modifier.size(18.dp),
                             )
                             Spacer(Modifier.width(10.dp))
@@ -544,7 +545,7 @@ fun EditCipherScreen(
                                 Text(
                                     text = "${formatBytes(att.bytes.size.toLong())} · ${t("edit.pendingAttachment")}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    color = BaluardTheme.colors.textPrimary,
                                 )
                             }
                             IconButton(
@@ -725,7 +726,7 @@ private fun TypePicker(tag: String, editable: Boolean, onSelected: (String) -> U
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = BaluardTheme.colors.textPrimary,
                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
             ),
             modifier = Modifier
@@ -955,7 +956,7 @@ private fun DropdownField(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = BaluardTheme.colors.textPrimary,
                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
             ),
             modifier = Modifier
@@ -1063,7 +1064,7 @@ private fun CardNumberField(value: String, enabled: Boolean, onValueChange: (Str
                 Text(
                     text = brand,
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = BaluardTheme.colors.textPrimary,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }
@@ -1121,7 +1122,7 @@ private fun TagsEditor(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
                 unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                focusedBorderColor = BaluardTheme.colors.textPrimary,
                 unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
             ),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

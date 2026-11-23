@@ -76,7 +76,7 @@ export default function SshKeyGenerator(props) {
             <span class="text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">{t("fields.fingerprint")}</span>
             <CopyButton class={COPY_BTN} iconClass="w-3.5 h-3.5" value={props.fingerprint} title={t("entry.sshKeyCopyFingerprint")} />
           </div>
-          <code class="text-xs text-[var(--color-primary)] font-mono break-all">{props.fingerprint}</code>
+          <code class="text-xs text-[var(--color-primary-strong)] font-mono break-all">{props.fingerprint}</code>
         </div>
       </Show>
 

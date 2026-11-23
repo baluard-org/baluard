@@ -414,7 +414,7 @@ export default function LoginScreen() {
                 when={switcher.vaults().length > 1}
                 fallback={
                   <Show when={auth.activeVault()}>
-                    <p class="text-xs text-[var(--color-primary)] mt-2 font-medium">
+                    <p class="text-xs text-[var(--color-primary-strong)] mt-2 font-medium">
                       {auth.activeVault().display_name}
                     </p>
                   </Show>
@@ -459,7 +459,7 @@ export default function LoginScreen() {
                     placeholder={t("login.passwordPlaceholder")}
                     class={`login-screen__input w-full px-4 py-3.5 rounded-xl bg-[var(--color-bg)] border text-[var(--color-text)] outline-none transition-all-fast ${
                       wrongPassword()
-                        ? "animate-shake border-red-500 ring-1 ring-red-500 text-red-500 focus:border-red-500 focus:ring-red-500"
+                        ? "animate-shake border-red-500 ring-1 ring-red-500 text-[var(--color-danger-strong)] focus:border-red-500 focus:ring-red-500"
                         : "border-[var(--color-border)] focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-primary)]"
                     }`}
                     disabled={auth.status() === "unlocking" || bruteLock()}
@@ -714,7 +714,7 @@ export default function LoginScreen() {
                 }
               >
                 <div class="text-center space-y-4">
-                  <IconSpinner class="w-8 h-8 mx-auto text-[var(--color-primary)]" />
+                  <IconSpinner class="w-8 h-8 mx-auto text-[var(--color-primary-strong)]" />
                   <div>
                     <p class="text-sm font-bold text-[var(--color-text)]">
                       {t("join.waitingTitle")}

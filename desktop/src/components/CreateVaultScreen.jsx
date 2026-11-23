@@ -131,7 +131,7 @@ export default function CreateVaultScreen() {
                 type="button"
                 onClick={handleEditToggle}
                 title={editingSlug() ? t("create.slugDone") : t("create.slugEdit")}
-                class="shrink-0 p-1 rounded-md text-[var(--color-muted)] hover:text-[var(--color-primary)] transition-all cursor-pointer"
+                class="shrink-0 p-1 rounded-md text-[var(--color-muted)] hover:text-[var(--color-primary-strong)] transition-all cursor-pointer"
               >
                 <Show when={!editingSlug()} fallback={<IconCheck class="w-3.5 h-3.5" />}>
                   <IconPencil class="w-3.5 h-3.5" />

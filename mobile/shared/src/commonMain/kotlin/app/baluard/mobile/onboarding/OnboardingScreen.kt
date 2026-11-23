@@ -55,6 +55,7 @@ import app.baluard.mobile.ui.components.BaluardOutlinedButton
 import app.baluard.mobile.ui.components.BaluardPrimaryButton
 import app.baluard.mobile.ui.components.rememberShareOpenFlow
 import app.baluard.mobile.ui.E2eTags
+import app.baluard.mobile.ui.theme.BaluardTheme
 import androidx.compose.ui.platform.testTag
 /** The plain-words git explainer lives on the website, not in the app. */
 private const val GIT_WHAT_URL = "https://baluard.app/what-the-git/"
@@ -134,7 +135,7 @@ fun OnboardingScreen(
             Text(
                 text = t("gitWhat.link"),
                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.primary,
+                color = BaluardTheme.colors.textPrimary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { openUrl(GIT_WHAT_URL) }
@@ -195,7 +196,7 @@ private fun FeatureRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = BaluardTheme.colors.textPrimary,
                 modifier = Modifier.size(18.dp),
             )
         }

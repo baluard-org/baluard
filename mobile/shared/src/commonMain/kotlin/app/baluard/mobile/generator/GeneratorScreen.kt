@@ -69,6 +69,7 @@ import app.baluard.mobile.ui.components.CopiedBadge
 import app.baluard.mobile.ui.components.SectionCard
 import app.baluard.mobile.ui.components.ToggleRow
 import app.baluard.mobile.ui.components.rememberCopied
+import app.baluard.mobile.ui.theme.BaluardTheme
 
 /**
  * Password + passphrase generator styled after Baluard design language.
@@ -106,8 +107,8 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, vault: MobileVault?, onBack: 
                     onClick = { viewModel.setMode(GeneratorMode.PASSWORD) },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                     colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = MaterialTheme.colorScheme.primary,
-                        activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                        activeContainerColor = BaluardTheme.colors.fillPrimary,
+                        activeContentColor = BaluardTheme.colors.onFillPrimary,
                     ),
                     label = {
                         Text(
@@ -121,8 +122,8 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, vault: MobileVault?, onBack: 
                     onClick = { viewModel.setMode(GeneratorMode.PASSPHRASE) },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                     colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = MaterialTheme.colorScheme.primary,
-                        activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                        activeContainerColor = BaluardTheme.colors.fillPrimary,
+                        activeContentColor = BaluardTheme.colors.onFillPrimary,
                     ),
                     label = {
                         Text(
@@ -146,7 +147,7 @@ fun GeneratorScreen(viewModel: GeneratorViewModel, vault: MobileVault?, onBack: 
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 0.5.sp,
                         ),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = BaluardTheme.colors.textPrimary,
                     )
                     CopiedBadge(visible = copied.visible)
                 }
@@ -318,7 +319,7 @@ private fun PasswordControls(state: GeneratorUiState, viewModel: GeneratorViewMo
             Text(
                 text = t("generator.chars", state.length),
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.primary,
+                color = BaluardTheme.colors.textPrimary,
             )
         }
     }
@@ -364,7 +365,7 @@ private fun PassphraseControls(state: GeneratorUiState, viewModel: GeneratorView
             Text(
                 text = t("generator.words", state.wordCount),
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.primary,
+                color = BaluardTheme.colors.textPrimary,
             )
         }
     }
@@ -389,7 +390,7 @@ private fun PassphraseControls(state: GeneratorUiState, viewModel: GeneratorView
         colors = OutlinedTextFieldDefaults.colors(
             focusedContainerColor = MaterialTheme.colorScheme.surface,
             unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            focusedBorderColor = BaluardTheme.colors.textPrimary,
             unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
         ),
         modifier = Modifier.fillMaxWidth(),
