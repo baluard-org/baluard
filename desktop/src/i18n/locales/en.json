@@ -345,6 +345,7 @@
     "tabGeneral": "General & Security",
     "tabData": "Data Import / Export",
     "tabDevices": "Devices",
+    "tabAgents": "Agents",
     "appTheme": "App Theme",
     "toggleTheme": "Toggle theme",
     "darkMode": "Dark Mode",

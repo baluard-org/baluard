@@ -13,7 +13,7 @@ import { toastError, toastSuccess, toastWarning } from "../context/toastSignal.j
 import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock, IconSpinner, IconCheck, IconAlert } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock, IconSpinner, IconCheck, IconAlert, IconKey } from "./Icon.jsx";
 import IconInfo from "./IconInfo.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
@@ -906,6 +906,7 @@ export default function SettingsModal() {
                 <TabButton id="contacts" icon={IconIdentity} label={t("settings.tabContacts")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="outboxes" icon={IconInbox} label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="devices" icon={IconMonitor} label={t("settings.tabDevices")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="agents" icon={IconKey} label={t("settings.tabAgents")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="bridge" icon={IconLinkSimple} label={t("settings.tabBridge")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="legacy" icon={IconClock} label={t("settings.tabLegacy")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="about" icon={IconInfo} label={t("settings.tabAbout")} active={activeTab()} setActiveTab={handleTabChange} />
@@ -1272,6 +1273,9 @@ export default function SettingsModal() {
                 </Show>
 
                 <UpdateSettingsRow />
+              </Show>
+
+              <Show when={activeTab() === "agents"}>
                 <AgentSettingsRow />
                 <McpPairingsSection />
               </Show>

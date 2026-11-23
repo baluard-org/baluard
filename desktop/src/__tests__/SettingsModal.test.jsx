@@ -142,6 +142,13 @@ describe("SettingsModal", () => {
     });
   });
 
+  it("renders Agents tab", async () => {
+    const { getByText } = render(() => <SettingsModal />);
+    await waitFor(() => {
+      expect(getByText("settings.tabAgents", { exact: false })).toBeTruthy();
+    });
+  });
+
   it("loads settings on open and pre-fills the auto-lock select", async () => {
     daemonMock.mockImplementationOnce((action) => {
       if (action === "settings.get") {
