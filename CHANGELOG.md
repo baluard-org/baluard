@@ -11,6 +11,11 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.7 - 2026-11-24
+
+- All apps: vault diagnostics no longer warns about local changes not synced yet when the only local files are already-synced attachment files, and it now lists attachment files that have not reached your other devices yet, with a nudge to run a sync.
+- Browser: the copy-TOTP button on entries without a TOTP code is now muted: it no longer lights up on hover and ignores clicks.
+
 ## 0.8.5 - 2026-11-23
 
 - Desktop and Android: colors across the app now meet the WCAG 2.2 AA contrast standard, so text, links, buttons, and status colors stay readable in light and dark mode.
