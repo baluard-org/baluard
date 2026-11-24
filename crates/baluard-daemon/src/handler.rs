@@ -3473,10 +3473,11 @@ async fn handle_enroll_with_phrase(
     };
     req.payload.zeroize();
     // A fresh clone never enters the host map, and enrollment is the only
-    // way to mint a device key for it: resolve from the registry and open
-    // instead of failing (same pattern as vaults.switch).
-    let state = match host.get(&target_slug).await {
-        Some(state) => state,
+    // way to mint a device key for it: resolve from the registry without
+    // opening first, because VaultHandle::open requires a device keywrap
+    // that does not exist until enrollment writes it.
+    let (state, inserted_fresh) = match host.get(&target_slug).await {
+        Some(state) => (state, false),
         None => {
             let reg = match baluard_core::vault::registry::VaultRegistry::load_locked() {
                 Ok(r) => r,
@@ -3487,21 +3488,10 @@ async fn handle_enroll_with_phrase(
             let Some(entry) = reg.get(&target_slug) else {
                 return err_response(format!("vault '{target_slug}' not found in registry"));
             };
-            let path = entry.path.clone();
-            let fresh = Arc::new(VaultState::new(path.clone()));
-            // try_insert keeps a concurrent request's state untouched (an
-            // unconditional open here would re-lock a vault mid-unlock),
-            // and a failed open evicts our entry so a retry gets a clean
-            // open (same recovery as daemon startup).
+            let fresh = Arc::new(VaultState::new(entry.path.clone()));
             match host.try_insert(target_slug.clone(), fresh).await {
-                Ok(ours) => {
-                    if let Err(e) = ours.open().await {
-                        host.close(&target_slug).await;
-                        return err_response(e);
-                    }
-                    ours
-                }
-                Err(existing) => existing,
+                Ok(ours) => (ours, true),
+                Err(existing) => (existing, false),
             }
         }
     };
@@ -3509,12 +3499,18 @@ async fn handle_enroll_with_phrase(
     let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
         crate::rate_limit::ClaimResult::Allowed(p) => p,
         crate::rate_limit::ClaimResult::Backoff(d) => {
+            if inserted_fresh {
+                host.close_if_same(&target_slug, &state).await;
+            }
             return err_response(format!(
                 "Too many failed attempts. Wait {}s before retrying.",
                 d.as_secs()
             ));
         }
         crate::rate_limit::ClaimResult::LockedOut(d) => {
+            if inserted_fresh {
+                host.close_if_same(&target_slug, &state).await;
+            }
             return err_response(format!(
                 "Vault locked due to too many failed attempts. Wait {}s.",
                 d.as_secs()
@@ -3527,10 +3523,18 @@ async fn handle_enroll_with_phrase(
     match result {
         Ok(json) => {
             permit.commit_success();
+            if !state.has_handle().await {
+                if let Err(e) = state.open().await {
+                    log::warn!("post-enroll open failed for {target_slug}: {e}");
+                }
+            }
             ok_resp(json, None)
         }
         Err(e) => {
             permit.commit_failure();
+            if inserted_fresh {
+                host.close_if_same(&target_slug, &state).await;
+            }
             err_response(e)
         }
     }

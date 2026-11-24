@@ -781,4 +781,128 @@ mod real_vault {
             "vault.open on an already-unlocked vault must not replace the unlocked handle"
         );
     }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn enroll_with_phrase_succeeds_on_freshly_cloned_multi_device_vault() {
+        use baluard_core::types::KdfProfile;
+        use baluard_core::vault::creation::VaultCreator;
+        use baluard_core::vault::registry::{VaultEntry, VaultRegistry};
+        use baluard_daemon::handler::route_host_request;
+        use baluard_daemon::proto::GatewayRequest;
+        use uuid::Uuid;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault_path = dir.path().join("cloned");
+        let (_handle, secrets) = VaultCreator::new(&vault_path, "test-master-password-123", "d1")
+            .kdf_profile(KdfProfile::MobileLow)
+            .initialize_git(false)
+            .execute()
+            .expect("create vault");
+
+        // Simulate a synced multi-device clone on a new machine: at least two
+        // device keywraps exist in the repo, and the local device-privkey /
+        // device-id files are absent.
+        let second_keywrap = vault_path
+            .join("meta/keywrap")
+            .join(format!("{}.json", Uuid::new_v4()));
+        std::fs::write(&second_keywrap, b"{}").expect("write second keywrap");
+        let _ = std::fs::remove_file(vault_path.join("meta/device-privkey.json"));
+        let _ = std::fs::remove_file(vault_path.join("meta/device-id"));
+
+        let temp_data_dir = tempfile::tempdir().expect("temp data dir");
+        struct DataDirGuard(Option<std::ffi::OsString>);
+        impl Drop for DataDirGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.0.take() {
+                        Some(v) => std::env::set_var("BALUARD_DATA_DIR", v),
+                        None => std::env::remove_var("BALUARD_DATA_DIR"),
+                    }
+                }
+            }
+        }
+        let _guard = DataDirGuard(std::env::var_os("BALUARD_DATA_DIR"));
+        unsafe {
+            std::env::set_var("BALUARD_DATA_DIR", temp_data_dir.path());
+        }
+
+        let mut reg = VaultRegistry::default();
+        reg.add(VaultEntry {
+            slug: "cloned".into(),
+            display_name: "Cloned".into(),
+            path: vault_path.clone(),
+            provider: None,
+            remote_url: None,
+            last_synced: None,
+            last_opened: None,
+            vault_id: Uuid::new_v4(),
+            merge_opt_in: None,
+            merge_ceiling_seen: false,
+        })
+        .unwrap();
+        reg.save_locked().unwrap();
+
+        let host: SharedVaultHost = VaultHost::shared();
+
+        // Wrong master password must fail without leaving an un-opened entry in host.
+        let bad_req = GatewayRequest {
+            action: "vault.enroll_with_phrase".into(),
+            payload: serde_json::json!({
+                "slug": "cloned",
+                "phrase": secrets.recovery_phrase.phrase(),
+                "master_password": "wrong-password",
+            })
+            .to_string(),
+            session_token: String::new(),
+            slug: "cloned".into(),
+            ipc_version: 1,
+        };
+        let bad_resp = route_host_request(bad_req, &host).await;
+        assert!(!bad_resp.success, "wrong password must fail enrollment");
+        assert!(
+            host.get("cloned").await.is_none(),
+            "failed enroll must evict freshly inserted state from host"
+        );
+
+        // Wait past the 2s rate-limit backoff from the failed attempt before retrying.
+        tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+
+        let enroll_req = GatewayRequest {
+            action: "vault.enroll_with_phrase".into(),
+            payload: serde_json::json!({
+                "slug": "cloned",
+                "phrase": secrets.recovery_phrase.phrase(),
+                "master_password": "test-master-password-123",
+            })
+            .to_string(),
+            session_token: String::new(),
+            slug: "cloned".into(),
+            ipc_version: 1,
+        };
+        let enroll_resp = route_host_request(enroll_req, &host).await;
+        assert!(
+            enroll_resp.success,
+            "vault.enroll_with_phrase must succeed on a freshly cloned multi-device vault, got: {}",
+            enroll_resp.error_message
+        );
+
+        let unlock_req = GatewayRequest {
+            action: "vault.unlock".into(),
+            payload: serde_json::json!({
+                "slug": "cloned",
+                "password": "test-master-password-123",
+            })
+            .to_string(),
+            session_token: String::new(),
+            slug: "cloned".into(),
+            ipc_version: 1,
+        };
+        let unlock_resp = route_host_request(unlock_req, &host).await;
+        assert!(
+            unlock_resp.success,
+            "vault.unlock must succeed after enrollment, got: {}",
+            unlock_resp.error_message
+        );
+    }
 }
