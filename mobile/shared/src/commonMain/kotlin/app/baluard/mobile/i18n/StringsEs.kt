@@ -516,7 +516,7 @@ internal val ES: Map<String, String> = mapOf(
     "settings.idle" to "Inactiva",
     "settings.aboutTitle" to "Acerca de Baluard",
     "settings.advanced" to "Opciones avanzadas",
-    "settings.version" to "Baluard Mobile v0.8.10",
+    "settings.version" to "Baluard Mobile v0.8.11",
     "settings.aboutSubtitle" to "Gestor de contraseñas nativo de Git • GPL-3.0-or-later",
     "conflict.title" to "Conflicto de sincronización",
     "conflict.body" to "\"{0}\" cambió en dos dispositivos. Elige la versión a conservar.",

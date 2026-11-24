@@ -11,6 +11,10 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.11 - 2026-11-24
+
+- All apps: vault settings changes now sync to other devices right away. Previously a settings change could sit uncommitted on a device and keep the sync status warning forever.
+
 ## 0.8.10 - 2026-11-24
 
 - All apps: enrolling a vault that was cloned from another device no longer fails with an enrollment error. The vault is opened only after the recovery phrase is verified.
