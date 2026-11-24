@@ -11,6 +11,11 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.10 - 2026-11-24
+
+- All apps: enrolling a vault that was cloned from another device no longer fails with an enrollment error. The vault is opened only after the recovery phrase is verified.
+- All apps: vault diagnostics now lists the files behind a local-changes warning, so a stuck device names the file instead of only a count.
+
 ## 0.8.9 - 2026-11-24
 
 - All apps: a joined device no longer reports a permanent unsaved-changes warning from its own device bookkeeping, and that bookkeeping no longer blocks pulls. Devices keep their own sync state instead of overwriting each other's, so update all devices to let the vault converge.
