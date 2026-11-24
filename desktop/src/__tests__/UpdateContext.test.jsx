@@ -9,6 +9,11 @@ const mocks = vi.hoisted(() => ({
   check: vi.fn(),
   install: vi.fn(),
   listen: vi.fn(async () => () => {}),
+  toastSuccess: vi.fn(),
+}));
+
+vi.mock("../context/toastSignal.js", () => ({
+  toastSuccess: mocks.toastSuccess,
 }));
 
 vi.mock("../lib/update.js", () => ({
@@ -24,6 +29,7 @@ vi.mock("../lib/update.js", () => ({
 
 import { render } from "@solidjs/testing-library";
 import { createEffect } from "solid-js";
+import { I18nProvider } from "../i18n/index.jsx";
 import { UpdateProvider, useUpdater } from "../context/UpdateContext.jsx";
 
 // Mount the provider with a harness that captures the context value and
@@ -44,9 +50,11 @@ function mountWithUpdater() {
     return null;
   };
   render(() => (
-    <UpdateProvider>
-      <Harness />
-    </UpdateProvider>
+    <I18nProvider>
+      <UpdateProvider>
+        <Harness />
+      </UpdateProvider>
+    </I18nProvider>
   ));
   return ready.then(() => ref);
 }
@@ -87,5 +95,28 @@ describe("UpdateContext", () => {
 
     await u.check({ manual: true });
     expect(u.error()).toBe("offline");
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("a manual up-to-date check toasts, a background one stays quiet", async () => {
+    mocks.check.mockResolvedValue(null);
+    const u = await mountWithUpdater();
+
+    await u.check({ manual: false });
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+
+    await u.check({ manual: true });
+    expect(u.upToDate()).toBe(true);
+    expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("You're up to date.");
+  });
+
+  it("an available update shows the banner instead of a toast", async () => {
+    mocks.check.mockResolvedValue({ version: "0.1.3", notes: null, currentVersion: "0.1.2" });
+    const u = await mountWithUpdater();
+
+    await u.check({ manual: true });
+    expect(u.available()?.version).toBe("0.1.3");
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
   });
 });

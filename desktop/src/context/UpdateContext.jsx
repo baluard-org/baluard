@@ -2,10 +2,12 @@
 // both auth screens and the vault, and Settings reads the same state.
 //
 // Background checks are quiet: failures resolve silently and only manual
-// checks surface errors. Installs never run in the background — an
-// available update waits for the user's click.
+// checks surface errors or the up-to-date toast. Installs never run in the
+// background — an available update waits for the user's click.
 
 import { createContext, useContext, createSignal, onSettled } from "solid-js";
+import { useI18n } from "../i18n/index.jsx";
+import { toastSuccess } from "./toastSignal.js";
 import {
   updaterStatus,
   updaterCheck,
@@ -27,6 +29,7 @@ export function useUpdater() {
 }
 
 export function UpdateProvider(props) {
+  const { t } = useI18n();
   const [status, setStatus] = createSignal(null);
   const [checking, setChecking] = createSignal(false);
   const [available, setAvailable] = createSignal(null);
@@ -54,7 +57,10 @@ export function UpdateProvider(props) {
         setUpToDate(true);
         if (!manual) setDismissedVersion(null);
       }
-      if (manual && !info) setError(null);
+      if (manual && !info) {
+        setError(null);
+        toastSuccess(t("update.upToDate"));
+      }
     } catch (e) {
       setAvailable(null);
       // Background failures stay quiet; only a manual check reports.

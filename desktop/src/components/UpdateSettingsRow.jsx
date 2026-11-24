@@ -4,7 +4,6 @@
 import { createSignal, Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import { useUpdater } from "../context/UpdateContext.jsx";
-import { toastSuccess } from "../context/toastSignal.js";
 import {
   autoChecksEnabled,
   setAutoChecksEnabled,
@@ -18,14 +17,9 @@ export default function UpdateSettingsRow() {
   const [auto, setAuto] = createSignal(autoChecksEnabled());
 
   async function checkNow() {
+    // The context owns the outcome: toast on up-to-date, error state on
+    // failure, the banner takes over on an available update.
     await u.check({ manual: true });
-    if (u.available()) {
-      // The banner takes over from here.
-      return;
-    }
-    if (!u.error()) {
-      toastSuccess(t("update.upToDate"));
-    }
   }
 
   function toggleAuto() {
