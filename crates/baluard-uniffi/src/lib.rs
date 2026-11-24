@@ -2209,8 +2209,10 @@ impl MobileVault {
             .outbox_entries(&outbox_id)
             .await
             .map_err(|e| BaluardError::Vault { detail: e })?;
-        let parsed: Vec<serde_json::Value> = serde_json::from_str(&raw)
-            .map_err(|e| BaluardError::Vault { detail: format!("{e}") })?;
+        let parsed: Vec<serde_json::Value> =
+            serde_json::from_str(&raw).map_err(|e| BaluardError::Vault {
+                detail: format!("{e}"),
+            })?;
         let summaries: Vec<serde_json::Value> = parsed
             .into_iter()
             .map(|row| {
@@ -2227,8 +2229,9 @@ impl MobileVault {
                 })
             })
             .collect();
-        serde_json::to_string(&summaries)
-            .map_err(|e| BaluardError::Vault { detail: format!("{e}") })
+        serde_json::to_string(&summaries).map_err(|e| BaluardError::Vault {
+            detail: format!("{e}"),
+        })
     }
 
     /// Re-mirror all dirty outboxes against current vault entries.
