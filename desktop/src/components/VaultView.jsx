@@ -94,11 +94,16 @@ export default function VaultView() {
   createEffect(
     () => switcher.activeSlug(),
     (slug) => {
-      if (slug === lastSwitchSlug) return;
+      if (!slug || slug === lastSwitchSlug) return;
+      const prevSlug = lastSwitchSlug;
       lastSwitchSlug = slug;
+      // Initial activeSlug hydration (null -> slug): VaultView loads on mount.
+      if (!prevSlug) return;
       setViewCipher(null);
       setNewCipher({ ...EMPTY_CIPHER });
       vault.resetNavigation();
+      // Reload in case activeSlug caught up from a stale pre-unlock value.
+      void vault.refreshCiphers(t);
 
       // Trigger vault switching transition animation
       setSwitching(true);
@@ -796,10 +801,10 @@ export default function VaultView() {
         target={switchUnlockTarget()}
         onClose={() => setSwitchUnlockTarget(null)}
         onUnlocked={async () => {
-          await vault.refreshCiphers(t);
-          // Refresh the switcher so activeSlug updates to the newly-active
-          // vault — that fires the createEffect above which resets the view.
+          // Refresh the switcher first so activeSlug updates and triggers
+          // resetNavigation() before refreshCiphers() populates the new vault.
           await switcher.refresh();
+          await vault.refreshCiphers(t);
         }}
       />
     </div>

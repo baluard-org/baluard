@@ -1,5 +1,6 @@
-import { createSignal, onCleanup, onSettled, Show, For } from "solid-js";
+import { createSignal, onCleanup, onSettled, Show, For, useContext } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { VaultSwitcherContext } from "../context/VaultSwitcherContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { daemon } from "../lib/daemon.js";
 import { toastSuccess, toastError } from "../context/toastSignal.js";
@@ -27,6 +28,7 @@ import ThemeToggleFloating from "./ThemeToggleFloating.jsx";
 export default function RecoverVaultScreen() {
 	const { t } = useI18n();
 	const auth = useAuth();
+	const switcher = useContext(VaultSwitcherContext);
 
 	const [vaults, setVaults] = createSignal([]);
 	const [slug, setSlug] = createSignal("");
@@ -110,6 +112,7 @@ export default function RecoverVaultScreen() {
 			});
 			passwordSignalCleanup();
 			toastSuccess(t("recover.done"));
+			if (switcher) await switcher.refresh();
 			auth.setSwitchTarget(slug());
 			// Back to the unlock screen: the user signs in with the NEW
 			// password they just chose.

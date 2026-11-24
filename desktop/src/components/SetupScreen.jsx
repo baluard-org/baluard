@@ -1,5 +1,6 @@
-import { createSignal, Show, For, onSettled, onCleanup } from "solid-js";
+import { createSignal, Show, For, onSettled, onCleanup, useContext } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { VaultSwitcherContext } from "../context/VaultSwitcherContext.jsx";
 import { useI18n } from "../i18n/index.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { daemon } from "../lib/daemon.js";
@@ -23,6 +24,7 @@ const PROVIDERS = [
 
 export default function SetupScreen() {
   const auth = useAuth();
+  const switcher = useContext(VaultSwitcherContext);
   const { t, locale } = useI18n();
   let cardRef;
 
@@ -132,11 +134,12 @@ export default function SetupScreen() {
     }
   }
 
-  function finish() {
+  async function finish() {
     // D3: the password has served its purpose (prepare() unlocked with it at
     // mount). It must not outlive onboarding in webview heap for the app's
     // entire uptime.
     auth.setCreatePassword("");
+    if (switcher) await switcher.refresh();
     startVaultPrefetch();
     auth.setStatus("unlocked");
   }

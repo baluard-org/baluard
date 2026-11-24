@@ -69,11 +69,14 @@ function VaultProvider(props) {
 
   // ── Data fetchers ──
 
+  let cipherLoadGen = 0;
+
   // Reset vault-scoped navigation + filters. Called when the active vault
   // changes (switcher) so a stale category/folder/tag/search selection or
   // pane from the previous vault doesn't carry over. VaultView resets its
   // own local state (viewCipher/newCipher) separately.
   function resetNavigation() {
+    cipherLoadGen += 1;
     setSelectedCategory("All items");
     setSelectedFolder(null);
     setSelectedTag(null);
@@ -98,6 +101,7 @@ function VaultProvider(props) {
   }
 
   async function refreshCiphers(t, { silent = false } = {}) {
+    const gen = ++cipherLoadGen;
     try {
       const prefetch = consumeVaultPrefetch();
       // A failed prefetch resolves null: fall through to a direct fetch
@@ -105,6 +109,7 @@ function VaultProvider(props) {
       const data =
         (prefetch ? await prefetch : null) ||
         (await fetchVaultFull());
+      if (gen !== cipherLoadGen) return;
       if (!data) throw new Error("empty response");
       setCiphers(data.ciphers || []);
       setFolders(Array.isArray(data.folders) ? data.folders : []);
@@ -116,12 +121,13 @@ function VaultProvider(props) {
       if (!silent && Number(data.unreadable) > 0) {
         toastWarning(t("vault.unreadableEntries", { count: Number(data.unreadable) }));
       }
-      await refreshOtherVaults();
-      refreshCollections();
+      await refreshOtherVaults(gen);
+      if (gen !== cipherLoadGen) return;
+      refreshCollections(gen);
       // Profile loads alongside cipher data
-      refreshProfile();
+      refreshProfile(gen);
     } catch (e) {
-      if (!silent) {
+      if (gen === cipherLoadGen && !silent) {
         toastError(sanitizeError(e, t));
       }
     }
@@ -129,17 +135,21 @@ function VaultProvider(props) {
 
   // S3-7c / 4.8: role-aware shared collections. Best-effort — a vault
   // without collections support simply shows an empty section.
-  async function refreshCollections() {
+  async function refreshCollections(gen = cipherLoadGen) {
     try {
       const data = JSON.parse(await daemon("collections.list"));
+      if (gen !== cipherLoadGen) return;
       setCollections(Array.isArray(data.collections) ? data.collections : []);
     } catch {
+      if (gen !== cipherLoadGen) return;
       setCollections([]);
     }
     try {
       const r = JSON.parse(await daemon("vault.is_admin_device"));
+      if (gen !== cipherLoadGen) return;
       setIsAdmin(r.is_admin === true);
     } catch {
+      if (gen !== cipherLoadGen) return;
       setIsAdmin(null);
     }
   }
@@ -147,11 +157,12 @@ function VaultProvider(props) {
   // S2-5: pull the merged multi-vault payload. Active and locked/closed
   // rows are dropped here; each remaining cipher gets tagged with its
   // source vault for the list badge + read-only detail.
-  async function refreshOtherVaults() {
+  async function refreshOtherVaults(gen = cipherLoadGen) {
     try {
       const data = JSON.parse(
         await daemon("vaults.list_full_all", JSON.stringify({ exclude_active: true }))
       );
+      if (gen !== cipherLoadGen) return;
       const rows = (data.vaults || []).filter(
         (v) => !v.active && v.presence === "unlocked" && Array.isArray(v.ciphers)
       );
@@ -164,6 +175,7 @@ function VaultProvider(props) {
         }))
       );
     } catch {
+      if (gen !== cipherLoadGen) return;
       // Non-critical surface: the merged view just stays empty.
       setOtherVaults([]);
     }
@@ -210,9 +222,10 @@ function VaultProvider(props) {
     } catch { /* non-critical */ }
   }
 
-  async function refreshProfile() {
+  async function refreshProfile(gen = cipherLoadGen) {
     try {
       const data = JSON.parse(await daemon("settings.get"));
+      if (gen !== cipherLoadGen) return;
       setDisplayName(data.display_name || "");
       setProfileSubtitle(data.subtitle || "");
       setAvatarExt(data.avatar_ext || "png");
@@ -224,6 +237,7 @@ function VaultProvider(props) {
     }
     try {
       const b64 = await daemon("vault.avatar.get");
+      if (gen !== cipherLoadGen) return;
       setAvatarB64(b64 || "");
     } catch (e) {
       if (import.meta.env.DEV) console.warn("refreshProfile avatar:", e);

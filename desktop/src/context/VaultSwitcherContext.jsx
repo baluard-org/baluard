@@ -11,9 +11,10 @@
 //     (AuthContext re-uses the existing unlock screen)
 //   - clicking a CLOSED vault = same as locked (unlock opens + inserts)
 
-import { createSignal, createContext, useContext, onSettled } from "solid-js";
+import { createSignal, createContext, useContext, onSettled, createEffect } from "solid-js";
 import { listen } from "@tauri-apps/api/event";
 import { daemon } from "../lib/daemon.js";
+import { clearHeldPhrase } from "../lib/heldPhrase.js";
 import { AuthContext } from "./AuthContext.jsx";
 
 const VaultSwitcherContext = createContext(null);
@@ -98,6 +99,15 @@ function VaultSwitcherProvider(props) {
   // states will have changed. Refreshing here picks up the locked states.
   let heartbeat;
   function onFocusRegain() { refresh(); }
+  let prevAuthStatus = auth?.status();
+  createEffect(
+    () => auth?.status(),
+    (s) => {
+      const prev = prevAuthStatus;
+      prevAuthStatus = s;
+      if (s === "unlocked" && s !== prev) void refresh();
+    },
+  );
   onSettled(() => {
     refresh();
     heartbeat = setInterval(refresh, 30_000);

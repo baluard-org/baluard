@@ -1,5 +1,6 @@
-import { createSignal, For, onCleanup, Show } from "solid-js";
+import { createSignal, For, onCleanup, Show, useContext } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { VaultSwitcherContext } from "../context/VaultSwitcherContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import {
@@ -36,6 +37,7 @@ const WARNED_KEY = "baluard.clone2faDismissed";
 export default function CloneFromProviderScreen(props) {
   const { t } = useI18n();
   const auth = useAuth();
+  const switcher = useContext(VaultSwitcherContext);
 
   const [step, setStep] = createSignal("pick"); // pick | auth | repos | cloning | unlock
   const [provider, setProvider] = createSignal(null);
@@ -194,6 +196,7 @@ export default function CloneFromProviderScreen(props) {
       clashDismiss();
       try {
         await auth.refreshActiveVault();
+        if (switcher) await switcher.refresh();
         auth.setSwitchTarget(slug);
         auth.setStatus("locked");
       } catch (e) {
@@ -248,6 +251,7 @@ export default function CloneFromProviderScreen(props) {
     setClashError(null);
     try {
       await auth.refreshActiveVault();
+      if (switcher) await switcher.refresh();
       auth.setSwitchTarget(slug);
       auth.setStatus("locked");
     } catch (e) {
@@ -287,6 +291,7 @@ export default function CloneFromProviderScreen(props) {
       try {
         auth.setVaultInfo(JSON.parse(infoStr));
       } catch {}
+      if (switcher) await switcher.refresh();
       auth.setStatus("unlocked");
     } catch (e) {
       toastError(sanitizeError(e, t));

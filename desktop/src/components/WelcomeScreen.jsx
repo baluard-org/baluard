@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, useContext } from "solid-js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { VaultSwitcherContext } from "../context/VaultSwitcherContext.jsx";
 import { toastError, toastSuccess } from "../context/toastSignal.js";
 import { useI18n } from "../i18n/index.jsx";
 import { registerLocalVault } from "../lib/cloneFlow.js";
@@ -15,6 +16,7 @@ import { IconDownload, IconFolder, IconLock, IconPlus, IconBaluardLogo } from ".
 export default function WelcomeScreen() {
 	const { t } = useI18n();
 	const auth = useAuth();
+	const switcher = useContext(VaultSwitcherContext);
 	const [view, setView] = createSignal("menu"); // menu | clone
 
 	async function openLocal() {
@@ -26,6 +28,7 @@ export default function WelcomeScreen() {
 			// Refresh the active-vault signal so the login screen shows it, then
 			// drop into the normal unlock flow.
 			await auth.refreshActiveVault();
+			if (switcher) await switcher.refresh();
 			auth.setSwitchTarget(slug);
 			auth.setStatus("locked");
 		} catch (e) {
