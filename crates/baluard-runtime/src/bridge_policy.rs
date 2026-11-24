@@ -772,8 +772,9 @@ pub fn bridge_write_outside_decision_seven(
 /// Tracked-file writes outside entries/: attachments live under
 /// entries/<id>/attachments, a password change rewrites the shared
 /// kek canary + keywrap, locale.save and space.set_purpose write
-/// settings-pub.json. Without cover they wait for the 30-min idle
-/// cycle, and a second device would keep the old canary.
+/// settings-pub.json. Without cover they wait for a later listed
+/// mutation or a manual sync: the idle loop is pull-only, and a second
+/// device would keep the old canary.
 pub const COVER_MUTATION_ACTIONS: &[&str] = &[
     "vault.attach_upload",
     "vault.attach_delete",

@@ -327,7 +327,7 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
     }
     if s.staged + s.unstaged > 0 {
         r.push_str(&format!(
-            "local changes: {} staged, {} unstaged (blocks pulls)\n",
+            "local changes: {} staged, {} unstaged\n",
             s.staged, s.unstaged
         ));
     }
@@ -1085,6 +1085,10 @@ mod tests {
         assert!(text.contains("entries: 12"));
         assert!(text.contains("unpublished attachments: 2 (run a sync to publish)"));
         assert!(text.contains("dirty paths: meta/epoch.json, meta/integrity.json, (and 3 more)"));
+        assert!(
+            !text.contains("(blocks pulls)"),
+            "the report cannot know whether a pull is really blocked"
+        );
         assert!(text.contains("origin/main (as of last fetch): bbbbbbb"));
         assert!(!text.contains("https://"));
         assert!(!text.contains("github.com/x"));

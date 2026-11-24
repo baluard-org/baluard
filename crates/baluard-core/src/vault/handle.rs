@@ -7191,9 +7191,25 @@ impl VaultHandle {
         };
         let key = hkdf_derive::derive_settings_key(&unlocked.meta_ikm())
             .map_err(|e| VaultError::Metadata(format!("settings key derivation: {e}")))?;
-        let json = serde_json::to_vec(&enc_settings)
-            .map_err(|e| VaultError::Metadata(format!("settings.enc serialization: {e}")))?;
-        self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
+        // Every write re-encrypts with a fresh nonce, so an identical
+        // rewrite still dirties the git-tracked file on a device that never
+        // commits. Skip when the on-disk plaintext equals the new one; a
+        // decrypt or parse failure (root-key rotation, corrupt file) falls
+        // through to write. A skipped save keeps the old envelope epoch;
+        // reads decrypt with the stored AAD, so that is cosmetic.
+        let unchanged = std::fs::read(&enc_path)
+            .ok()
+            .and_then(|data| crate::vault::envelope::deserialize(&data).ok())
+            .and_then(|envelope| crate::crypto::aead::decrypt(&key, &envelope).ok())
+            .and_then(|plain| {
+                serde_json::from_slice::<crate::vault::manifest::EncryptedSettings>(&plain).ok()
+            })
+            .is_some_and(|existing| existing == enc_settings);
+        if !unchanged {
+            let json = serde_json::to_vec(&enc_settings)
+                .map_err(|e| VaultError::Metadata(format!("settings.enc serialization: {e}")))?;
+            self.encrypt_and_write_meta(&key, &json, &enc_path, unlocked.current_epoch)?;
+        }
 
         // One-time migration: drop the legacy plaintext settings.json now that
         // the split files are written. Identity fields already live in
@@ -22324,6 +22340,53 @@ mod tests {
             read_back.enrollment_policy,
             crate::vault::manifest::EnrollmentPolicy::Personal
         );
+    }
+
+    /// Regression: a settings save that changes no field must leave
+    /// settings.enc byte-identical. Every write re-encrypts with a fresh
+    /// nonce, so a blind rewrite dirties the git-tracked file forever on a
+    /// device that never commits. A real field change must still write.
+    #[test]
+    fn settings_rewrite_with_identical_content_keeps_bytes() {
+        let (dir, password) = create_test_vault();
+        let mut handle = VaultHandle::open(dir.path()).unwrap();
+        handle.unlock(&password).unwrap();
+
+        let before = std::fs::read(dir.path().join("meta/settings.enc")).unwrap();
+        // The legacy-file cleanup must still run on a skipped write.
+        std::fs::write(dir.path().join("meta/settings.json"), b"{}").unwrap();
+        let settings = handle.get_settings().unwrap();
+        handle.save_settings(&settings).unwrap();
+        let after = std::fs::read(dir.path().join("meta/settings.enc")).unwrap();
+        assert_eq!(
+            before, after,
+            "an identical settings rewrite must not churn settings.enc bytes"
+        );
+        assert!(!dir.path().join("meta/settings.json").exists());
+
+        let mut changed = settings.clone();
+        changed.fetch_favicons = Some(!changed.fetch_favicons.unwrap_or(true));
+        handle.save_settings(&changed).unwrap();
+        let rewritten = std::fs::read(dir.path().join("meta/settings.enc")).unwrap();
+        assert_ne!(
+            before, rewritten,
+            "a real settings change must still rewrite settings.enc"
+        );
+
+        // Undecryptable bytes (post-rotation, corrupt) must fall through
+        // to a write: the rotation flows hand the device-name map in
+        // directly, so the skip probe's decrypt failure must not strand
+        // the file sealed under a stale key.
+        std::fs::write(dir.path().join("meta/settings.enc"), b"garbage").unwrap();
+        handle
+            .write_settings_with_names(&settings, None)
+            .expect("an undecryptable file must fall through to a write");
+        let rescued = std::fs::read(dir.path().join("meta/settings.enc")).unwrap();
+        assert_ne!(rescued, b"garbage".to_vec());
+        let parsed = handle
+            .get_settings()
+            .expect("the fall-through write must restore a readable file");
+        assert_eq!(parsed, settings);
     }
 
     /// Regression: a vault with a legacy plaintext settings.json must migrate

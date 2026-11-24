@@ -280,7 +280,7 @@ pub enum RestorePolicy {
 }
 
 /// Vault settings (stored encrypted in meta/settings.enc, last-write-wins).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct VaultSettings {
     /// Auto-lock policy token.
     #[serde(default, deserialize_with = "VaultTimeout::deserialize")]
@@ -400,7 +400,7 @@ pub struct VaultSettings {
 /// These fields leak vault identity or policy if plaintext on the remote.
 /// Display prefs (theme, lang) live separately in plaintext settings-pub.json
 /// because the login screen needs them before unlock.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EncryptedSettings {
     /// Auto-lock policy token.
     pub vault_timeout: VaultTimeout,

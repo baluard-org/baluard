@@ -1697,7 +1697,18 @@ impl VaultState {
         // Read-modify-write against a possibly-open main process (last-
         // write-wins file): the window is one settings field, written
         // only on an explicit user tap. Accepted risk.
-        handle.save_settings(&settings).map_err(|e| format!("{e}"))
+        handle
+            .save_settings(&settings)
+            .map_err(|e| format!("{e}"))?;
+        // meta/** commits are admin-only: nudging a member's cycle would
+        // revert this very write from HEAD within seconds. A member's
+        // trust decision stays best-effort local only (a later cycle or a
+        // pull carrying settings.enc reverts it; pre-existing limitation
+        // of storing trust in the shared settings blob).
+        if Self::is_managing_device(&self.vault_path, handle.device_id).await {
+            self.autosync.nudge(handle.device_id.to_string()).await;
+        }
+        Ok(())
     }
 
     /// Get a cipher by ID. Requires vault to be unlocked for decryption.
@@ -1889,6 +1900,10 @@ impl VaultState {
             self.session_token_ttl_exempt
                 .store(exempt, Ordering::Relaxed);
         }
+        // A settings save is a tracked-content mutation: without the nudge
+        // a passive device keeps the rewritten meta/settings.enc
+        // uncommitted forever.
+        self.autosync.nudge(handle.device_id.to_string()).await;
         Ok(())
     }
 
@@ -6086,6 +6101,7 @@ impl VaultState {
                 }
             }
         }
+        self.autosync.nudge(handle.device_id.to_string()).await;
         Ok(())
     }
 
@@ -11197,6 +11213,39 @@ mod session_token_tests {
         state.session_token_created.store(stale, Ordering::Relaxed);
         let err = state.verify_session_token(&tok).await.unwrap_err();
         assert_eq!(err, "Session token expired. Re-unlock the vault.");
+    }
+
+    /// Regression: a settings save is a tracked-content mutation. It must
+    /// arm the autosync push debounce, or a passive device keeps the
+    /// rewritten meta/settings.enc uncommitted forever.
+    #[tokio::test]
+    async fn settings_set_arms_the_autosync_push_debounce() {
+        if !baluard_core::keyring_disabled() {
+            eprintln!("skipping: set BALUARD_DISABLE_KEYRING=1 to run hermetically");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        state
+            .create_vault(r#"{"password":"t3st-v4ult","profile":"mobile_low"}"#)
+            .await
+            .unwrap();
+        state
+            .autosync
+            .activate("test-device".to_string(), None, None)
+            .await;
+        state
+            .settings_set(r#"{"vault_timeout":"15m"}"#)
+            .await
+            .unwrap();
+        let s = state.autosync.status().await;
+        assert_eq!(
+            s.state,
+            crate::autosync::AutoSyncState::Dirty,
+            "a settings save must arm the push debounce"
+        );
+        assert!(s.pending >= 1, "the debounce must carry the settings push");
+        state.autosync.deactivate().await;
     }
 }
 
