@@ -3,6 +3,16 @@ import { render, waitFor, fireEvent, cleanup } from "@solidjs/testing-library";
 
 const mocks = vi.hoisted(() => ({
   setYolo: vi.fn(),
+  auditEvents: [
+    {
+      timestamp_ms: 1735689600000,
+      event: "approved",
+      exe_path: "/usr/bin/ssh",
+      vault: "v",
+      item_ids: [],
+      outcome: "ok",
+    },
+  ],
 }));
 
 vi.mock("../context/AgentApprovalContext.jsx", () => ({
@@ -10,7 +20,7 @@ vi.mock("../context/AgentApprovalContext.jsx", () => ({
     yolo: () => false,
     setYolo: mocks.setYolo,
     grants: () => [],
-    events: () => [],
+    events: () => mocks.auditEvents,
     refreshAudit: () => {},
   }),
 }));
@@ -54,5 +64,37 @@ describe("AgentSettingsRow yolo checkbox", () => {
     // is the checkbox state and that no write was issued.
     expect(box.checked).toBe(false);
     expect(mocks.setYolo).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentSettingsRow recent activity", () => {
+  beforeEach(() => {
+    cleanup();
+    const store = new Map();
+    globalThis.localStorage = {
+      getItem: (k) => store.get(k) ?? null,
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+      clear: () => store.clear(),
+    };
+  });
+
+  it("shows the event timestamp in the card header", () => {
+    const toLocaleString = vi
+      .spyOn(Date.prototype, "toLocaleString")
+      .mockReturnValue("FORMATTED-TIME");
+    const utils = render(
+      <I18nProvider>
+        <AgentSettingsRow />
+      </I18nProvider>,
+    );
+    const card = utils.getByText("Access approved").closest("div.rounded");
+    expect(card).toBeTruthy();
+    // Timestamp sits in the same header row as the label, top right.
+    const header = card.firstElementChild;
+    expect(header.className).toContain("justify-between");
+    expect(header.lastElementChild.textContent).toBe("FORMATTED-TIME");
+    expect(card.textContent).toContain("/usr/bin/ssh");
+    toLocaleString.mockRestore();
   });
 });

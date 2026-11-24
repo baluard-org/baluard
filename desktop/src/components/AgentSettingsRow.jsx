@@ -46,7 +46,12 @@ export default function AgentSettingsRow() {
           <For each={agents.events().slice(0, 5)}>
             {(event) => (
               <div class="rounded border border-[var(--color-border)] p-2 text-[10px]">
-                <div>{t(`agents.event.${event.event}`)}</div>
+                <div class="flex items-start justify-between gap-2">
+                  <div>{t(`agents.event.${event.event}`)}</div>
+                  <div class="text-[var(--color-muted)] shrink-0 tabular-nums">
+                    {new Date(event.timestamp_ms).toLocaleString()}
+                  </div>
+                </div>
                 <div class="text-[var(--color-muted)] break-all font-mono mt-1">{event.exe_path}</div>
               </div>
             )}
