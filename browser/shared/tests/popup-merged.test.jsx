@@ -40,7 +40,7 @@ globalThis.chrome.runtime.sendMessage = (msg, cb) => {
       payload: JSON.stringify({
         matches: [
           { id: "u1", name: "Bank", username: "me", favorite: true, vault_slug: "personal", vault_name: "Personal" },
-          { id: "f1", name: "Wifi", username: "home", favorite: false, vault_slug: "family", vault_name: "Family" },
+          { id: "f1", name: "Wifi", username: "home", favorite: false, totp: true, vault_slug: "family", vault_name: "Family" },
         ],
         vaults: [
           { slug: "personal", display_name: "Personal", unlocked: true, removed: false },

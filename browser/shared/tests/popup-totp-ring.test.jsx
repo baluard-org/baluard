@@ -43,6 +43,7 @@ globalThis.chrome.runtime.sendMessage = (msg, cb) => {
           { id: "t1", name: "Site", username: "me", favorite: true, totp: true, totp_period: 60, vault_slug: "personal", vault_name: "Personal" },
           { id: "t2", name: "Broken seed", username: "me2", favorite: false, totp: true, totp_period: 0, vault_slug: "personal", vault_name: "Personal" },
           { id: "n1", name: "No totp", username: "me3", favorite: false, totp: false, vault_slug: "personal", vault_name: "Personal" },
+          { id: "n2", name: "Old daemon", username: "me4", favorite: false, vault_slug: "personal", vault_name: "Personal" },
         ],
         vaults: [
           { slug: "personal", display_name: "Personal", unlocked: true, removed: false },
@@ -103,6 +104,22 @@ describe("popup TOTP window ring", () => {
   it("no ring without a period or without TOTP", () => {
     expect(totpBtn(1).classList.contains("totp-ring")).toBe(false);
     expect(totpBtn(2).classList.contains("totp-ring")).toBe(false);
+  });
+
+  it("no TOTP: the copy button is off, and a click asks for nothing", async () => {
+    expect(totpBtn(0).disabled).toBe(false);
+    expect(totpBtn(1).disabled).toBe(false);
+    expect(totpBtn(2).disabled).toBe(true);
+    expect(totpBtn(2).title).toBe(totpBtn(0).title);
+
+    sentMessages.length = 0;
+    totpBtn(2).click();
+    await flush(2);
+    expect(sentMessages.filter((m) => m.action === "cipher.totp_code")).toHaveLength(0);
+  });
+
+  it("a row without the flag comes from an older daemon and keeps the button on", () => {
+    expect(totpBtn(3).disabled).toBe(false);
   });
 
   it("drains clockwise: a quarter of the period is a quarter spent", async () => {
