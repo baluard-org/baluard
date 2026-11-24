@@ -144,6 +144,12 @@ export default function VaultDiagnostics() {
     if (s.staged + s.unstaged > 0) {
       out.push([t("diag.localChanges"), String(s.staged + s.unstaged)]);
     }
+    if (s.unpublishedAttachments > 0) {
+      out.push([
+        t("diag.unpublishedAttachments"),
+        String(s.unpublishedAttachments),
+      ]);
+    }
     out.push([
       t("diag.versions"),
       t("diag.versionsValue", {

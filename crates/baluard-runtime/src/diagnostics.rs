@@ -70,6 +70,13 @@ pub struct DiagnosticsSnapshot {
     pub staged: usize,
     #[serde(rename = "unstaged")]
     pub unstaged: usize,
+    /// Envelopes this device holds untracked that the last-known remote
+    /// attachment line lacks (offline pin comparison, no network). None
+    /// when the repo could not be read. A plain sync clears it: the push
+    /// publishes the blobs and advances the tracking ref it compares
+    /// against.
+    #[serde(rename = "unpublishedAttachments")]
+    pub unpublished_attachments: Option<usize>,
     #[serde(rename = "commits")]
     pub commits: Vec<CommitRow>,
     // Counts are Option because they need an unlocked vault; the git and
@@ -145,6 +152,7 @@ pub fn classify(
     dirty_changes: usize,
     ahead: u32,
     behind: u32,
+    unpublished_attachments: usize,
 ) -> &'static str {
     if !has_remote {
         return "no_remote";
@@ -155,7 +163,7 @@ pub fn classify(
     if access_denied_streak > 0 {
         return "failing";
     }
-    if dirty_changes > 0 || ahead > 0 {
+    if dirty_changes > 0 || ahead > 0 || unpublished_attachments > 0 {
         return "local_pending";
     }
     if behind > 0 {
@@ -317,6 +325,11 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
             s.staged, s.unstaged
         ));
     }
+    if let Some(count) = s.unpublished_attachments.filter(|&c| c > 0) {
+        r.push_str(&format!(
+            "unpublished attachments: {count} (run a sync to publish)\n"
+        ));
+    }
     if s.autosync.access_denied_streak > 0 {
         r.push_str(&format!(
             "remote rejections: {} consecutive (auth class)\n",
@@ -402,6 +415,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         behind: None,
         staged: 0,
         unstaged: 0,
+        unpublished_attachments: None,
         commits: Vec::new(),
         entries: None,
         folders: None,
@@ -430,8 +444,18 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         let git = tokio::task::spawn_blocking(move || git_state(&vault_path, &device))
             .await
             .map_err(|e| format!("diagnostics join: {e}"))?;
-        let (has_remote, host, branch, head, upstream, ahead_behind, dirty, commits, tree_counts) =
-            git;
+        let (
+            has_remote,
+            host,
+            branch,
+            head,
+            upstream,
+            ahead_behind,
+            dirty,
+            unpublished,
+            commits,
+            tree_counts,
+        ) = git;
         s.has_remote = has_remote;
         s.remote_host = host;
         if !branch.is_empty() {
@@ -449,6 +473,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         s.behind = ahead_behind.as_ref().map(|(_, b)| *b);
         s.staged = dirty.as_ref().map(|d| d.staged).unwrap_or(0);
         s.unstaged = dirty.as_ref().map(|d| d.unstaged).unwrap_or(0);
+        s.unpublished_attachments = unpublished;
         s.commits = commits;
         if let Some((c, t)) = tree_counts {
             s.head_ciphers = c;
@@ -491,6 +516,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         dirty_changes,
         s.ahead.unwrap_or(0),
         s.behind.unwrap_or(0),
+        s.unpublished_attachments.unwrap_or(0),
     )
     .into();
     let now = chrono::Utc::now().timestamp();
@@ -513,6 +539,7 @@ type GitState = (
     Option<(String, Option<i64>)>,
     Option<(u32, u32)>,
     Option<baluard_core::sync::engine::WorkTreeStatus>,
+    Option<usize>,
     Vec<CommitRow>,
     Option<(Option<u64>, Option<u64>)>,
 );
@@ -528,6 +555,7 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
                 false,
                 None,
                 String::new(),
+                None,
                 None,
                 None,
                 None,
@@ -596,6 +624,16 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
             (n("ciphers"), n("trash"))
         });
     let dirty = engine.status(&repo).ok();
+    // Offline readiness: envelopes on disk the last-known remote line
+    // lacks. Compares pins against the tracking ref the push advances,
+    // so a successful sync clears it without a fetch.
+    let unpublished = if has_remote {
+        Some(baluard_core::sync::attachments::count_unpublished_blobs(
+            &repo, "origin",
+        ))
+    } else {
+        None
+    };
     let commits = engine
         .log(&repo, 10)
         .unwrap_or_default()
@@ -614,6 +652,7 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
         upstream,
         ahead_behind,
         dirty,
+        unpublished,
         commits,
         tree_counts,
     )
@@ -697,17 +736,22 @@ mod tests {
     #[test]
     fn classifier_priority_matches_support_needs() {
         // No remote beats everything.
-        assert_eq!(classify(false, false, 0, 0, 0, 0), "no_remote");
+        assert_eq!(classify(false, false, 0, 0, 0, 0, 0), "no_remote");
         // Remote configured but never fetched.
-        assert_eq!(classify(true, false, 0, 0, 0, 0), "unfetched");
+        assert_eq!(classify(true, false, 0, 0, 0, 0, 0), "unfetched");
         // Auth failures outrank a behind head: the reason matters most.
-        assert_eq!(classify(true, true, 2, 0, 0, 4), "failing");
+        assert_eq!(classify(true, true, 2, 0, 0, 4, 0), "failing");
         // Uncommitted changes block pulls even when behind.
-        assert_eq!(classify(true, true, 0, 1, 0, 4), "local_pending");
+        assert_eq!(classify(true, true, 0, 1, 0, 4, 0), "local_pending");
         // Local commits not pushed are also pending sync.
-        assert_eq!(classify(true, true, 0, 0, 2, 0), "local_pending");
-        assert_eq!(classify(true, true, 0, 0, 0, 3), "behind");
-        assert_eq!(classify(true, true, 0, 0, 0, 0), "up_to_date");
+        assert_eq!(classify(true, true, 0, 0, 2, 0, 0), "local_pending");
+        assert_eq!(classify(true, true, 0, 0, 0, 3, 0), "behind");
+        assert_eq!(classify(true, true, 0, 0, 0, 0, 0), "up_to_date");
+        // An envelope the remote line lacks is pending even with a clean
+        // tree: nothing on main, but the device holds unshared content.
+        assert_eq!(classify(true, true, 0, 0, 0, 0, 1), "local_pending");
+        // The unpublished count never outranks a failure.
+        assert_eq!(classify(true, true, 3, 0, 0, 0, 1), "failing");
     }
 
     #[test]
@@ -981,6 +1025,7 @@ mod tests {
             behind: Some(2),
             staged: 0,
             unstaged: 0,
+            unpublished_attachments: Some(2),
             commits: vec![CommitRow {
                 oid: "abc1234".into(),
                 at: 1_700_000_000,
@@ -1010,6 +1055,7 @@ mod tests {
         assert!(text.contains("head: aaaaaaa"));
         assert!(text.contains("behind 2"));
         assert!(text.contains("entries: 12"));
+        assert!(text.contains("unpublished attachments: 2 (run a sync to publish)"));
         assert!(text.contains("origin/main (as of last fetch): bbbbbbb"));
         assert!(!text.contains("https://"));
         assert!(!text.contains("github.com/x"));

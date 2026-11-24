@@ -1538,6 +1538,7 @@
     "rejections": "Failed attempts (access)",
     "conflicts": "Conflicts auto-resolved",
     "localChanges": "Unsaved local changes",
+    "unpublishedAttachments": "Unpublished attachments",
     "entries": "Entries",
     "archived": "Archived",
     "trashed": "Trash",

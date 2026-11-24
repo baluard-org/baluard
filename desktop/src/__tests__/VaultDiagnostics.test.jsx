@@ -95,6 +95,14 @@ describe("VaultDiagnostics", () => {
     expect(container.textContent).toContain("diag.aheadCount:2");
   });
 
+  it("unpublished attachments render a count row", async () => {
+    daemonMock.mockResolvedValue(JSON.stringify({ ...SNAPSHOT, unpublishedAttachments: 2 }));
+    const { container, findByText } = render(() => <VaultDiagnostics />);
+    await findByText("diag.verdict.behind");
+    expect(container.textContent).toContain("diag.unpublishedAttachments");
+    expect(container.textContent).toContain("2");
+  });
+
   it("unfetched vaults show a never-fetched remote row", async () => {
     daemonMock.mockResolvedValue(
       JSON.stringify({ ...SNAPSHOT, verdict: "unfetched", upstreamOid: null, upstreamAt: null, behind: null, ahead: null }),

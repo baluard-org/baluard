@@ -98,11 +98,36 @@ pub const ATTACHMENTS_REF: &str = "refs/notes/baluard-attachments";
 pub const ATTACHMENTS_TRACKING: &str = "attachments";
 
 /// The worktree path shape of an attachment envelope under a cipher's
-/// entry directory. Line-bound transport never stages onto main, and a
-/// tracked legacy blob's pull-time checkout must not be refused because a
-/// NEW sibling blob sits untracked beside it.
+/// entry directory: `entries/<cipher_id>/attachments/<attachment_id>.enc`,
+/// exactly four components — the shape the publisher walks. Line-bound
+/// transport never stages onto main, and a tracked legacy blob's pull-time
+/// checkout must not be refused because a NEW sibling blob sits untracked
+/// beside it. A stray .enc at any other depth is not line transport and
+/// stays a normal local change.
 pub fn is_blob_path(path: &str) -> bool {
-    path.starts_with("entries/") && path.contains("/attachments/") && path.ends_with(".enc")
+    let mut parts = path.split('/');
+    parts.next() == Some("entries")
+        && parts.next().is_some_and(|id| !id.is_empty())
+        && parts.next() == Some("attachments")
+        && parts.next().is_some_and(|file| {
+            file.strip_suffix(".enc")
+                .is_some_and(|stem| !stem.is_empty())
+        })
+        && parts.next().is_none()
+}
+
+/// Whether a worktree status entry is line-bound transport rather than
+/// main content. Only the pure `WT_NEW` shape qualifies: a blob the index
+/// already tracks or holds staged is main content.
+pub fn is_untracked_blob(status: git2::Status, path: &str) -> bool {
+    let in_index = status.intersects(
+        git2::Status::INDEX_NEW
+            | git2::Status::INDEX_MODIFIED
+            | git2::Status::INDEX_DELETED
+            | git2::Status::INDEX_RENAMED
+            | git2::Status::INDEX_TYPECHANGE,
+    );
+    status.contains(git2::Status::WT_NEW) && !in_index && is_blob_path(path)
 }
 
 /// The line-tree entry name for a blob id: the content hash pin main
@@ -193,20 +218,50 @@ pub fn collect_untracked_blob_paths(repo: &git2::Repository) -> Vec<std::path::P
             let Ok(status) = repo.status_file(rel) else {
                 continue;
             };
-            let has_index = status.intersects(
-                git2::Status::INDEX_NEW
-                    | git2::Status::INDEX_MODIFIED
-                    | git2::Status::INDEX_DELETED
-                    | git2::Status::INDEX_RENAMED
-                    | git2::Status::INDEX_TYPECHANGE,
-            );
-            if has_index || !status.contains(git2::Status::WT_NEW) {
+            // Windows yields backslashes; git paths are slash-separated.
+            let git_path = rel.to_string_lossy().replace('\\', "/");
+            if !is_untracked_blob(status, &git_path) {
                 continue;
             }
             out.push(path);
         }
     }
     out
+}
+
+/// Untracked worktree envelopes the last-known remote attachment line
+/// does not carry. Offline readiness signal: the only publisher writes
+/// blobs best-effort before the main push and a failed publish never
+/// blocks it, so without this the blob is invisible everywhere. Pins are
+/// compared against `refs/remotes/<remote>/<ATTACHMENTS_TRACKING>` — a
+/// push advances that tracking ref, so a successful publish clears the
+/// count without a fetch. With no local knowledge of the remote line at
+/// all, every collected envelope counts as unconfirmed.
+pub fn count_unpublished_blobs(repo: &git2::Repository, remote_name: &str) -> usize {
+    let paths = collect_untracked_blob_paths(repo);
+    if paths.is_empty() {
+        return 0;
+    }
+    let confirmed = |tip: &git2::Tree<'_>, path: &std::path::Path| -> bool {
+        // An unreadable envelope can never be confirmed, so it counts.
+        let Ok(bytes) = std::fs::read(path) else {
+            return false;
+        };
+        let Some(name) = entry_name(&crate::vault::attachment::blob_sha256(&bytes)) else {
+            return false;
+        };
+        tip.get_name(&name).is_some()
+    };
+    let tracking = format!("refs/remotes/{remote_name}/{ATTACHMENTS_TRACKING}");
+    match repo
+        .find_reference(&tracking)
+        .ok()
+        .and_then(|r| r.peel_to_commit().ok())
+        .and_then(|c| c.tree().ok())
+    {
+        None => paths.len(),
+        Some(tip) => paths.into_iter().filter(|p| !confirmed(&tip, p)).count(),
+    }
 }
 
 /// Flatten a line tip tree into (pin, blob oid) entries, dropping names
@@ -297,6 +352,44 @@ mod tests {
     }
 
     #[test]
+    fn count_unpublished_blobs_compares_pins_with_the_remote_tracking_ref() {
+        let (dir, repo) = scratch_repo();
+        let att = dir
+            .path()
+            .join("entries/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/attachments");
+        std::fs::create_dir_all(&att).unwrap();
+        let blob_path = att.join("one.enc");
+        std::fs::write(&blob_path, b"envelope-bytes").unwrap();
+
+        // No remote line knowledge: everything counts as unconfirmed.
+        assert_eq!(count_unpublished_blobs(&repo, "origin"), 1);
+
+        // Tracking ref carries the pin: published, not counted.
+        let pin = crate::vault::attachment::blob_sha256(b"envelope-bytes");
+        let sig = git2::Signature::now("t", "t@example.invalid").unwrap();
+        let tree_id = tree_with(&repo, &[&pin]).id();
+        repo.commit(
+            Some("refs/remotes/origin/attachments"),
+            &sig,
+            &sig,
+            "line",
+            &repo.find_tree(tree_id).unwrap(),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(count_unpublished_blobs(&repo, "origin"), 0);
+
+        // A second envelope the tracking line lacks is the only one counted.
+        std::fs::write(att.join("two.enc"), b"other-bytes").unwrap();
+        assert_eq!(count_unpublished_blobs(&repo, "origin"), 1);
+
+        // Rewriting the first envelope to new bytes makes it unpublished
+        // again under its new pin.
+        std::fs::write(&blob_path, b"replaced-bytes").unwrap();
+        assert_eq!(count_unpublished_blobs(&repo, "origin"), 2);
+    }
+
+    #[test]
     fn entry_name_accepts_only_sha256_hex() {
         let good = "a".repeat(64);
         assert_eq!(
@@ -331,6 +424,13 @@ mod tests {
         assert!(!is_blob_path("entries/abc/cipher.enc"));
         assert!(!is_blob_path("ciphers/abc.enc"));
         assert!(!is_blob_path("entries/abc/attachments/def.txt"));
+        // Exactly four components: the publisher walks that depth only,
+        // so an envelope at any other depth is not line transport.
+        assert!(!is_blob_path("entries/attachments/def.enc"));
+        assert!(!is_blob_path("entries/abc/extra/attachments/def.enc"));
+        assert!(!is_blob_path("entries/abc/attachments/sub/def.enc"));
+        assert!(!is_blob_path("entries/abc/attachments/.enc"));
+        assert!(!is_blob_path("entries//attachments/def.enc"));
     }
 
     #[test]

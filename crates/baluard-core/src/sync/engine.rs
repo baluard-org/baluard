@@ -755,16 +755,7 @@ impl SyncEngine {
             // so staging it would re-grow main. WT_NEW only — tracked
             // legacy blobs' deletions keep flowing through admission, or
             // the restore pass would zombie them from HEAD.
-            if s.contains(git2::Status::WT_NEW)
-                && !s.intersects(
-                    git2::Status::INDEX_NEW
-                        | git2::Status::INDEX_MODIFIED
-                        | git2::Status::INDEX_DELETED
-                        | git2::Status::INDEX_RENAMED
-                        | git2::Status::INDEX_TYPECHANGE,
-                )
-                && crate::sync::attachments::is_blob_path(path)
-            {
+            if crate::sync::attachments::is_untracked_blob(s, path) {
                 continue;
             }
             let deletion = s.intersects(git2::Status::WT_DELETED | git2::Status::INDEX_DELETED);
@@ -1107,7 +1098,8 @@ impl SyncEngine {
         self.pull(repo, remote_name)
     }
 
-    /// Check if the working tree has uncommitted changes.
+    /// Check if the working tree has uncommitted changes. Untracked
+    /// attachment blobs and local-only engine bookkeeping never count.
     pub fn status(&self, repo: &Repository) -> Result<WorkTreeStatus, BaluardError> {
         let statuses = repo
             .statuses(None)
@@ -1152,6 +1144,10 @@ impl SyncEngine {
                 continue;
             }
             let s = entry.status();
+            // An untracked blob rides the attachments line, never main.
+            if crate::sync::attachments::is_untracked_blob(s, path) {
+                continue;
+            }
             if s.is_index_new() || s.is_index_modified() || s.is_index_deleted() {
                 result.staged += 1;
             }
@@ -2007,8 +2003,10 @@ impl SyncEngine {
         // Best-effort: a failed line publish must never block the main
         // push — the worktree copy serves local downloads and the next
         // sync retries.
-        if let Err(e) = self.publish_worktree_attachments(repo, remote_name) {
-            eprintln!("warning: attachments line publish failed: {e}");
+        match self.publish_worktree_attachments(repo, remote_name) {
+            Ok(true) => {}
+            Ok(false) => eprintln!("warning: attachments line publish skipped: no signing key"),
+            Err(e) => eprintln!("warning: attachments line publish failed: {e}"),
         }
 
         // Resolve local branch dynamically
@@ -4572,16 +4570,7 @@ impl SyncEngine {
                 // local content to protect: a pull whose update set
                 // touches a tracked legacy blob must not be refused
                 // because a new sibling blob sits untracked beside it.
-                if entry.status().contains(git2::Status::WT_NEW)
-                    && !entry.status().intersects(
-                        git2::Status::INDEX_NEW
-                            | git2::Status::INDEX_MODIFIED
-                            | git2::Status::INDEX_DELETED
-                            | git2::Status::INDEX_RENAMED
-                            | git2::Status::INDEX_TYPECHANGE,
-                    )
-                    && crate::sync::attachments::is_blob_path(p)
-                {
+                if crate::sync::attachments::is_untracked_blob(entry.status(), p) {
                     continue;
                 }
                 let index_modified_mask = Status::INDEX_NEW
@@ -10005,6 +9994,87 @@ mod tests {
         assert!(status.is_dirty(), "normal rewrite should still dirty tree");
     }
 
+    /// Untracked attachment blobs ride the attachments line, so a vault
+    /// holding only them must read clean.
+    #[test]
+    fn status_ignores_untracked_attachment_blobs() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+        let rel = Path::new("entries/77777777-7777-7777-7777-777777777777/attachments/att.enc");
+        let blob = dir.path().join(rel);
+        std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+        std::fs::write(&blob, b"envelope").unwrap();
+        assert!(
+            repo.status_file(rel)
+                .unwrap()
+                .contains(git2::Status::WT_NEW),
+            "fixture: git must see the blob as untracked"
+        );
+
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (0, 0),
+            "an untracked blob is line transport, not a local change"
+        );
+
+        let note = blob.with_file_name("note.txt");
+        std::fs::write(&note, b"stray").unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (0, 1),
+            "only envelopes ride the line"
+        );
+        std::fs::remove_file(&note).unwrap();
+
+        let nested = blob.parent().unwrap().join("sub/deep.enc");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        std::fs::write(&nested, b"stray").unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (0, 1),
+            "an envelope outside the entry layout is a local change"
+        );
+        std::fs::remove_dir_all(nested.parent().unwrap()).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(rel).unwrap();
+        index.write().unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (1, 0),
+            "a staged blob is pending main content"
+        );
+
+        // commit_all never stages an untracked blob, so land it on main directly.
+        {
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "legacy blob", &tree, &[&head])
+                .unwrap();
+        }
+        std::fs::write(&blob, b"edited").unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (0, 1),
+            "an edit to a tracked legacy blob is pending main content"
+        );
+
+        std::fs::remove_file(&blob).unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (0, 1),
+            "a deleted tracked blob is pending main content"
+        );
+    }
+
     /// Regression: commit_all must leave the worktree clean. Previously it
     /// rewrote the git-tracked `meta/devices.json` (last_seen_epoch bump)
     /// AFTER snapshotting the commit tree, so every commit immediately
@@ -13210,6 +13280,29 @@ mod tests {
         assert!(
             tree.get_name(&name).is_some(),
             "push carries new blobs to the line"
+        );
+
+        // The push advances the remote-tracking line ref, the same way
+        // git push updates remote-tracking refs: offline consumers
+        // (diagnostics' unpublished count) read this ref as "what the
+        // remote line last confirmed".
+        let local_line = repo
+            .find_reference(crate::sync::attachments::ATTACHMENTS_REF)
+            .unwrap()
+            .target()
+            .unwrap();
+        let tracking_name = format!(
+            "refs/remotes/origin/{}",
+            crate::sync::attachments::ATTACHMENTS_TRACKING
+        );
+        let tracking = repo
+            .find_reference(&tracking_name)
+            .unwrap()
+            .target()
+            .unwrap();
+        assert_eq!(
+            local_line, tracking,
+            "push must advance the remote-tracking line ref"
         );
 
         // Round trip: the fetch verifies the pin and returns the bytes.

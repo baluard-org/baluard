@@ -452,6 +452,7 @@ internal val PT: Map<String, String> = mapOf(
     "diag.rejections" to "Tentativas falhadas (acesso)",
     "diag.conflicts" to "Conflitos resolvidos automaticamente",
     "diag.localChanges" to "Alterações locais não salvas",
+    "diag.unpublishedAttachments" to "Anexos não publicados",
     "diag.entries" to "Entradas",
     "diag.archived" to "Arquivadas",
     "diag.trashed" to "Lixeira",

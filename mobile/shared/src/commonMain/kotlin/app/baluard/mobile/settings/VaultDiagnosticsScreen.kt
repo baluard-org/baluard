@@ -186,6 +186,9 @@ fun VaultDiagnosticsScreen(
                     }
                     val dirty = (s.str("staged")?.toIntOrNull() ?: 0) + (s.str("unstaged")?.toIntOrNull() ?: 0)
                     if (dirty > 0) row(t("diag.localChanges"), dirty.toString())
+                    (s.str("unpublishedAttachments")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let {
+                        row(t("diag.unpublishedAttachments"), it.toString())
+                    }
                     row(
                         t("diag.versions"),
                         t("diag.versionsValue", s.str("formatVersion") ?: "?", s.str("coreVersion") ?: "?"),

@@ -1538,6 +1538,7 @@
     "rejections": "Tentativas falhadas (acesso)",
     "conflicts": "Conflitos resolvidos automaticamente",
     "localChanges": "Alterações locais não salvas",
+    "unpublishedAttachments": "Anexos não publicados",
     "entries": "Entradas",
     "archived": "Arquivadas",
     "trashed": "Lixeira",
