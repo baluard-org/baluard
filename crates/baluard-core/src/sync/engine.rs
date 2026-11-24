@@ -381,27 +381,54 @@ impl SyncEngine {
         // ciphers on demand). Repos that still track meta/index.enc drop it
         // from the git index here — the disk file stays, history stays, but
         // the per-CRUD rewrite stops riding every commit and conflicting on
-        // every concurrent multi-device sync. Best-effort: a failure here is
-        // the pre-P5b behavior, not a break.
-        let untrack = || -> Result<(), BaluardError> {
-            let mut idx = repo
-                .index()
-                .map_err(|e| SyncError::Git(format!("index: {e}")))?;
-            if idx
-                .get_path(std::path::Path::new("meta/index.enc"), 0)
-                .is_some()
-            {
-                idx.remove_path(std::path::Path::new("meta/index.enc"))
-                    .map_err(|e| SyncError::Git(format!("untrack index: {e}")))?;
-                idx.write()
-                    .map_err(|e| SyncError::Git(format!("untrack index write: {e}")))?;
-            }
-            Ok(())
-        };
-        if let Err(e) = untrack() {
-            eprintln!("warning: could not untrack meta/index.enc: {e}");
+        // every concurrent multi-device sync.
+        // Same treatment for the per-device M9 combined state file and the
+        // anti-replay nonce ledger: each device rewrites its own copy, so a
+        // tracked copy wedges non-committing devices in local_pending and a
+        // pulled copy would reset local replay defense. The staged deletion
+        // lands on the next committing device's commit (these paths are
+        // deliberately NOT in DEVICE_LOCAL_PATHS, so the deletion stages
+        // through the normal admission flow); members converge by pulling
+        // that removal. Best-effort: a failure here is the pre-existing
+        // behavior, not a break.
+        if let Err(e) = Self::untrack_local_only(&repo) {
+            eprintln!("warning: could not untrack local-only files: {e}");
         }
         Ok(repo)
+    }
+
+    /// Drop tracked copies of the local-only bookkeeping files from the
+    /// index (the disk files stay; history stays). Per-path best-effort:
+    /// one failure must not discard removals already applied in-memory.
+    fn untrack_local_only(repo: &Repository) -> Result<(), BaluardError> {
+        const UNTRACK_PATHS: &[&str] = &[
+            "meta/index.enc",
+            "meta/device-state.json",
+            "meta/seen-nonces.json",
+        ];
+        let mut idx = repo
+            .index()
+            .map_err(|e| SyncError::Git(format!("index: {e}")))?;
+        let mut dropped = false;
+        let mut first_err = None;
+        for path in UNTRACK_PATHS {
+            let p = std::path::Path::new(path);
+            if idx.get_path(p, 0).is_some() {
+                match idx.remove_path(p) {
+                    Ok(()) => dropped = true,
+                    Err(e) if first_err.is_none() => first_err = Some(e),
+                    Err(_) => {}
+                }
+            }
+        }
+        if dropped {
+            idx.write()
+                .map_err(|e| SyncError::Git(format!("untrack index write: {e}")))?;
+        }
+        if let Some(e) = first_err {
+            return Err(SyncError::Git(format!("untrack: {e}")).into());
+        }
+        Ok(())
     }
 
     fn can_commit_gitignore(&self, repo: &Repository) -> bool {
@@ -427,47 +454,6 @@ impl SyncEngine {
     /// Best-effort: logs a warning on failure.
     fn refresh_gitignore(&self) {
         let gitignore = self.vault_path.join(".gitignore");
-        const NEW_ENTRIES: &[&str] = &[
-            "meta/sync-head.json",
-            "meta/sync-state.json",
-            // S1a-2: per-member unlock material is device-local.
-            "meta/member-unlock.json",
-            // P5b: the cipher index is local-only bookkeeping.
-            "meta/index.enc",
-            "meta/index.enc.*",
-            // P8b: local revocation verification tracker.
-            "meta/revocations-verified.json",
-            // Custom remotes: device-local SSH deploy key.
-            "meta/git-ssh-key",
-            // S4 hardening: the grant-expiry sweep's crash-recovery marker
-            // carries content keys — local-only by construction.
-            "meta/.sweep-pending.json",
-            // S4 hardening: the removal SMK rotation's crash-recovery
-            // marker carries the retired key — local-only by construction.
-            "meta/.smk-pending.json",
-            // S1b-1: local refusal log (this device's own detection).
-            "meta/refusals.log",
-            // S1b-1: the activity log is per-device (multi-writer union
-            // merge is the S1b full build; syncing it today would wedge
-            // non-admin committers).
-            "meta/share-events.enc",
-            // Family-spaces: the kit phrase's signing half is
-            // device-local until the first successful push.
-            "meta/recovery-signer.key",
-            // The clone's own identity and credentials: a remote must
-            // never see them listed as committable (they stay out of
-            // stage_admitted outright; these lines keep the worktree
-            // clean for listing).
-            "meta/device-privkey.json",
-            "meta/device-id",
-            "meta/git-credentials.json",
-            "meta/kdf-attempts.json",
-            // H6: the rotating hw enable's staged new privkey/keywrap
-            // carry raw key material - local-only by construction.
-            "meta/device-privkey.json.new",
-            "meta/device-privkey.json.rotation",
-            "meta/keywrap/*.json.new",
-        ];
         let needs_update = match std::fs::read_to_string(&gitignore) {
             Ok(existing) => NEW_ENTRIES.iter().any(|e| !existing.contains(e)),
             Err(_) => true,
@@ -912,6 +898,14 @@ impl SyncEngine {
                 eprintln!("staged-path-set: kept device-local file out of the commit: {path}");
                 continue;
             }
+            // Device-local bookkeeping is this device's live state: a
+            // denied change must never revert the disk copy from HEAD nor
+            // delete it (after a removal landed, a stale entry is
+            // ignored-untracked, not junk). Exact matches only — index.enc
+            // shard leftovers stay cleanable below.
+            if LOCAL_ONLY_BOOKKEEPING.contains(&path.as_str()) {
+                continue;
+            }
             eprintln!("staged-path-set: reverted (not admitted for this device): {path}");
             if s.contains(git2::Status::WT_NEW) {
                 let _ = std::fs::remove_file(self.vault_path.join(path));
@@ -1163,45 +1157,11 @@ impl SyncEngine {
             .statuses(None)
             .map_err(|e| SyncError::Git(format!("statuses: {e}")))?;
 
-        // Local-only engine bookkeeping that must never count as "dirty".
-        // These are rewritten outside the commit cycle (push saves sync-head,
-        // the state machine saves sync-state on every transition); even with
-        // .gitignore + the open_repo untrack migration, an older vault may
-        // still have them tracked in HEAD until the next commit lands the
-        // removal. Filtering them here keeps the sync badge honest in the
-        // window between migration and next sync.
-        const LOCAL_ONLY: &[&str] = &[
-            "meta/sync-head.json",
-            "meta/sync-state.json",
-            // P5b: untracking meta/index.enc on open shows a staged deletion
-            // against HEAD until the next commit — filter it from the dirty
-            // report like the other local-only bookkeeping. Shard files
-            // (index.enc.sN) need prefix matching, not exact.
-            "meta/index.enc",
-            // P8b: local revocation verification tracker.
-            "meta/revocations-verified.json",
-            // Custom remotes: device-local SSH deploy key.
-            "meta/git-ssh-key",
-            // S4 hardening: the grant-expiry sweep's crash-recovery marker
-            // carries content keys — local-only by construction.
-            "meta/.sweep-pending.json",
-            // S4 hardening: the removal SMK rotation's crash-recovery
-            // marker carries the retired key — local-only by construction.
-            "meta/.smk-pending.json",
-            // S1b-1: per-device activity log.
-            "meta/share-events.enc",
-            // S1b-1: local refusal log — never counts as dirty.
-            "meta/refusals.log",
-            // Cross-engine sync lock (fd lock over meta/sync.lock). Local-only:
-            // it must never count as dirty or ride a commit.
-            "meta/sync.lock",
-        ];
-        const LOCAL_ONLY_PREFIX: &str = "meta/index.enc.";
-
+        // Local-only engine bookkeeping never counts as "dirty".
         let mut result = WorkTreeStatus::default();
         for entry in statuses.iter() {
             let path = std::str::from_utf8(entry.path_bytes()).unwrap_or("");
-            if LOCAL_ONLY.contains(&path) || path.starts_with(LOCAL_ONLY_PREFIX) {
+            if LOCAL_ONLY_BOOKKEEPING.contains(&path) || path.starts_with(LOCAL_ONLY_PREFIX) {
                 continue;
             }
             let s = entry.status();
@@ -4625,6 +4585,13 @@ impl SyncEngine {
                 let p = entry
                     .path()
                     .ok_or_else(|| SyncError::Git("non-UTF8 path in worktree status".into()))?;
+                // Device-local bookkeeping (including the untrack
+                // migration's staged deletion) never protects a pull: the
+                // update set excludes these paths, so the checkout keeps
+                // this device's own copies on disk.
+                if LOCAL_ONLY_BOOKKEEPING.contains(&p) || p.starts_with(LOCAL_ONLY_PREFIX) {
+                    continue;
+                }
                 // Untracked attachment blobs are line-bound transport, not
                 // local content to protect: a pull whose update set
                 // touches a tracked legacy blob must not be refused
@@ -4674,6 +4641,13 @@ impl SyncEngine {
                 .or_else(|| delta.old_file().path())
                 .and_then(|p| p.to_str())
                 .ok_or_else(|| SyncError::Git("non-UTF8 path in pulled diff".into()))?;
+            // Device-local bookkeeping is excluded from the update set: the
+            // checkout never overwrites this device's own copy (the remote's
+            // version would reset the anti-replay nonce ledger), and the
+            // untrack migration's staged deletion can never overlap a pull.
+            if LOCAL_ONLY_BOOKKEEPING.contains(&p) || p.starts_with(LOCAL_ONLY_PREFIX) {
+                continue;
+            }
             paths.push(p.to_string());
         }
         Ok(paths)
@@ -5017,6 +4991,64 @@ impl SyncEngine {
         let incoming = Self::tree_diff_paths(repo, &merge_base_tree, &remote_tree)?;
         Self::refuse_dirty_overlap(repo, &incoming)?;
 
+        // Device-local bookkeeping rides the merge machinery in tracked
+        // copies (old cores keep committing it), so libgit2 may rewrite or
+        // conflict-marker the disk files. Snapshot the device's own bytes
+        // first; they are restored after the merge below — pulls never
+        // rewrite this device's bookkeeping on disk.
+        // Only the two per-device files: the other LOCAL_ONLY entries are
+        // engine-owned (the revocation tracker is rewritten by
+        // apply_revocations during the merge) or secret material that must
+        // neither be snapshotted into memory nor rewritten by the restore.
+        let mut bookkeeping_disk = Vec::new();
+        for name in ["meta/device-state.json", "meta/seen-nonces.json"] {
+            let full = self.vault_path.join(name);
+            let bytes = std::fs::read(&full).ok();
+            bookkeeping_disk.push((name.to_string(), full, bytes));
+        }
+
+        // libgit2 refuses a merge that would overwrite uncommitted worktree
+        // changes, and device-local bookkeeping is routinely dirty (this
+        // device's live state) or carries the migration's staged deletion.
+        // Normalize the tracked copies to HEAD first — unstage deletions
+        // and un-dirty edits — so the merge applies cleanly; the snapshot
+        // restore below puts this device's own bytes back afterward.
+        if !bookkeeping_disk.is_empty() {
+            let head_commit_for_reset = repo.find_commit(local_oid).ok();
+            let head_obj = head_commit_for_reset.as_ref().map(|c| c.as_object());
+            let names: Vec<&str> = bookkeeping_disk
+                .iter()
+                .map(|(n, _, _)| n.as_str())
+                .collect();
+            let _ = repo.reset_default(head_obj, &names);
+            let head_commit = repo.find_commit(local_oid).ok();
+            let head_tree = head_commit.and_then(|c| c.tree().ok());
+            if let Some(head_tree) = head_tree {
+                for (name, full, bytes) in &bookkeeping_disk {
+                    if bytes.is_none() {
+                        continue;
+                    }
+                    let Ok(entry) = head_tree.get_path(std::path::Path::new(name)) else {
+                        continue;
+                    };
+                    let Ok(blob) = repo.find_blob(entry.id()) else {
+                        continue;
+                    };
+                    let _ = std::fs::write(full, blob.content());
+                }
+            }
+        }
+
+        // The restore must run on every exit from the merge — success,
+        // conflict, error, rollback — so it rides a drop guard created
+        // here, at the last point before libgit2 may rewrite the files.
+        let _bookkeeping_restore = BookkeepingDiskRestore {
+            snapshots: bookkeeping_disk
+                .iter()
+                .map(|(_, full, bytes)| (full.clone(), bytes.clone()))
+                .collect(),
+        };
+
         // Perform merge
         let annotated = repo
             .find_annotated_commit(remote_oid)
@@ -5034,6 +5066,31 @@ impl SyncEngine {
                 return Err(SyncError::Git(format!("index: {e}")).into());
             }
         };
+
+        // Drop merge conflicts on device-local bookkeeping: the tracked
+        // copy is other devices' stale state, so the resolution is always
+        // "tree drops the path, the disk keeps this device's own bytes".
+        // Done before the conflict list is built because a modify/delete
+        // pair has no entry.our and would surface as an unresolvable
+        // empty-file conflict.
+        {
+            let mut drop_paths: Vec<std::path::PathBuf> = Vec::new();
+            if let Ok(mut iter) = index.conflicts() {
+                while let Some(Ok(entry)) = iter.next() {
+                    let side = entry.our.as_ref().or(entry.their.as_ref());
+                    let Some(side) = side else { continue };
+                    let ps = String::from_utf8_lossy(&side.path).to_string();
+                    if LOCAL_ONLY_BOOKKEEPING.contains(&ps.as_str())
+                        || ps.starts_with(LOCAL_ONLY_PREFIX)
+                    {
+                        drop_paths.push(std::path::PathBuf::from(ps));
+                    }
+                }
+            }
+            for p in drop_paths {
+                let _ = index.conflict_remove(&p);
+            }
+        }
 
         // Check for conflicts
         if index.has_conflicts() {
@@ -5180,6 +5237,13 @@ impl SyncEngine {
                 return Err(e);
             }
         };
+
+        // The pre-merge normalization unstaged the migration's deletions;
+        // re-stage them so a long-lived handle still lands the removal on
+        // its next commit.
+        if let Err(e) = Self::untrack_local_only(repo) {
+            eprintln!("warning: could not re-untrack local-only files: {e}");
+        }
 
         repo.cleanup_state()
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
@@ -8580,6 +8644,18 @@ impl SyncEngine {
                         .map_err(|e| SyncError::Git(format!("strip conflict: {e}")))?;
                 }
                 for p in &conflicted {
+                    // The strip IS a deletion from the expected index, so
+                    // the narrowed per-device set is allowed here for any
+                    // role: an honest merge resolves these conflicts by
+                    // dropping the stale tracked copy, and a kept copy
+                    // resurfaces as an Added/Modified residue delta that
+                    // check_delta_path still refuses for non-admins.
+                    let ps = p.to_string_lossy();
+                    // The strip IS a deletion from the expected index, so
+                    // the narrowed per-device set needs no role check here.
+                    if is_per_device_tree_path(&ps) {
+                        continue;
+                    }
                     crate::sync::policy::authorize_scoped(
                         signer,
                         member_id,
@@ -8647,6 +8723,20 @@ impl SyncEngine {
             return Ok(());
         };
         let path = path.to_string_lossy().to_string();
+        // Device-local bookkeeping is inert in trees: peers never check it
+        // out (update-set filter) and each device rewrites its own disk
+        // copy. A non-admin merge may carry it only as a DELETION — the
+        // honest convergence step (dropping the stale tracked copy) —
+        // while Modified/Added still demand meta/** admin rank so a
+        // crafted commit cannot plant loadable state for fresh clones.
+        // Policing deletions too would refuse every non-admin merge across
+        // an old core's bookkeeping change and wedge the vault fleet-wide.
+        if delta.status() == git2::Delta::Deleted
+            && role.rank() < crate::sync::policy::CommitRole::Admin.rank()
+            && is_per_device_tree_path(&path)
+        {
+            return Ok(());
+        }
         // Enrollment bootstrap (self-proving roster extension): the signer
         // was admitted via a validated enrollment proof. The proof proves
         // Root-Key possession, and the Root Key IS the personal vault's
@@ -9472,12 +9562,160 @@ pub struct PendingConflictState {
     pub remote_oid: Oid,
 }
 
+/// Restores this device's own per-device bookkeeping bytes when the merge
+/// scope exits — on every exit: success, conflict, error, hard rollback.
+/// The merge machinery rewrites or conflict-markers tracked copies (old
+/// cores keep committing them), but the disk files are this device's live
+/// state (the combined registry snapshot and the anti-replay nonce
+/// ledger) and must come back. Written via write_vault_file so the 0600
+/// mode survives a merge that deleted the file.
+struct BookkeepingDiskRestore {
+    /// None = the file was absent before the merge; a copy appearing
+    /// during the merge is foreign content and is removed.
+    snapshots: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+}
+impl Drop for BookkeepingDiskRestore {
+    fn drop(&mut self) {
+        for (full, bytes) in &self.snapshots {
+            let current = std::fs::read(full).ok();
+            match bytes {
+                Some(bytes) => {
+                    if current.as_deref() != Some(bytes.as_slice()) {
+                        let _ = crate::vault::write_vault_file(full, bytes);
+                    }
+                }
+                None => {
+                    if current.is_some() {
+                        let _ = std::fs::remove_file(full);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Engine bookkeeping that is device-local by construction. Never counts
+/// as dirty (status), never protects a pull (dirty_paths_split), never
+/// enters a pull's update set (tree_diff_paths — so a checkout never
+/// overwrites the local copy, e.g. the anti-replay nonce ledger), and is
+/// untracked by open_repo where a tracked copy survives in old vaults.
+pub(crate) const LOCAL_ONLY_BOOKKEEPING: &[&str] = &[
+    "meta/sync-head.json",
+    "meta/sync-state.json",
+    // P5b: the cipher index. Shard files (index.enc.sN) need prefix
+    // matching, not exact.
+    "meta/index.enc",
+    // P8b: local revocation verification tracker.
+    "meta/revocations-verified.json",
+    // Custom remotes: device-local SSH deploy key.
+    "meta/git-ssh-key",
+    // S4 hardening: crash-recovery markers carry key material.
+    "meta/.sweep-pending.json",
+    "meta/.smk-pending.json",
+    // S1b-1: per-device activity log and local refusal log.
+    "meta/share-events.enc",
+    "meta/refusals.log",
+    // Cross-engine sync lock (fd lock over meta/sync.lock).
+    "meta/sync.lock",
+    // M9: each device rewrites its own combined state file, so a tracked
+    // copy keeps every non-committing device in local_pending forever.
+    "meta/device-state.json",
+    // Anti-replay enrollment nonces are this device's own ledger; a pulled
+    // copy would reset local replay defense.
+    "meta/seen-nonces.json",
+];
+const LOCAL_ONLY_PREFIX: &str = "meta/index.enc.";
+
+/// Bookkeeping paths whose TREE deltas are inert enough for a non-admin
+/// merge to carry: the two per-device ledger files and the encrypted index
+/// cache (a planted copy only wastes a rebuild). Deliberately narrower
+/// than LOCAL_ONLY_BOOKKEEPING — the rest of that set (revocation
+/// tracker, sweep markers, SSH key) is live local material a planted tree
+/// copy could poison a fresh clone with, so it stays policed by meta/**.
+fn is_per_device_tree_path(path: &str) -> bool {
+    matches!(
+        path,
+        "meta/device-state.json" | "meta/seen-nonces.json" | "meta/index.enc"
+    ) || path
+        .strip_prefix("meta/index.enc.s")
+        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Entries the .gitignore refresh detector requires in an existing vault
+/// .gitignore before it skips the rewrite. Module-level so the drift test
+/// can pin it against GITIGNORE_CONTENT.
+const NEW_ENTRIES: &[&str] = &[
+    "meta/sync-head.json",
+    "meta/sync-state.json",
+    // Cross-engine sync lock (fd lock over meta/sync.lock).
+    "meta/sync.lock",
+    // M9: per-device combined state + anti-replay nonce ledger.
+    "meta/device-state.json",
+    "meta/seen-nonces.json",
+    // S1a-2: per-member unlock material is device-local.
+    "meta/member-unlock.json",
+    // Legacy plaintext metadata files: pre-encryption vaults still need
+    // the ignore lines after a refresh rewrite.
+    "meta/folders.json",
+    "meta/tag_index.json",
+    "meta/device_activity.json",
+    // Build and OS artifacts: kept identical to GITIGNORE_CONTENT so the
+    // detector and the template never drift apart again.
+    "target/",
+    "*.swp",
+    "*.swo",
+    "*~",
+    ".DS_Store",
+    "Thumbs.db",
+    ".pi/",
+    // P5b: the cipher index is local-only bookkeeping.
+    "meta/index.enc",
+    "meta/index.enc.*",
+    // P8b: local revocation verification tracker.
+    "meta/revocations-verified.json",
+    // Custom remotes: device-local SSH deploy key.
+    "meta/git-ssh-key",
+    // S4 hardening: the grant-expiry sweep's crash-recovery marker
+    // carries content keys — local-only by construction.
+    "meta/.sweep-pending.json",
+    // S4 hardening: the removal SMK rotation's crash-recovery
+    // marker carries the retired key — local-only by construction.
+    "meta/.smk-pending.json",
+    // S1b-1: local refusal log (this device's own detection).
+    "meta/refusals.log",
+    // S1b-1: the activity log is per-device (multi-writer union
+    // merge is the S1b full build; syncing it today would wedge
+    // non-admin committers).
+    "meta/share-events.enc",
+    // Family-spaces: the kit phrase's signing half is
+    // device-local until the first successful push.
+    "meta/recovery-signer.key",
+    // The clone's own identity and credentials: a remote must
+    // never see them listed as committable (they stay out of
+    // stage_admitted outright; these lines keep the worktree
+    // clean for listing).
+    "meta/device-privkey.json",
+    "meta/device-id",
+    "meta/git-credentials.json",
+    "meta/kdf-attempts.json",
+    // H6: the rotating hw enable's staged new privkey/keywrap
+    // carry raw key material - local-only by construction.
+    "meta/device-privkey.json.new",
+    "meta/device-privkey.json.rotation",
+    "meta/keywrap/*.json.new",
+];
+
 /// .gitignore content for vault repos.
 const GITIGNORE_CONTENT: &str = "\
 # Secrets and private keys (CLI mode)
 meta/device-privkey.json
 meta/device-id
 meta/member-unlock.json
+# H6: the rotating hw enable's staged new privkey/keywrap carry raw
+# key material - local-only by construction.
+meta/device-privkey.json.new
+meta/device-privkey.json.rotation
+meta/keywrap/*.json.new
 # Family-spaces: the kit phrase's signing half, device-local until the
 # first successful push publishes the device into every roster.
 meta/recovery-signer.key
@@ -9494,6 +9732,13 @@ meta/device_activity.json
 meta/sync-head.json
 meta/sync-state.json
 meta/sync.lock
+
+# M9: per-device combined device-manager state (registry + epoch + seen
+# nonces) and the anti-replay nonce ledger. Each device rewrites its own
+# copy; a tracked copy wedges non-committing devices and a pulled copy
+# resets local replay defense.
+meta/device-state.json
+meta/seen-nonces.json
 
 # Cipher lookup index — local-only, rebuilt from ciphers on demand (P5b).
 # Tracked copies caused constant multi-device conflicts: the index is
@@ -10084,6 +10329,788 @@ mod tests {
         std::fs::write(dir.path().join(".gitignore"), b"overwritten\n").unwrap();
         let status = engine.status(&repo).unwrap();
         assert!(status.is_dirty(), "normal rewrite should still dirty tree");
+    }
+
+    /// Regression: the per-device M9 combined state file and the anti-replay
+    /// nonce ledger are rewritten by this device's own persist, so a joined
+    /// device that never commits would read local_pending forever. They must
+    /// never count as dirty — for the tracked-then-rewritten old-vault shape
+    /// and for the staged deletion the open_repo untrack migration leaves
+    /// until the next commit lands it.
+    #[test]
+    fn status_ignores_device_state_bookkeeping() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+
+        // Old-vault shape: both tracked in HEAD via direct index add, then
+        // rewritten by this device's persist.
+        {
+            use git2::Signature;
+            std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+            std::fs::write(dir.path().join("meta/seen-nonces.json"), b"[\"n1\"]").unwrap();
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index
+                .add_path(std::path::Path::new("meta/seen-nonces.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add device bookkeeping",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":2}").unwrap();
+        std::fs::write(dir.path().join("meta/seen-nonces.json"), b"[\"n2\"]").unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert!(
+            !status.is_dirty(),
+            "rewritten device bookkeeping must not dirty tree (the bug)"
+        );
+
+        // The untrack migration's staged deletion must not count either.
+        engine.open_repo().unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert!(
+            !status.is_dirty(),
+            "untrack migration deletion must not dirty tree"
+        );
+
+        // Sanity: a real tracked cipher rewrite IS still detected.
+        std::fs::create_dir_all(dir.path().join("ciphers")).unwrap();
+        {
+            use git2::Signature;
+            std::fs::write(dir.path().join("ciphers/ctl.enc"), b"v1").unwrap();
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("ciphers/ctl.enc"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add control",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join("ciphers/ctl.enc"), b"v2").unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert!(
+            status.is_dirty(),
+            "tracked cipher rewrite should still dirty tree"
+        );
+    }
+
+    /// The open_repo untrack migration must actually land: the staged
+    /// deletion of the per-device bookkeeping rides the next commit (an
+    /// admin's), after which no device tracks the file and the churn stops.
+    /// The disk copies survive — they are this device's live state.
+    #[test]
+    fn untrack_migration_lands_the_removal_on_the_next_commit() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        std::fs::write(dir.path().join("meta/seen-nonces.json"), b"[\"n1\"]").unwrap();
+        {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index
+                .add_path(std::path::Path::new("meta/seen-nonces.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add device bookkeeping",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+
+        // Migration stages the deletions; the next commit must land them.
+        engine.open_repo().unwrap();
+        engine.commit_all(&repo, "land removal").unwrap();
+
+        let head_tree = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        for path in ["meta/device-state.json", "meta/seen-nonces.json"] {
+            assert!(
+                head_tree.get_path(std::path::Path::new(path)).is_err(),
+                "{path} must be gone from the landed tree"
+            );
+        }
+        // The disk copies stay: they are this device's live state.
+        assert!(dir.path().join("meta/device-state.json").exists());
+        assert!(dir.path().join("meta/seen-nonces.json").exists());
+        let status = engine.status(&repo).unwrap();
+        assert!(!status.is_dirty());
+    }
+
+    /// A pull whose update set touches the per-device bookkeeping must not
+    /// refuse, and the checkout must leave this device's own copies on disk:
+    /// the files are device-local state, and the remote's version would
+    /// reset the anti-replay nonce ledger.
+    #[test]
+    fn pull_keeps_device_state_bookkeeping_local() {
+        let (_dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(_dir.path().join("meta")).unwrap();
+        std::fs::write(_dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add device bookkeeping",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+
+        let (_remote_dir, clone_dir, clone_engine, cloned) =
+            make_clone(_dir.path(), &engine, &repo);
+
+        // Origin advances with its own version of the bookkeeping file,
+        // committed directly (commit_all skips device-local staging by
+        // design — here we simulate a pre-fix device that still commits it).
+        std::fs::write(
+            _dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":9,\"writer\":\"origin\"}",
+        )
+        .unwrap();
+        {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "advance bookkeeping",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+        engine.push(&repo, "origin").unwrap();
+
+        // The clone rewrites its own copy and runs the migration: a staged
+        // deletion plus a dirty disk file.
+        std::fs::write(
+            clone_dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":2,\"writer\":\"clone\"}",
+        )
+        .unwrap();
+        clone_engine.open_repo().unwrap();
+
+        let result = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(matches!(result, PullResult::FastForward));
+        let disk = std::fs::read(clone_dir.path().join("meta/device-state.json")).unwrap();
+        assert_eq!(
+            disk, b"{\"epoch\":2,\"writer\":\"clone\"}",
+            "pull must keep the local bookkeeping on disk"
+        );
+        let status = clone_engine.status(&cloned).unwrap();
+        assert!(!status.is_dirty());
+    }
+
+    /// A diverged merge whose incoming diff touches the per-device
+    /// bookkeeping must never wedge: modify/delete (this device landed the
+    /// untrack removal, an old core committed a modification) auto-resolves
+    /// to "tree drops the path", and this device's own disk bytes survive.
+    #[test]
+    fn merge_modify_delete_on_bookkeeping_auto_resolves() {
+        let (_dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(_dir.path().join("meta")).unwrap();
+        std::fs::write(_dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        let direct_commit = |repo: &Repository, msg: &str| {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&head])
+                .unwrap();
+        };
+        direct_commit(&repo, "force-add bookkeeping");
+
+        let (_remote_dir, clone_dir, clone_engine, cloned) =
+            make_clone(_dir.path(), &engine, &repo);
+
+        // The clone lands the untrack removal (admin admission); its own
+        // disk copy stays.
+        clone_engine.open_repo().unwrap();
+        clone_engine.commit_all(&cloned, "land removal").unwrap();
+        assert!(clone_dir.path().join("meta/device-state.json").exists());
+
+        // The old core commits a modification and pushes.
+        std::fs::write(
+            _dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":9,\"writer\":\"origin\"}",
+        )
+        .unwrap();
+        direct_commit(&repo, "old core modify");
+        engine.push(&repo, "origin").unwrap();
+
+        let result = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(
+            matches!(result, PullResult::Merged),
+            "modify/delete on bookkeeping must not surface as a conflict: {result:?}"
+        );
+        let disk = std::fs::read(clone_dir.path().join("meta/device-state.json")).unwrap();
+        assert_eq!(
+            disk, b"{\"epoch\":1}",
+            "merge must keep the local bookkeeping on disk"
+        );
+        let status = clone_engine.status(&cloned).unwrap();
+        assert!(!status.is_dirty());
+    }
+
+    /// Both sides committing different bookkeeping content must not wedge
+    /// the merge either: the conflict is dropped (the tree loses the stale
+    /// tracked copy) and the disk keeps this device's bytes.
+    #[test]
+    fn merge_both_modified_on_bookkeeping_auto_resolves() {
+        let (_dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(_dir.path().join("meta")).unwrap();
+        std::fs::write(_dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        let direct_commit = |repo: &Repository, msg: &str| {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&head])
+                .unwrap();
+        };
+        direct_commit(&repo, "force-add bookkeeping");
+
+        let (_remote_dir, clone_dir, clone_engine, cloned) =
+            make_clone(_dir.path(), &engine, &repo);
+
+        std::fs::write(
+            clone_dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":2,\"writer\":\"clone\"}",
+        )
+        .unwrap();
+        direct_commit(&cloned, "clone modify");
+
+        std::fs::write(
+            _dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":9,\"writer\":\"origin\"}",
+        )
+        .unwrap();
+        direct_commit(&repo, "origin modify");
+        engine.push(&repo, "origin").unwrap();
+
+        let result = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(
+            matches!(result, PullResult::Merged),
+            "both-modified bookkeeping must not wedge the merge: {result:?}"
+        );
+        let disk = std::fs::read(clone_dir.path().join("meta/device-state.json")).unwrap();
+        assert_eq!(disk, b"{\"epoch\":2,\"writer\":\"clone\"}");
+        let status = clone_engine.status(&cloned).unwrap();
+        assert!(!status.is_dirty());
+    }
+
+    /// The untrack migration's staged deletion plus a dirty disk copy must
+    /// not wedge a diverged merge whose incoming diff touches the file.
+    #[test]
+    fn merge_with_dirty_local_bookkeeping_does_not_wedge() {
+        let (_dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(_dir.path().join("meta")).unwrap();
+        std::fs::write(_dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        let direct_commit = |repo: &Repository, path: &str, msg: &str| {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index.add_path(std::path::Path::new(path)).unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &[&head])
+                .unwrap();
+        };
+        direct_commit(&repo, "meta/device-state.json", "force-add bookkeeping");
+
+        let (_remote_dir, clone_dir, clone_engine, cloned) =
+            make_clone(_dir.path(), &engine, &repo);
+
+        // The clone carries a staged deletion + dirty disk copy and a local
+        // commit so the merge diverges.
+        std::fs::write(
+            clone_dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":2,\"writer\":\"clone\"}",
+        )
+        .unwrap();
+        clone_engine.open_repo().unwrap();
+        std::fs::create_dir_all(clone_dir.path().join("ciphers")).unwrap();
+        std::fs::write(clone_dir.path().join("ciphers/local.enc"), b"local").unwrap();
+        direct_commit(&cloned, "ciphers/local.enc", "local commit");
+
+        std::fs::write(
+            _dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":9,\"writer\":\"origin\"}",
+        )
+        .unwrap();
+        direct_commit(&repo, "meta/device-state.json", "origin modify");
+        engine.push(&repo, "origin").unwrap();
+
+        let result = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(
+            matches!(result, PullResult::Merged),
+            "dirty local bookkeeping must not wedge the merge: {result:?}"
+        );
+        let disk = std::fs::read(clone_dir.path().join("meta/device-state.json")).unwrap();
+        assert_eq!(disk, b"{\"epoch\":2,\"writer\":\"clone\"}");
+    }
+
+    /// Pass 2 must never revert or delete device-local bookkeeping when its
+    /// change is not admitted: a member device's meta/device-state.json is
+    /// its own live state, so a denied deletion leaves the disk copy alone
+    /// instead of writing HEAD's (foreign) copy over it.
+    #[test]
+    fn pass_two_never_reverts_device_state_bookkeeping() {
+        let key_owner = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_editor = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_owner = uuid::Uuid::new_v4();
+        let id_editor = uuid::Uuid::new_v4();
+        let member_owner = uuid::Uuid::new_v4();
+        let member_editor = uuid::Uuid::new_v4();
+
+        let (dir, _) = make_test_repo();
+        enroll_device(dir.path(), &id_owner, &key_owner);
+        enroll_device(dir.path(), &id_editor, &key_editor);
+
+        let mf = |id: uuid::Uuid, name: &str, role: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": name,
+                "role": role,
+                "trust": "self",
+            })
+        };
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("meta/members/{member_owner}.json")),
+            mf(member_owner, "Owner", "owner").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(format!("meta/members/{member_editor}.json")),
+            mf(member_editor, "Editor", "editor").to_string(),
+        )
+        .unwrap();
+        for (m, d) in [(member_owner, id_owner), (member_editor, id_editor)] {
+            let p = dir.path().join(format!("meta/members/{m}/devices"));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(
+                p.join(format!("{d}.json")),
+                serde_json::json!({
+                    "device_id": d.to_string(),
+                    "member_id": m.to_string(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":1}").unwrap();
+        std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        std::fs::create_dir_all(dir.path().join("ciphers")).unwrap();
+        std::fs::write(dir.path().join("ciphers/seed.enc"), b"\x01").unwrap();
+        let engine_owner =
+            SyncEngine::new(dir.path(), &id_owner.to_string(), None).with_signing_key(key_owner);
+        let repo = engine_owner.init_repo().unwrap();
+
+        // The refreshed template ignores the file, so force-add a tracked
+        // copy the way an old pre-0.8.9 vault has one (old-vault shape).
+        {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add device state",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+
+        // The editor rewrites its own live state and runs the migration.
+        let engine_editor =
+            SyncEngine::new(dir.path(), &id_editor.to_string(), None).with_signing_key(key_editor);
+        std::fs::write(
+            dir.path().join("meta/device-state.json"),
+            b"{\"epoch\":5,\"writer\":\"editor\"}",
+        )
+        .unwrap();
+        engine_editor.open_repo().unwrap();
+
+        // A member's commit_all denies the meta deletion; the exemption
+        // must keep the editor's own bytes on disk, not HEAD's copy.
+        engine_editor.commit_all(&repo, "editor sync").unwrap();
+        let disk = std::fs::read(dir.path().join("meta/device-state.json")).unwrap();
+        assert_eq!(
+            disk, b"{\"epoch\":5,\"writer\":\"editor\"}",
+            "a denied bookkeeping change must never clobber the disk copy"
+        );
+        let status = engine_editor.status(&repo).unwrap();
+        assert!(!status.is_dirty());
+    }
+
+    /// N1: an editor's merge that resolves a device-local bookkeeping
+    /// conflict (tree drops the path) must verify for peers: the conflicted
+    /// path is per-device state and its tree copy is inert (update-set
+    /// filters keep every device's disk copy), so the conflict authorization
+    /// must skip it instead of demanding meta/** admin rank — otherwise
+    /// every non-admin merge across an old core's bookkeeping change would
+    /// be refused fleet-wide. Crafted fail-first: an editor-signed merge
+    /// commit whose tree drops meta/device-state.json must verify.
+    #[test]
+    fn editor_merge_dropping_bookkeeping_verifies_for_peers() {
+        let key_owner = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_editor = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_owner = uuid::Uuid::new_v4();
+        let id_editor = uuid::Uuid::new_v4();
+        let member_owner = uuid::Uuid::new_v4();
+        let member_editor = uuid::Uuid::new_v4();
+
+        let (dir, _) = make_test_repo();
+        enroll_device(dir.path(), &id_owner, &key_owner);
+        enroll_device(dir.path(), &id_editor, &key_editor);
+
+        let mf = |id: uuid::Uuid, name: &str, role: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": name,
+                "role": role,
+                "trust": "self",
+            })
+        };
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("meta/members/{member_owner}.json")),
+            mf(member_owner, "Owner", "owner").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(format!("meta/members/{member_editor}.json")),
+            mf(member_editor, "Editor", "editor").to_string(),
+        )
+        .unwrap();
+        for (m, d) in [(member_owner, id_owner), (member_editor, id_editor)] {
+            let p = dir.path().join(format!("meta/members/{m}/devices"));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(
+                p.join(format!("{d}.json")),
+                serde_json::json!({
+                    "device_id": d.to_string(),
+                    "member_id": m.to_string(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":1}").unwrap();
+        std::fs::create_dir_all(dir.path().join("ciphers")).unwrap();
+        std::fs::write(dir.path().join("ciphers/seed.enc"), b"\x01").unwrap();
+        let engine_owner =
+            SyncEngine::new(dir.path(), &id_owner.to_string(), None).with_signing_key(key_owner);
+        let engine_editor =
+            SyncEngine::new(dir.path(), &id_editor.to_string(), None).with_signing_key(key_editor);
+        let repo = engine_owner.init_repo().unwrap();
+
+        // Old-vault shape: the bookkeeping file is tracked in HEAD. The
+        // refreshed template ignores it, so force-add via the index.
+        std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        let base = {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            engine_owner
+                .create_signed_commit(&repo, &sig, "force-add device state", &tree, &[&head])
+                .unwrap()
+        };
+        let base_commit = repo.find_commit(base).unwrap();
+        repo.reference(
+            "refs/heads/main",
+            base,
+            true,
+            "point main at the tracked state",
+        )
+        .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        // Old-core side: a second-parent commit modifying the file.
+        let side = {
+            use git2::Signature;
+            std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":9}").unwrap();
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            engine_owner
+                .create_signed_commit(&repo, &sig, "old core modify", &tree, &[&base_commit])
+                .unwrap()
+        };
+        let side_commit = repo.find_commit(side).unwrap();
+
+        // The editor's merge resolves the conflict by dropping the path from
+        // the tree (the device keeps its own bytes on disk).
+        let editor_merge = {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index
+                .remove_path(std::path::Path::new("meta/device-state.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            engine_editor
+                .create_signed_commit(
+                    &repo,
+                    &sig,
+                    "editor merge drops bookkeeping",
+                    &tree,
+                    &[&base_commit, &side_commit],
+                )
+                .unwrap()
+        };
+
+        // Peers must accept the editor's merge: the conflict authorization
+        // skips device-local bookkeeping.
+        let verified = engine_owner.verify_commit_signatures(&repo, &[editor_merge]);
+        assert!(
+            verified.is_ok(),
+            "editor merge dropping bookkeeping must verify for peers: {verified:?}"
+        );
+    }
+
+    /// Negative: the verifier skip is Deleted-only and set-narrow. An
+    /// editor-signed ordinary commit that MODIFIES a per-device bookkeeping
+    /// file, or that plants any other local-only path (the revocation
+    /// tracker gates manifest-history verification), must still be refused.
+    #[test]
+    fn editor_commit_writing_bookkeeping_is_still_refused() {
+        let key_owner = crate::crypto::signature::generate_ed25519_keypair().0;
+        let key_editor = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_owner = uuid::Uuid::new_v4();
+        let id_editor = uuid::Uuid::new_v4();
+        let member_owner = uuid::Uuid::new_v4();
+        let member_editor = uuid::Uuid::new_v4();
+
+        let (dir, _) = make_test_repo();
+        enroll_device(dir.path(), &id_owner, &key_owner);
+        enroll_device(dir.path(), &id_editor, &key_editor);
+
+        let mf = |id: uuid::Uuid, name: &str, role: &str| {
+            serde_json::json!({
+                "id": id.to_string(),
+                "display_name": name,
+                "role": role,
+                "trust": "self",
+            })
+        };
+        std::fs::create_dir_all(dir.path().join("meta/members")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("meta/members/{member_owner}.json")),
+            mf(member_owner, "Owner", "owner").to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join(format!("meta/members/{member_editor}.json")),
+            mf(member_editor, "Editor", "editor").to_string(),
+        )
+        .unwrap();
+        for (m, d) in [(member_owner, id_owner), (member_editor, id_editor)] {
+            let p = dir.path().join(format!("meta/members/{m}/devices"));
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(
+                p.join(format!("{d}.json")),
+                serde_json::json!({
+                    "device_id": d.to_string(),
+                    "member_id": m.to_string(),
+                })
+                .to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":1}").unwrap();
+        std::fs::create_dir_all(dir.path().join("ciphers")).unwrap();
+        std::fs::write(dir.path().join("ciphers/seed.enc"), b"\x01").unwrap();
+        let engine_owner =
+            SyncEngine::new(dir.path(), &id_owner.to_string(), None).with_signing_key(key_owner);
+        let engine_editor =
+            SyncEngine::new(dir.path(), &id_editor.to_string(), None).with_signing_key(key_editor);
+        let repo = engine_owner.init_repo().unwrap();
+
+        std::fs::write(dir.path().join("meta/device-state.json"), b"{\"epoch\":1}").unwrap();
+        let editor_signed = |repo: &Repository, stage: &[&str], msg: &str| {
+            use git2::Signature;
+            for path in stage {
+                std::fs::write(dir.path().join(path), b"planted").unwrap();
+                let mut index = repo.index().unwrap();
+                index.add_path(std::path::Path::new(path)).unwrap();
+                index.write().unwrap();
+            }
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            engine_editor
+                .create_signed_commit(repo, &sig, msg, &tree, &[&head])
+                .unwrap()
+        };
+
+        // Modified per-device bookkeeping: still demands meta/** admin.
+        let modify = editor_signed(
+            &repo,
+            &["meta/device-state.json"],
+            "editor modifies bookkeeping",
+        );
+        let verified = engine_owner.verify_commit_signatures(&repo, &[modify]);
+        assert!(
+            verified.is_err(),
+            "an editor modifying bookkeeping must be refused: {verified:?}"
+        );
+
+        // Planting the revocation tracker must never pass: it gates
+        // manifest-history verification on fresh clones.
+        let plant = editor_signed(
+            &repo,
+            &["meta/revocations-verified.json"],
+            "editor plants revocation tracker",
+        );
+        let verified = engine_owner.verify_commit_signatures(&repo, &[plant]);
+        assert!(
+            verified.is_err(),
+            "an editor planting the revocation tracker must be refused: {verified:?}"
+        );
+    }
+
+    /// The .gitignore refresh detector and the template it writes must agree:
+    /// every detector entry must exist in the template (otherwise the
+    /// detector fires forever on vaults that already have the current
+    /// template), and every non-comment template line must be covered by a
+    /// detector entry (otherwise existing vaults never gain that line).
+    #[test]
+    fn generated_gitignore_agrees_with_its_refresh_detector() {
+        for entry in NEW_ENTRIES {
+            assert!(
+                GITIGNORE_CONTENT.contains(entry),
+                "detector entry {entry} is missing from GITIGNORE_CONTENT"
+            );
+        }
+        for line in GITIGNORE_CONTENT
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        {
+            assert!(
+                NEW_ENTRIES.contains(&line),
+                "template line '{line}' is not covered by a NEW_ENTRIES detector entry"
+            );
+        }
     }
 
     /// Untracked attachment blobs ride the attachments line, so a vault
