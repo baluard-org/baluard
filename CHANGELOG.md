@@ -11,6 +11,10 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.8.8 - 2026-11-24
+
+- All apps: a sync that was interrupted mid-pull no longer blocks the device from syncing again. The next sync clears the stale state and recovers on its own, and concurrent syncs stay out of each other's way.
+
 ## 0.8.7 - 2026-11-24
 
 - All apps: vault diagnostics no longer warns about local changes not synced yet when the only local files are already-synced attachment files, and it now lists attachment files that have not reached your other devices yet, with a nudge to run a sync.

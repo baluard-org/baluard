@@ -71,8 +71,8 @@ android {
         applicationId = "app.baluard.mobile"
         minSdk = 32
         targetSdk = 36
-        versionCode = 8007
-        versionName = "0.8.7"
+        versionCode = 8008
+        versionName = "0.8.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Package only ABIs we ship a cdylib for. Alpha default: arm64-v8a
         // (every test phone since ~2016). Also strips the JNA aar's other-ABI
