@@ -137,14 +137,13 @@ pub(crate) fn append(
     let path = data_dir.join(FILE_NAME);
     let rotated = data_dir.join(ROTATED_FILE_NAME);
     let current_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    if current_len + line.len() as u64 > MAX_AUDIT_BYTES {
-        #[cfg(windows)]
-        if rotated.exists() {
-            std::fs::remove_file(&rotated).map_err(|e| format!("rotate agent audit: {e}"))?;
-        }
-        if path.exists() {
-            std::fs::rename(&path, &rotated).map_err(|e| format!("rotate agent audit: {e}"))?;
-        }
+    let over_limit = current_len + line.len() as u64 > MAX_AUDIT_BYTES;
+    #[cfg(windows)]
+    if over_limit && rotated.exists() {
+        std::fs::remove_file(&rotated).map_err(|e| format!("rotate agent audit: {e}"))?;
+    }
+    if over_limit && path.exists() {
+        std::fs::rename(&path, &rotated).map_err(|e| format!("rotate agent audit: {e}"))?;
     }
     let mut options = std::fs::OpenOptions::new();
     options.create(true).append(true);

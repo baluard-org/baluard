@@ -867,7 +867,7 @@ pub fn effective_access(
                 .map(|_| g.access),
             _ => None,
         })
-        .max_by_key(|a| rank(a))
+        .max_by_key(rank)
 }
 
 #[cfg(test)]

@@ -1511,7 +1511,7 @@ mod tests {
         match result {
             MergeResult::Merged(m) => {
                 assert!(
-                    m.custom_fields.iter().find(|f| f.name == "old").is_none(),
+                    !m.custom_fields.iter().any(|f| f.name == "old"),
                     "remote-deleted field must not reappear"
                 );
             }

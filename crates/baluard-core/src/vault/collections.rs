@@ -310,8 +310,7 @@ pub fn list_member_collections(
                     g.target.member_id() == Some(*member_id)
                         || g.target
                             .group_id()
-                            .and_then(&lookup)
-                            .is_some_and(|ms| ms.contains(member_id))
+                            .is_some_and(|gid| lookup(gid).is_some_and(|ms| ms.contains(member_id)))
                 })
                 .filter_map(|g| g.expires_at)
                 // 0 is the no-expiry IPC convention, never a real instant
