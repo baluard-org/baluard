@@ -242,6 +242,63 @@ impl SyncEngine {
         Ok(())
     }
 
+    /// Exclusive cross-engine sync lock over meta/sync.lock (device-local,
+    /// never synced). Try-only: contention is Busy, never a wait, and a
+    /// dead holder releases the fd lock automatically. Strict transitions
+    /// stay; callers that write FSM state recover crash residue after
+    /// acquiring this lock (a non-Idle checkpoint under the lock always
+    /// means a killed or panicked cycle, not a live one). It guards FSM
+    /// churn across engines, not vault-state mutual exclusion.
+    fn with_sync_lock<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, BaluardError>,
+    ) -> Result<T, BaluardError> {
+        let path = self.vault_path.join("meta/sync.lock");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| SyncError::Git(format!("create meta dir: {e}")))?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| SyncError::Git(format!("open sync lock: {e}")))?;
+        let mut lock = fd_lock::RwLock::new(file);
+        let _guard = match lock.try_write() {
+            Ok(g) => g,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                return Err(SyncError::Busy.into());
+            }
+            Err(e) => return Err(SyncError::Git(format!("acquire sync lock: {e}")).into()),
+        };
+        f()
+    }
+
+    /// Reload the checkpoint from disk and reset non-Idle crash residue.
+    /// Disk is the source of truth under the lock: another engine's
+    /// writes land in the file, not in this process's in-memory copy.
+    /// Only for FSM-writing entries — a paused Merging is conflict state
+    /// a pure reader like fetch_locked must never wipe.
+    fn recover_crash_residue(&self) {
+        let mut sm = SyncStateMachine::load_from_file(&self.vault_path);
+        if sm.current != SyncState::Idle {
+            eprintln!(
+                "[baluard] sync: recovering {:?} checkpoint left by a dead cycle",
+                sm.current
+            );
+            sm.current = SyncState::Idle;
+            sm.operation_id += 1;
+            sm.pending_ciphers.clear();
+            sm.pending_since = None;
+            if let Err(e) = sm.save_to_file(&self.vault_path) {
+                eprintln!("[baluard] sync: crash-residue save failed: {e}");
+            }
+        }
+        *self.state_machine.borrow_mut() = sm;
+    }
+
     /// Check for stale state on startup and recover if needed.
     pub fn recover_state(&self) -> Result<(), BaluardError> {
         let mut sm = self.state_machine.borrow_mut();
@@ -635,6 +692,7 @@ impl SyncEngine {
         "meta/recovery-signer.key",
         "meta/.sweep-pending.json",
         "meta/.smk-pending.json",
+        "meta/sync.lock",
     ];
 
     fn stage_admitted(&self, repo: &Repository) -> Result<(), BaluardError> {
@@ -1134,6 +1192,9 @@ impl SyncEngine {
             "meta/share-events.enc",
             // S1b-1: local refusal log — never counts as dirty.
             "meta/refusals.log",
+            // Cross-engine sync lock (fd lock over meta/sync.lock). Local-only:
+            // it must never count as dirty or ride a commit.
+            "meta/sync.lock",
         ];
         const LOCAL_ONLY_PREFIX: &str = "meta/index.enc.";
 
@@ -1855,25 +1916,23 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// True when the on-disk sync state machine is not Idle (a cycle is
-    /// mid-flight from a previous process, or a conflict is paused).
-    pub fn sync_state_busy(&self) -> bool {
-        self.state_machine.borrow().current != SyncState::Idle
-    }
-
     /// Locked background pull (mobile background sync, ADR 0089 §3.5):
     /// fetch remote objects ONLY — no checkout, no merge, no commit, no state
     /// transition, no decryption. Safe with a locked vault: nothing decrypts
     /// or moves HEAD/worktree. The next unlock's pull (commit→pull→push cycle)
     /// finds the fetched objects locally and completes fast; conflicts are
-    /// resolved by the normal foreground flow. Refuses when the state machine
-    /// is not Idle (a paused conflict or mid-cycle state must not race a fetch).
+    /// resolved by the normal foreground flow. Serialized with pulls through
+    /// meta/sync.lock; a persisted checkpoint (e.g. a paused conflict) is
+    /// left untouched.
     pub fn fetch_locked(&self, repo: &Repository, remote_name: &str) -> Result<bool, BaluardError> {
-        if self.sync_state_busy() {
-            return Err(BaluardError::Sync(SyncError::Git(
-                "locked fetch refused: sync state machine not idle".into(),
-            )));
-        }
+        self.with_sync_lock(|| self.fetch_locked_inner(repo, remote_name))
+    }
+
+    fn fetch_locked_inner(
+        &self,
+        repo: &Repository,
+        remote_name: &str,
+    ) -> Result<bool, BaluardError> {
         let mut remote = repo
             .find_remote(remote_name)
             .map_err(|e| SyncError::Git(format!("find remote: {e}")))?;
@@ -4643,21 +4702,30 @@ impl SyncEngine {
         // strand a transition.
         self.apply_remote_announcement(repo)?;
 
-        // State: Idle → Pulling
-        self.transition_state(SyncState::Pulling)?;
+        // The folder guard sits OUTSIDE the sync lock: p2p ingestion wraps
+        // integrate_p2p_tip in the folder lock, so the reverse order here
+        // could deadlock two processes holding each other's lock.
+        self.with_folder_remote_guard(repo, remote_name, || {
+            self.with_sync_lock(|| {
+                self.recover_crash_residue();
+                // State: Idle → Pulling (crash residue recovered above)
+                self.transition_state(SyncState::Pulling)?;
 
-        let result =
-            self.with_folder_remote_guard(repo, remote_name, || self.pull_inner(repo, remote_name));
-        if result.is_err() {
-            // Reset state machine on any error to avoid stuck non-Idle state
-            let mut sm = self.state_machine.borrow_mut();
-            sm.current = SyncState::Idle;
-            sm.operation_id += 1;
-            sm.pending_ciphers.clear();
-            sm.pending_since = None;
-            let _ = sm.save_to_file(&self.vault_path);
-        }
-        result
+                let result = self.pull_inner(repo, remote_name);
+                if result.is_err() {
+                    // Reset state machine on any error to avoid stuck non-Idle state
+                    let mut sm = self.state_machine.borrow_mut();
+                    sm.current = SyncState::Idle;
+                    sm.operation_id += 1;
+                    sm.pending_ciphers.clear();
+                    sm.pending_since = None;
+                    if let Err(e) = sm.save_to_file(&self.vault_path) {
+                        eprintln!("[baluard] sync: reset save failed: {e}");
+                    }
+                }
+                result
+            })
+        })
     }
 
     /// Inner pull implementation (state machine transitions for Merging/Idle done here).
@@ -4745,23 +4813,30 @@ impl SyncEngine {
         repo: &Repository,
         remote_oid: Oid,
     ) -> Result<PullResult, BaluardError> {
-        let local_oid = repo
-            .head()
-            .map_err(|e| SyncError::Git(format!("head: {e}")))?
-            .peel_to_commit()
-            .map_err(|e| SyncError::Git(format!("peel local: {e}")))?
-            .id();
-        self.transition_state(SyncState::Pulling)?;
-        let result = self.pull_from_oids(repo, "p2p", remote_oid, local_oid);
-        if result.is_err() {
-            let mut sm = self.state_machine.borrow_mut();
-            sm.current = SyncState::Idle;
-            sm.operation_id += 1;
-            sm.pending_ciphers.clear();
-            sm.pending_since = None;
-            let _ = sm.save_to_file(&self.vault_path);
-        }
-        result
+        self.with_sync_lock(|| {
+            self.recover_crash_residue();
+            // Read under the lock: a concurrent pull may advance HEAD and
+            // the integration must target the current tip.
+            let local_oid = repo
+                .head()
+                .map_err(|e| SyncError::Git(format!("head: {e}")))?
+                .peel_to_commit()
+                .map_err(|e| SyncError::Git(format!("peel local: {e}")))?
+                .id();
+            self.transition_state(SyncState::Pulling)?;
+            let result = self.pull_from_oids(repo, "p2p", remote_oid, local_oid);
+            if result.is_err() {
+                let mut sm = self.state_machine.borrow_mut();
+                sm.current = SyncState::Idle;
+                sm.operation_id += 1;
+                sm.pending_ciphers.clear();
+                sm.pending_since = None;
+                if let Err(e) = sm.save_to_file(&self.vault_path) {
+                    eprintln!("[baluard] sync: reset save failed: {e}");
+                }
+            }
+            result
+        })
     }
 
     fn pull_from_oids(
@@ -5918,7 +5993,13 @@ impl SyncEngine {
 
         repo.cleanup_state()
             .map_err(|e| SyncError::Git(format!("cleanup after merge: {e}")))?;
-        self.transition_state(SyncState::Idle)?;
+        // A background fetch may have recovered a paused Merging to Idle
+        // while this decision sat open; the merge commit is already on
+        // HEAD, so an already-Idle checkpoint skips the formality instead
+        // of failing the finalize after the fact.
+        if self.state_machine.borrow().current != SyncState::Idle {
+            self.transition_state(SyncState::Idle)?;
+        }
         Ok(merge_oid)
     }
 
@@ -9412,6 +9493,7 @@ meta/device_activity.json
 # Sync engine internals — local-only bookkeeping, never synced
 meta/sync-head.json
 meta/sync-state.json
+meta/sync.lock
 
 # Cipher lookup index — local-only, rebuilt from ciphers on demand (P5b).
 # Tracked copies caused constant multi-device conflicts: the index is
@@ -9674,8 +9756,8 @@ mod tests {
     }
 
     /// fetch_locked (mobile background sync): fetches objects but never moves
-    /// HEAD or the worktree, reports remote-ahead correctly, and refuses when
-    /// the sync state machine is busy.
+    /// HEAD or the worktree, reports remote-ahead correctly, and recovers a
+    /// stale checkpoint under the sync lock instead of wedging forever.
     #[test]
     fn fetch_locked_is_fetch_only() {
         // Source repo = the "remote".
@@ -9719,13 +9801,23 @@ mod tests {
             assert_eq!(head, repo2.head().unwrap().peel_to_commit().unwrap().id());
         }
 
-        // Busy state machine -> refused.
-        {
-            let mut sm = clone_engine.state_machine.borrow_mut();
-            sm.current = SyncState::Merging;
-        }
+        // A paused conflict (Merging persisted) is decision state, not
+        // crash residue: the locked background fetch must leave it alone.
+        let paused = SyncStateMachine {
+            current: SyncState::Merging,
+            operation_id: 7,
+            pending_ciphers: Vec::new(),
+            pending_since: None,
+        };
+        paused.save_to_file(clone_dir.path()).unwrap();
         let repo = clone_engine.open_repo().unwrap();
-        assert!(clone_engine.fetch_locked(&repo, "origin").is_err());
+        // HEAD is still behind (fetch-only never moves it), so the fetch
+        // reports remote-ahead; the point is the checkpoint survives.
+        assert!(clone_engine.fetch_locked(&repo, "origin").unwrap());
+        assert_eq!(
+            SyncStateMachine::load_from_file(clone_dir.path()).current,
+            SyncState::Merging
+        );
     }
 
     /// Phase 4: clone_remote must surface fetch progress via the
@@ -11161,6 +11253,132 @@ mod tests {
         assert_eq!(
             std::fs::read(clone_dir.path().join("a.enc")).unwrap(),
             b"local-edit"
+        );
+    }
+
+    /// A device killed mid-pull (Android background kill) persists a
+    /// non-Idle checkpoint forever: mobile never runs recover_state, so
+    /// every later pull died on Pulling → Pulling at the entry gate.
+    /// The entry must resume instead.
+    #[test]
+    fn stale_non_idle_checkpoint_recovers_at_the_pull_entry() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, _clone_engine, cloned) =
+            make_clone(dir.path(), &engine_a, &repo_a);
+
+        std::fs::write(dir.path().join("b.enc"), b"\xBB").unwrap();
+        engine_a.commit_all(&repo_a, "vault update").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        // Case 1: a dead cycle left Pulling in the checkpoint. Each
+        // autosync tick constructs a fresh engine, so the stale file is
+        // what the next engine loads.
+        let stale = SyncStateMachine {
+            current: SyncState::Pulling,
+            operation_id: 1,
+            pending_ciphers: Vec::new(),
+            pending_since: None,
+        };
+        stale.save_to_file(clone_dir.path()).unwrap();
+        let result = SyncEngine::new(clone_dir.path(), "clone-device", None)
+            .pull(&cloned, "origin")
+            .unwrap();
+        assert!(matches!(result, PullResult::FastForward));
+        assert_eq!(
+            SyncStateMachine::load_from_file(clone_dir.path()).current,
+            SyncState::Idle
+        );
+
+        // Case 2: the same for Merging (a kill while a conflict sat
+        // paused leaves Merging persisted).
+        std::fs::write(dir.path().join("c.enc"), b"\xCC").unwrap();
+        engine_a.commit_all(&repo_a, "vault update 2").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+        let stale_m = SyncStateMachine {
+            current: SyncState::Merging,
+            operation_id: 2,
+            pending_ciphers: Vec::new(),
+            pending_since: None,
+        };
+        stale_m.save_to_file(clone_dir.path()).unwrap();
+        let result = SyncEngine::new(clone_dir.path(), "clone-device", None)
+            .pull(&cloned, "origin")
+            .unwrap();
+        assert!(matches!(result, PullResult::FastForward));
+        assert_eq!(
+            SyncStateMachine::load_from_file(clone_dir.path()).current,
+            SyncState::Idle
+        );
+    }
+
+    /// Cross-engine exclusion: while one engine holds meta/sync.lock,
+    /// another engine's pull must refuse with Busy instead of stepping
+    /// on the same worktree mid-cycle.
+    #[test]
+    fn pull_refuses_with_busy_while_another_engine_holds_the_sync_lock() {
+        let key_a = crate::crypto::signature::generate_ed25519_keypair().0;
+        let id_a = uuid::Uuid::new_v4();
+        let (dir, _engine) = make_test_repo();
+        enroll_device(dir.path(), &id_a, &key_a);
+        std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
+        let engine_a = SyncEngine::new(dir.path(), &id_a.to_string(), None);
+        let repo_a = engine_a.init_repo().unwrap();
+        let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
+
+        std::fs::write(dir.path().join("b.enc"), b"\xBB").unwrap();
+        engine_a.commit_all(&repo_a, "vault update").unwrap();
+        engine_a.push(&repo_a, "origin").unwrap();
+
+        let lock_path = clone_dir.path().join("meta/sync.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .unwrap();
+        let mut lock = fd_lock::RwLock::new(file);
+        let guard = lock.write().unwrap();
+        let err = clone_engine.pull(&cloned, "origin").unwrap_err();
+        assert!(
+            matches!(err, BaluardError::Sync(SyncError::Busy)),
+            "expected Busy, got {err:?}"
+        );
+        drop(guard);
+
+        // The lock frees: the next pull proceeds normally.
+        let result = clone_engine.pull(&cloned, "origin").unwrap();
+        assert!(matches!(result, PullResult::FastForward));
+    }
+
+    /// A residue recovery may reset a paused Merging to Idle while the
+    /// user's decision sat open; the finalize must still land the merge
+    /// commit instead of failing after HEAD moved.
+    #[test]
+    fn paused_conflict_finalizes_even_after_checkpoint_reset() {
+        let (_dir, engine, repo, local_tip, remote_tip) = divergent_repo(true, true).unwrap();
+        let stale = SyncStateMachine {
+            current: SyncState::Idle,
+            operation_id: 9,
+            pending_ciphers: Vec::new(),
+            pending_since: None,
+        };
+        stale.save_to_file(&engine.vault_path).unwrap();
+
+        let merge = engine
+            .resolve_conflict_keep_local(&repo, local_tip, remote_tip, &["a.enc".to_string()])
+            .unwrap();
+        let commit = repo.find_commit(merge).unwrap();
+        assert_eq!(commit.parent_count(), 2);
+        assert_eq!(
+            SyncStateMachine::load_from_file(&engine.vault_path).current,
+            SyncState::Idle
         );
     }
 

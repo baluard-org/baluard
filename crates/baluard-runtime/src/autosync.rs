@@ -1478,6 +1478,16 @@ fn run_pull_only_with_pending(
         {
             Ok((PullReport::Skipped, true))
         }
+        // Another engine holds meta/sync.lock (join-poll, background
+        // fetch, a manual sync): no state change, the tick retries.
+        Err(ref e)
+            if matches!(
+                e,
+                baluard_core::error::BaluardError::Sync(baluard_core::error::SyncError::Busy)
+            ) =>
+        {
+            Ok((PullReport::Busy, false))
+        }
         Err(e) => Err(format_sync_err(&e)),
     }
 }

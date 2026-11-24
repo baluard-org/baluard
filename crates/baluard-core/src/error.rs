@@ -284,6 +284,9 @@ pub enum SyncError {
     #[error("vault contains a path this app version does not manage ({path}); update Baluard")]
     UnsupportedVaultPath { path: String },
 
+    #[error("another sync is already running on this vault; try again shortly")]
+    Busy,
+
     #[error("state machine error: {0}")]
     StateMachine(String),
 
