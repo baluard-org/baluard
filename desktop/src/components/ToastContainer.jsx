@@ -2,26 +2,28 @@ import { Show, For } from "solid-js";
 import { toasts, dismiss } from "../context/toastSignal.js";
 
 const ICONS = {
-  success: (
+  // Factories, not values: module-scope JSX compiles to a single shared DOM
+  // node in Solid, so plain values moved the icon to the newest toast.
+  success: () => (
     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="20 6 9 17 4 12" />
     </svg>
   ),
-  error: (
+  error: () => (
     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="10" />
       <line x1="15" y1="9" x2="9" y2="15" />
       <line x1="9" y1="9" x2="15" y2="15" />
     </svg>
   ),
-  warning: (
+  warning: () => (
     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
       <line x1="12" y1="9" x2="12" y2="13" />
       <line x1="12" y1="17" x2="12.01" y2="17" />
     </svg>
   ),
-  info: (
+  info: () => (
     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="10" />
       <line x1="12" y1="16" x2="12" y2="12" />
@@ -56,7 +58,7 @@ export default function ToastContainer() {
               class={`toast-container__toast pointer-events-auto toast-enter flex items-start gap-2.5 px-4 py-3 rounded-xl border shadow-lg backdrop-blur-sm ${STYLES[t.type]}`}
             >
               <div class={`toast-container__toast-icon shrink-0 mt-0.5 ${ICON_ACCENT[t.type]}`}>
-                {ICONS[t.type]}
+                {ICONS[t.type]()}
               </div>
               <p class="toast-container__toast-message text-xs font-medium leading-relaxed flex-1 min-w-0 break-words">
                 {t.message}
