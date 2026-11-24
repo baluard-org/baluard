@@ -11,9 +11,11 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
-## 0.8.11 - 2026-11-24
+## 0.9.0 - 2026-11-24
 
+- All apps: sharing settings are regrouped into "Shared Vaults" and "Direct sharing", with contacts and outbox available on mobile too.
 - All apps: vault settings changes now sync to other devices right away. Previously a settings change could sit uncommitted on a device and keep the sync status warning forever.
+- Desktop: switching entries no longer loses the entries you already loaded.
 
 ## 0.8.10 - 2026-11-24
 
