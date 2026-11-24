@@ -103,6 +103,24 @@ describe("VaultDiagnostics", () => {
     expect(container.textContent).toContain("2");
   });
 
+  it("dirty paths render as a joined name row", async () => {
+    daemonMock.mockResolvedValue(
+      JSON.stringify({ ...SNAPSHOT, staged: 0, unstaged: 2, dirtyPaths: ["meta/epoch.json", "meta/integrity.json"] }),
+    );
+    const { container, findByText } = render(() => <VaultDiagnostics />);
+    await findByText("diag.verdict.behind");
+    expect(container.textContent).toContain("diag.dirtyPaths");
+    expect(container.textContent).toContain("meta/epoch.json, meta/integrity.json");
+  });
+
+  it("absent dirtyPaths from an older daemon renders no row", async () => {
+    daemonMock.mockResolvedValue(JSON.stringify({ ...SNAPSHOT, staged: 0, unstaged: 2 }));
+    const { container, findByText } = render(() => <VaultDiagnostics />);
+    await findByText("diag.verdict.behind");
+    expect(container.textContent).toContain("diag.localChanges");
+    expect(container.textContent).not.toContain("diag.dirtyPaths");
+  });
+
   it("unfetched vaults show a never-fetched remote row", async () => {
     daemonMock.mockResolvedValue(
       JSON.stringify({ ...SNAPSHOT, verdict: "unfetched", upstreamOid: null, upstreamAt: null, behind: null, ahead: null }),

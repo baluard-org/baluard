@@ -144,6 +144,9 @@ export default function VaultDiagnostics() {
     if (s.staged + s.unstaged > 0) {
       out.push([t("diag.localChanges"), String(s.staged + s.unstaged)]);
     }
+    if (Array.isArray(s.dirtyPaths) && s.dirtyPaths.length > 0) {
+      out.push([t("diag.dirtyPaths"), s.dirtyPaths.join(", ")]);
+    }
     if (s.unpublishedAttachments > 0) {
       out.push([
         t("diag.unpublishedAttachments"),

@@ -1539,6 +1539,7 @@
     "conflicts": "Conflitos resolvidos automaticamente",
     "localChanges": "Alterações locais não salvas",
     "unpublishedAttachments": "Anexos não publicados",
+    "dirtyPaths": "Arquivos não confirmados",
     "entries": "Entradas",
     "archived": "Arquivadas",
     "trashed": "Lixeira",

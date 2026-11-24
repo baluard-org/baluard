@@ -491,6 +491,7 @@ internal val EN: Map<String, String> = mapOf(
     "diag.conflicts" to "Conflicts auto-resolved",
     "diag.localChanges" to "Unsaved local changes",
     "diag.unpublishedAttachments" to "Unpublished attachments",
+    "diag.dirtyPaths" to "Dirty files",
     "diag.entries" to "Entries",
     "diag.archived" to "Archived",
     "diag.trashed" to "Trash",

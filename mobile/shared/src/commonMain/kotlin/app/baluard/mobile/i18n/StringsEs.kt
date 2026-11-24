@@ -483,6 +483,7 @@ internal val ES: Map<String, String> = mapOf(
     "diag.conflicts" to "Conflictos resueltos automáticamente",
     "diag.localChanges" to "Cambios locales sin guardar",
     "diag.unpublishedAttachments" to "Adjuntos sin publicar",
+    "diag.dirtyPaths" to "Archivos sin confirmar",
     "diag.entries" to "Entradas",
     "diag.archived" to "Archivadas",
     "diag.trashed" to "Papelera",

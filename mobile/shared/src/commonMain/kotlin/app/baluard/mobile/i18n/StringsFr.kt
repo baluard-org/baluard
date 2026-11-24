@@ -482,6 +482,7 @@ internal val FR: Map<String, String> = mapOf(
     "diag.conflicts" to "Conflits résolus automatiquement",
     "diag.localChanges" to "Modifications locales non enregistrées",
     "diag.unpublishedAttachments" to "Pièces jointes non publiées",
+    "diag.dirtyPaths" to "Fichiers non validés",
     "diag.entries" to "Entrées",
     "diag.archived" to "Archivées",
     "diag.trashed" to "Corbeille",

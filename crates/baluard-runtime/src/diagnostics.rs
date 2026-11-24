@@ -77,6 +77,12 @@ pub struct DiagnosticsSnapshot {
     /// against.
     #[serde(rename = "unpublishedAttachments")]
     pub unpublished_attachments: Option<usize>,
+    /// Names of the pending local files behind the staged/unstaged
+    /// counts, capped at 10 with an "(and N more)" marker, None when the
+    /// repo could not be read. Diagnostic aid: turns "1 unstaged" into
+    /// the file to look at.
+    #[serde(rename = "dirtyPaths")]
+    pub dirty_paths: Option<Vec<String>>,
     #[serde(rename = "commits")]
     pub commits: Vec<CommitRow>,
     // Counts are Option because they need an unlocked vault; the git and
@@ -330,6 +336,9 @@ fn report_text(s: &DiagnosticsSnapshot, now: i64) -> String {
             "unpublished attachments: {count} (run a sync to publish)\n"
         ));
     }
+    if let Some(paths) = s.dirty_paths.as_deref().filter(|p| !p.is_empty()) {
+        r.push_str(&format!("dirty paths: {}\n", paths.join(", ")));
+    }
     if s.autosync.access_denied_streak > 0 {
         r.push_str(&format!(
             "remote rejections: {} consecutive (auth class)\n",
@@ -416,6 +425,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         staged: 0,
         unstaged: 0,
         unpublished_attachments: None,
+        dirty_paths: None,
         commits: Vec::new(),
         entries: None,
         folders: None,
@@ -453,6 +463,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
             ahead_behind,
             dirty,
             unpublished,
+            dirty_paths,
             commits,
             tree_counts,
         ) = git;
@@ -474,6 +485,7 @@ pub async fn snapshot(state: &VaultState) -> Result<DiagnosticsSnapshot, String>
         s.staged = dirty.as_ref().map(|d| d.staged).unwrap_or(0);
         s.unstaged = dirty.as_ref().map(|d| d.unstaged).unwrap_or(0);
         s.unpublished_attachments = unpublished;
+        s.dirty_paths = dirty_paths;
         s.commits = commits;
         if let Some((c, t)) = tree_counts {
             s.head_ciphers = c;
@@ -540,6 +552,7 @@ type GitState = (
     Option<(u32, u32)>,
     Option<baluard_core::sync::engine::WorkTreeStatus>,
     Option<usize>,
+    Option<Vec<String>>,
     Vec<CommitRow>,
     Option<(Option<u64>, Option<u64>)>,
 );
@@ -555,6 +568,7 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
                 false,
                 None,
                 String::new(),
+                None,
                 None,
                 None,
                 None,
@@ -624,6 +638,14 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
             (n("ciphers"), n("trash"))
         });
     let dirty = engine.status(&repo).ok();
+    let dirty_paths = engine.dirty_paths(&repo).ok().map(|mut v| {
+        if v.len() > 10 {
+            let more = v.len() - 10;
+            v.truncate(10);
+            v.push(format!("(and {more} more)"));
+        }
+        v
+    });
     // Offline readiness: envelopes on disk the last-known remote line
     // lacks. Compares pins against the tracking ref the push advances,
     // so a successful sync clears it without a fetch.
@@ -653,6 +675,7 @@ fn git_state(vault_path: &std::path::Path, device_id: &str) -> GitState {
         ahead_behind,
         dirty,
         unpublished,
+        dirty_paths,
         commits,
         tree_counts,
     )
@@ -1026,6 +1049,11 @@ mod tests {
             staged: 0,
             unstaged: 0,
             unpublished_attachments: Some(2),
+            dirty_paths: Some(vec![
+                "meta/epoch.json".into(),
+                "meta/integrity.json".into(),
+                "(and 3 more)".into(),
+            ]),
             commits: vec![CommitRow {
                 oid: "abc1234".into(),
                 at: 1_700_000_000,
@@ -1056,6 +1084,7 @@ mod tests {
         assert!(text.contains("behind 2"));
         assert!(text.contains("entries: 12"));
         assert!(text.contains("unpublished attachments: 2 (run a sync to publish)"));
+        assert!(text.contains("dirty paths: meta/epoch.json, meta/integrity.json, (and 3 more)"));
         assert!(text.contains("origin/main (as of last fetch): bbbbbbb"));
         assert!(!text.contains("https://"));
         assert!(!text.contains("github.com/x"));

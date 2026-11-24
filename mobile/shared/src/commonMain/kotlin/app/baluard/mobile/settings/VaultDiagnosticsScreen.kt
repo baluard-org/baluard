@@ -41,7 +41,9 @@ import app.baluard.mobile.MobileVault
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -186,6 +188,15 @@ fun VaultDiagnosticsScreen(
                     }
                     val dirty = (s.str("staged")?.toIntOrNull() ?: 0) + (s.str("unstaged")?.toIntOrNull() ?: 0)
                     if (dirty > 0) row(t("diag.localChanges"), dirty.toString())
+                    (s.get("dirtyPaths") as? JsonArray)
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { paths ->
+                            row(
+                                t("diag.dirtyPaths"),
+                                paths.mapNotNull { p -> (p as? JsonPrimitive)?.content }
+                                    .joinToString(", "),
+                            )
+                        }
                     (s.str("unpublishedAttachments")?.toIntOrNull() ?: 0).takeIf { it > 0 }?.let {
                         row(t("diag.unpublishedAttachments"), it.toString())
                     }

@@ -1179,6 +1179,48 @@ impl SyncEngine {
         Ok(result)
     }
 
+    /// Names of the paths behind the dirty counters in status(), under
+    /// the same filters (local-only bookkeeping and line-transport blobs
+    /// excluded), so diagnostics can show what is pending instead of only
+    /// how much.
+    pub fn dirty_paths(&self, repo: &Repository) -> Result<Vec<String>, BaluardError> {
+        let statuses = repo
+            .statuses(None)
+            .map_err(|e| SyncError::Git(format!("statuses: {e}")))?;
+        let mut paths = Vec::new();
+        for entry in statuses.iter() {
+            let path = String::from_utf8_lossy(entry.path_bytes());
+            if LOCAL_ONLY_BOOKKEEPING.contains(&path.as_ref())
+                || path.starts_with(LOCAL_ONLY_PREFIX)
+            {
+                continue;
+            }
+            let s = entry.status();
+            // An untracked blob rides the attachments line, never main.
+            if crate::sync::attachments::is_untracked_blob(s, &path) {
+                continue;
+            }
+            if s.is_index_new()
+                || s.is_index_modified()
+                || s.is_index_deleted()
+                || s.is_wt_new()
+                || s.is_wt_modified()
+                || s.is_wt_deleted()
+            {
+                // Report-safe name: no control characters (a newline would
+                // inject report lines), bounded length. The name may be a
+                // stray user file, so it is treated as untrusted text.
+                let name: String = path.chars().filter(|c| !c.is_control()).take(80).collect();
+                paths.push(if name.is_empty() {
+                    "(unnamed)".to_string()
+                } else {
+                    name
+                });
+            }
+        }
+        Ok(paths)
+    }
+
     /// Get recent commit history (last N commits).
     pub fn log(&self, repo: &Repository, limit: usize) -> Result<Vec<CommitInfo>, BaluardError> {
         let head = repo
@@ -10337,6 +10379,117 @@ mod tests {
     /// never count as dirty — for the tracked-then-rewritten old-vault shape
     /// and for the staged deletion the open_repo untrack migration leaves
     /// until the next commit lands it.
+    #[test]
+    fn dirty_paths_names_what_the_counters_count() {
+        let (dir, engine) = make_test_repo();
+        let repo = engine.init_repo().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("meta")).unwrap();
+
+        // One tracked control file, rewritten: the only dirty entry.
+        {
+            use git2::Signature;
+            std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":1}").unwrap();
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/epoch.json"))
+                .unwrap();
+            index.write().unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "force-add control file",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join("meta/epoch.json"), b"{\"epoch\":2}").unwrap();
+        // An untracked attachment blob: line transport, must not be named.
+        std::fs::create_dir_all(
+            dir.path()
+                .join("entries/77777777-7777-7777-7777-777777777777/attachments"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path()
+                .join("entries/77777777-7777-7777-7777-777777777777/attachments/att.enc"),
+            b"blob",
+        )
+        .unwrap();
+
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(
+            (status.staged, status.unstaged),
+            (0, 1),
+            "fixture must be dirty by exactly one file"
+        );
+        assert_eq!(
+            engine.dirty_paths(&repo).unwrap(),
+            vec!["meta/epoch.json".to_string()],
+            "dirty_paths must name the same entry status() counts"
+        );
+
+        // Staged-only entry: add a new file to the index without committing.
+        std::fs::write(dir.path().join("meta/staged.json"), b"{}").unwrap();
+        {
+            let mut index = repo.index().unwrap();
+            index
+                .add_path(std::path::Path::new("meta/staged.json"))
+                .unwrap();
+            index.write().unwrap();
+        }
+        let status = engine.status(&repo).unwrap();
+        assert_eq!((status.staged, status.unstaged), (1, 1));
+        let mut named = engine.dirty_paths(&repo).unwrap();
+        named.sort();
+        assert_eq!(
+            named,
+            vec![
+                "meta/epoch.json".to_string(),
+                "meta/staged.json".to_string()
+            ]
+        );
+
+        // Commit the new file so it is tracked, then delete it: a
+        // WT_DELETED entry counts as unstaged work and is named too.
+        {
+            use git2::Signature;
+            let mut index = repo.index().unwrap();
+            index.write().unwrap();
+            let tree_id = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            let sig = Signature::now("test", "test@test").unwrap();
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "track staged.json",
+                &tree,
+                &[&head],
+            )
+            .unwrap();
+        }
+        std::fs::remove_file(dir.path().join("meta/staged.json")).unwrap();
+        let status = engine.status(&repo).unwrap();
+        assert_eq!(status.unstaged, 2, "deleted staged.json + dirty epoch.json");
+        let mut named = engine.dirty_paths(&repo).unwrap();
+        named.sort();
+        assert_eq!(
+            named,
+            vec![
+                "meta/epoch.json".to_string(),
+                "meta/staged.json".to_string()
+            ]
+        );
+    }
+
     #[test]
     fn status_ignores_device_state_bookkeeping() {
         let (dir, engine) = make_test_repo();
