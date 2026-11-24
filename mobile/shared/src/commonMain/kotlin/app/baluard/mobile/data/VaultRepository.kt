@@ -169,6 +169,42 @@ data class MobilePendingOp(
     val transferTarget: String? = null,
 )
 
+/** Address-book row (from `contacts_list` JSON). */
+data class MobileContactRow(
+    val displayName: String,
+    val identitySigningPubkey: String,
+    val hasWrapKey: Boolean,
+    val trust: String,
+    val verificationCode: String,
+)
+
+/** Owner-side mirrored outbox (from `outbox_list` JSON; key stripped core-side). */
+data class MobileOwnerOutbox(
+    val outboxId: String,
+    val path: String,
+    val recipientSigningPub: String,
+    val publishedCipherIds: List<String> = emptyList(),
+)
+
+/** Recipient-side linked outbox (from `outbox_links` JSON; key stripped core-side). */
+data class MobileOutboxLink(
+    val outboxId: String,
+    val path: String,
+    val ownerName: String,
+    val ownerVaultId: String,
+)
+
+/** View-only entry read from a linked outbox (`outbox_entries` / `outbox_read`). */
+data class MobileOutboxEntry(
+    val cipherId: String,
+    val senderName: String,
+    val updatedAt: Long = 0L,
+    val name: String,
+    val username: String? = null,
+    val password: String? = null,
+    val notes: String? = null,
+)
+
 /** Team-shape readiness + state (S3-7b). */
 data class MobileSpaceStatus(
     val prepared: Boolean,
@@ -594,6 +630,53 @@ class VaultRepository {
 
     suspend fun contactRemove(vault: MobileVault, pubkey: String): String =
         vault.contactRemove(pubkey)
+
+    suspend fun myContactCardParsed(vault: MobileVault): Pair<String, String>? =
+        runCatching { parseMyContactCard(vault.myContactCard()) }.getOrNull()
+
+    suspend fun contactsParsed(vault: MobileVault): List<MobileContactRow> =
+        runCatching { parseContacts(vault.contactsList()) }.getOrDefault(emptyList())
+
+    // ── S2 IS-4b: outboxes (owner mirrors + recipient view-only links) ──
+
+    suspend fun outboxPublish(
+        vault: MobileVault,
+        outboxPath: String,
+        cipherId: String,
+        contactPubkey: String,
+    ): String = vault.outboxPublish(outboxPath, cipherId, contactPubkey)
+
+    suspend fun outboxUnpublish(vault: MobileVault, outboxPath: String, cipherId: String): String =
+        vault.outboxUnpublish(outboxPath, cipherId)
+
+    suspend fun outboxRevoke(vault: MobileVault, outboxPath: String) =
+        vault.outboxRevoke(outboxPath)
+
+    suspend fun outboxList(vault: MobileVault): List<MobileOwnerOutbox> =
+        parseOwnerOutboxes(vault.outboxList())
+
+    suspend fun outboxLink(vault: MobileVault, outboxPath: String): MobileOutboxLink? =
+        runCatching {
+            parseOutboxLinkObj(Json.parseToJsonElement(vault.outboxLink(outboxPath)).jsonObject)
+        }.getOrNull()
+
+    suspend fun outboxLinks(vault: MobileVault): List<MobileOutboxLink> =
+        parseOutboxLinks(vault.outboxLinks())
+
+    suspend fun outboxForget(vault: MobileVault, outboxId: String) =
+        vault.outboxForget(outboxId)
+
+    suspend fun outboxEntries(vault: MobileVault, outboxId: String): List<MobileOutboxEntry> =
+        parseOutboxEntries(vault.outboxEntries(outboxId))
+
+    suspend fun outboxRead(vault: MobileVault, outboxId: String, cipherId: String): MobileOutboxEntry? =
+        runCatching {
+            parseOutboxEntryObj(Json.parseToJsonElement(vault.outboxRead(outboxId, cipherId)).jsonObject)
+        }.getOrNull()
+
+    suspend fun outboxResync(vault: MobileVault): Int =
+        parseOutboxResyncCommittedCount(vault.outboxResync())
+
     /** Stage an out-of-band intro code into the join queue. */
     suspend fun joinRequestsStage(vault: MobileVault, introCode: String): String =
         vault.joinRequestsStage(
@@ -1283,6 +1366,100 @@ class VaultRepository {
 
     companion object {
         const val DEFAULT_VAULT_TIMEOUT = "15m"
+
+        fun parseMyContactCard(raw: String): Pair<String, String>? {
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return null
+            val card = obj.str("card")?.takeIf { it.isNotEmpty() } ?: return null
+            val code = obj.str("verification_code").orEmpty()
+            return card to code
+        }
+
+        fun parseContacts(raw: String): List<MobileContactRow> {
+            val obj = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return emptyList()
+            val arr = obj["contacts"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+            return arr.mapNotNull { el ->
+                val row = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                val pub = row.str("identity_signing_pubkey") ?: return@mapNotNull null
+                MobileContactRow(
+                    displayName = row.str("display_name") ?: pub.take(12),
+                    identitySigningPubkey = pub,
+                    hasWrapKey = row["has_wrap_key"]?.jsonPrimitive?.booleanOrNull == true,
+                    trust = row.str("trust") ?: "channel",
+                    verificationCode = row.str("verification_code").orEmpty(),
+                )
+            }
+        }
+
+        fun parseOwnerOutboxes(raw: String): List<MobileOwnerOutbox> {
+            val arr = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return emptyList()
+            return arr.mapNotNull { el ->
+                val obj = el as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                val id = obj.str("outbox_id") ?: return@mapNotNull null
+                val path = obj.str("path") ?: return@mapNotNull null
+                val recipient = obj.str("recipient_signing_pub").orEmpty()
+                val published = (obj["published"] as? kotlinx.serialization.json.JsonArray)
+                    .orEmpty()
+                    .mapNotNull { p -> (p as? kotlinx.serialization.json.JsonObject)?.str("cipher_id") }
+                MobileOwnerOutbox(
+                    outboxId = id,
+                    path = path,
+                    recipientSigningPub = recipient,
+                    publishedCipherIds = published,
+                )
+            }
+        }
+
+        private fun parseOutboxLinkObj(obj: kotlinx.serialization.json.JsonObject): MobileOutboxLink? {
+            val id = obj.str("outbox_id") ?: return null
+            val path = obj.str("path") ?: return null
+            return MobileOutboxLink(
+                outboxId = id,
+                path = path,
+                ownerName = obj.str("owner_name").orEmpty(),
+                ownerVaultId = obj.str("owner_vault_id").orEmpty(),
+            )
+        }
+
+        fun parseOutboxLinks(raw: String): List<MobileOutboxLink> {
+            val arr = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return emptyList()
+            return arr.mapNotNull { el ->
+                (el as? kotlinx.serialization.json.JsonObject)?.let(::parseOutboxLinkObj)
+            }
+        }
+
+        private fun parseOutboxEntryObj(obj: kotlinx.serialization.json.JsonObject): MobileOutboxEntry? {
+            val cipherId = obj.str("cipher_id") ?: return null
+            val item = obj["item"] as? kotlinx.serialization.json.JsonObject
+            val kind = item?.get("kind") as? kotlinx.serialization.json.JsonObject
+            val kindType = kind?.str("type")
+            val data = kind?.get("data") as? kotlinx.serialization.json.JsonObject
+            val name = obj.str("name") ?: item?.str("name") ?: data?.str("name") ?: ""
+            val loginData = if (kindType == "login") data else null
+            return MobileOutboxEntry(
+                cipherId = cipherId,
+                senderName = obj.str("sender_name").orEmpty(),
+                updatedAt = obj["updated_at"]?.jsonPrimitive?.longOrNull ?: 0L,
+                name = name,
+                username = loginData?.str("username")?.takeIf { it.isNotEmpty() },
+                password = loginData?.str("password")?.takeIf { it.isNotEmpty() },
+                notes = item?.str("notes")?.takeIf { it.isNotEmpty() },
+            )
+        }
+
+        fun parseOutboxEntries(raw: String): List<MobileOutboxEntry> {
+            val arr = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return emptyList()
+            return arr.mapNotNull { el ->
+                (el as? kotlinx.serialization.json.JsonObject)?.let(::parseOutboxEntryObj)
+            }
+        }
+
+        fun parseOutboxResyncCommittedCount(raw: String): Int {
+            val arr = runCatching { Json.parseToJsonElement(raw).jsonArray }.getOrNull() ?: return 0
+            return arr.count { el ->
+                (el as? kotlinx.serialization.json.JsonObject)
+                    ?.get("committed")?.jsonPrimitive?.booleanOrNull == true
+            }
+        }
 
         /** Auto-lock presets (mirrors baluard-core VaultTimeout wire tokens). */
         val vaultTimeoutPresets = listOf(

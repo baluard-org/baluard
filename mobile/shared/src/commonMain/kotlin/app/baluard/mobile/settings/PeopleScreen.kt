@@ -146,15 +146,6 @@ fun PeopleScreen(
     var revokeAsk by remember { mutableStateOf<Pair<String, String>?>(null) } // (collectionId, memberId)
     var revokeBusy by remember { mutableStateOf(false) }
 
-    // G13: user groups (admin-managed).
-    var groups by remember { mutableStateOf<List<app.baluard.mobile.data.MobileGroupInfo>>(emptyList()) }
-    var showGroupCreate by remember { mutableStateOf(false) }
-    var groupName by remember { mutableStateOf("") }
-    var groupEdit by remember { mutableStateOf<app.baluard.mobile.data.MobileGroupInfo?>(null) }
-    var groupEditName by remember { mutableStateOf("") }
-    var groupDeleteArm by remember { mutableStateOf(false) }
-    var groupBusy by remember { mutableStateOf(false) }
-
     // Role change (admin surface): target row + chosen role + busy/error.
     var roleTarget by remember { mutableStateOf<MobileMemberInfo?>(null) }
     var rolePick by remember { mutableStateOf("editor") }
@@ -175,7 +166,6 @@ fun PeopleScreen(
             joinRequests = repo.listJoinRequests(vault)
             accessAsks = repo.listAccessAsks(vault)
             collections = repo.listCollectionsFull(vault)
-            groups = repo.listGroups(vault)
             myCode = runCatching {
                 val o = repo.myContactCard(vault)
                 ((kotlinx.serialization.json.Json.parseToJsonElement(o)
@@ -609,57 +599,6 @@ fun PeopleScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
                         )
-                    }
-                }
-            }
-
-            // ── G13: Groups ── admin-managed member bundles.
-            if (canOffboard) {
-                item {
-                    SectionCard(
-                        title = t("people.groups"),
-                        contentPadding = PaddingValues(vertical = 4.dp),
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-                            if (groups.isEmpty()) {
-                                Text(
-                                    t("people.groupNone"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            groups.forEach { g ->
-                                val names = g.memberIds.mapNotNull { mid ->
-                                    members.firstOrNull { it.id == mid }?.name
-                                }
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            groupEdit = g
-                                            groupEditName = g.name
-                                            groupDeleteArm = false
-                                        }
-                                        .padding(vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(g.name, style = MaterialTheme.typography.bodyLarge)
-                                        Text(
-                                            if (names.isEmpty()) t("people.groupNone")
-                                            else names.joinToString(", "),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedButton(onClick = {
-                                groupName = ""
-                                showGroupCreate = true
-                            }) { Text(t("people.groupNew")) }
-                        }
                     }
                 }
             }
@@ -1132,43 +1071,6 @@ fun PeopleScreen(
         )
     }
 
-    // ── G13 group dialogs ── create, manage (rename / members / delete).
-    if (showGroupCreate) {
-        AlertDialog(
-            onDismissRequest = { if (!groupBusy) showGroupCreate = false },
-            title = { Text(t("people.groupNew")) },
-            text = {
-                BaluardTextField(
-                    value = groupName,
-                    onValueChange = { groupName = it },
-                    label = t("people.groupNameLabel"),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !groupBusy && groupName.isNotBlank(),
-                    onClick = {
-                        scope.launch {
-                            groupBusy = true
-                            runCatching { repo.groupCreate(vault, groupName.trim()) }
-                                .onSuccess {
-                                    showGroupCreate = false
-                                    refreshAll()
-                                }
-                                .onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
-                            groupBusy = false
-                        }
-                    },
-                ) { Text(t("people.groupCreate")) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showGroupCreate = false }) { Text(t("common.cancel")) }
-            },
-        )
-    }
-
     verifyTarget?.let { m ->
         AlertDialog(
             onDismissRequest = { if (!verifyBusy) verifyTarget = null },
@@ -1307,119 +1209,6 @@ fun PeopleScreen(
             },
             dismissButton = {
                 TextButton(onClick = { roleTarget = null }) { Text(t("common.cancel")) }
-            },
-        )
-    }
-
-    groupEdit?.let { g ->
-        val liveMembers = members.filter { !it.removed && !it.reset }
-        AlertDialog(
-            onDismissRequest = { if (!groupBusy) groupEdit = null },
-            title = { Text(g.name) },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        BaluardTextField(
-                            value = groupEditName,
-                            onValueChange = { groupEditName = it },
-                            label = t("people.groupNameLabel"),
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(
-                            enabled = !groupBusy && groupEditName.isNotBlank() && groupEditName != g.name,
-                            onClick = {
-                                scope.launch {
-                                    groupBusy = true
-                                    runCatching { repo.groupRename(vault, g.id, groupEditName.trim()) }
-                                        .onSuccess { groupEdit = null; refreshAll() }
-                                        .onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
-                                    groupBusy = false
-                                }
-                            },
-                        ) { Text(t("people.groupSave")) }
-                    }
-                    Text(
-                        t("people.groupMembers"),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    val inGroup = g.memberIds.toSet()
-                    liveMembers.forEach { m ->
-                        val joined = m.id in inGroup
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(m.name, modifier = Modifier.weight(1f))
-                            TextButton(
-                                enabled = !groupBusy,
-                                onClick = {
-                                    scope.launch {
-                                        groupBusy = true
-                                        runCatching {
-                                            if (joined) repo.groupMemberRemove(vault, g.id, m.id)
-                                            else repo.groupMemberAdd(vault, g.id, m.id)
-                                        }
-                                            .onSuccess {
-                                                groupEdit = null
-                                                refreshAll()
-                                            }
-                                            .onFailure { Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic")) }
-                                        groupBusy = false
-                                    }
-                                },
-                            ) {
-                                Text(
-                                    t(if (joined) "people.groupRemove" else "people.groupAddMember"),
-                                    color = if (joined) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    }
-                    TextButton(
-                        enabled = !groupBusy,
-                        onClick = { groupDeleteArm = true },
-                    ) {
-                        Text(
-                            t("people.groupDelete"),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    if (groupDeleteArm) {
-                        Text(
-                            t("people.groupDeleteConfirm", g.name),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                        TextButton(
-                            enabled = !groupBusy,
-                            onClick = {
-                                scope.launch {
-                                    groupBusy = true
-                                    runCatching { repo.groupDelete(vault, g.id) }
-                                        .onSuccess {
-                                            groupEdit = null
-                                            groupDeleteArm = false
-                                            refreshAll()
-                                        }
-                                        .onFailure {
-                                            Toast.error(it.message?.removePrefix("detail=") ?: t("error.generic"))
-                                            groupDeleteArm = false
-                                        }
-                                    groupBusy = false
-                                }
-                            },
-                        ) { Text(t("common.continue")) }
-                    }
-                }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { groupEdit = null }) { Text(t("common.close")) }
             },
         )
     }

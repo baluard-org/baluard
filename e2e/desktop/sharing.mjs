@@ -67,8 +67,9 @@ try {
   await (await q("login-unlock")).click();
   await (await q("vault-view")).waitForDisplayed({ timeout: 30000 });
 
-  // Open Settings on the Collections tab.
+  // Open Settings on the Collections tab inside Shared Vaults.
   await (await q("settings-open")).click();
+  await (await q("settings-tab-shared-vaults")).click();
   await (await q("settings-tab-collections")).click();
   await (await q("collections-name-input")).waitForDisplayed({ timeout: 20000 });
 
@@ -87,6 +88,7 @@ try {
     // Remount the tab (onSettled refresh) — discriminating a post-create
     // refresh gap from a render problem.
     await (await q("settings-tab-data")).click();
+    await (await q("settings-tab-shared-vaults")).click();
     await (await q("settings-tab-collections")).click();
     await (await q("collections-name-input")).waitForDisplayed({ timeout: 20000 });
     for (let i = 0; i < 20 && !found; i++) {

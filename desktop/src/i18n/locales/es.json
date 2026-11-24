@@ -404,6 +404,8 @@
     "tabContacts": "Contactos",
     "tabOutboxes": "Buzones",
     "tabSpace": "Bóveda",
+    "tabSharedVaults": "Bóvedas compartidas",
+    "tabDirectSharing": "Compartir directo",
     "hwKeyTitle": "Proteger con tu llave de seguridad",
     "hwKeyOn": "Esta bóveda está protegida por tu llave de seguridad.",
     "hwKeyOff": "Esta bóveda no está protegida por una llave de seguridad.",

@@ -6971,9 +6971,6 @@ impl VaultState {
     /// Live-mirror tick: re-publish every entry in every outbox from
     /// the current cipher state. Idempotent; used by the daemon's
     /// post-CRUD hook and the explicit resync route.
-    /// Live-mirror tick: re-publish every entry in every outbox from
-    /// the current cipher state. Idempotent; used by the daemon's
-    /// post-CRUD hook and the explicit resync route.
     pub async fn outbox_resync(&self) -> Result<String, String> {
         let mut guard = self.inner.write().await;
         let handle = guard.as_mut().ok_or("Vault not opened".to_string())?;

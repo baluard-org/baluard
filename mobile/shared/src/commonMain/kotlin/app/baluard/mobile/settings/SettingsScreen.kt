@@ -91,6 +91,7 @@ import app.baluard.mobile.data.VaultRepository
 import app.baluard.mobile.data.MobileSpaceSettings
 import app.baluard.mobile.data.MobileSpaceStatus
 import app.baluard.mobile.data.MobilePendingOp
+import app.baluard.mobile.platform.OutboxFolderSupport
 import app.baluard.mobile.ui.components.BaluardTextField
 import app.baluard.mobile.ui.components.rememberShareOpenFlow
 import app.baluard.mobile.ui.toast.Toast
@@ -182,9 +183,15 @@ fun SettingsScreen(
     onOpenPeople: () -> Unit = {},
     onSyncNudge: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
+    onOpenGroups: () -> Unit = {},
+    onOpenSpace: () -> Unit = {},
     onOpenActivity: () -> Unit = {},
+    onOpenContacts: () -> Unit = {},
+    onOpenOutboxes: () -> Unit = {},
     onOpenDiagnostics: () -> Unit = {},
     onOpenGitBackup: () -> Unit = {},
+    selectedCategory: SettingsCategory? = null,
+    onSelectCategory: (SettingsCategory?) -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     val biometric = remember { Biometric() }
@@ -197,13 +204,12 @@ fun SettingsScreen(
     var syncPhase by remember { mutableStateOf(SyncPhase.Idle) }
 var showSyncUpgrade by remember { mutableStateOf(false) }
 val entitlement by Entitlements.state.collectAsState()
-    var selectedCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var myRole by remember { mutableStateOf("viewer") }
     LaunchedEffect(vault) {
         myRole = repo.myRole(vault)
     }
     BackPressHandler(enabled = selectedCategory != null) {
-        selectedCategory = null
+        onSelectCategory(null)
     }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -211,7 +217,7 @@ val entitlement by Entitlements.state.collectAsState()
             BaluardTopBar(
                 title = selectedCategory?.let { t(it.titleKey) } ?: t("settings.title"),
                 onBack = {
-                    if (selectedCategory == null) onBack() else selectedCategory = null
+                    if (selectedCategory == null) onBack() else onSelectCategory(null)
                 },
             )
         },
@@ -235,8 +241,7 @@ val entitlement by Entitlements.state.collectAsState()
                     }
                 }
                 SettingsCategoryIndex(
-                    canManageSpace = myRole == "owner" || myRole == "admin",
-                    onSelect = { selectedCategory = it },
+                    onSelect = onSelectCategory,
                 )
             } else {
                 when (selectedCategory) {
@@ -1581,11 +1586,7 @@ val entitlement by Entitlements.state.collectAsState()
             }
 
                     }
-                    SettingsCategory.Sharing -> {
-
-            // People, shared folders, and per-device activity.
-            // Role-gated, not key-gated: on a flipped Space an admin
-            // holds no Root Key, so holds_root is the wrong signal here.
+                    SettingsCategory.SharedVaults -> {
             if (myRole == "owner" || myRole == "admin") {
                 SectionCard(title = t("people.title")) {
                     Row(
@@ -1606,8 +1607,6 @@ val entitlement by Entitlements.state.collectAsState()
                         onClick = { onOpenPeople() },
                     )
                 }
-            }
-            if (myRole == "owner" || myRole == "admin") {
                 SectionCard(title = t("collections.title")) {
                     Row(
                         modifier = Modifier
@@ -1625,6 +1624,44 @@ val entitlement by Entitlements.state.collectAsState()
                     BaluardPrimaryButton(
                         text = t("collections.open"),
                         onClick = { onOpenCollections() },
+                    )
+                }
+                SectionCard(title = t("people.groups")) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenGroups() },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = t("groups.entrySubtitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    BaluardPrimaryButton(
+                        text = t("groups.open"),
+                        onClick = { onOpenGroups() },
+                    )
+                }
+                SectionCard(title = t("space.title")) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenSpace() },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = t("space.entrySubtitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    BaluardPrimaryButton(
+                        text = t("space.open"),
+                        onClick = { onOpenSpace() },
                     )
                 }
             }
@@ -1649,702 +1686,44 @@ val entitlement by Entitlements.state.collectAsState()
                 )
             }
                     }
-                    SettingsCategory.Space -> {
-
-            if (myRole == "owner" || myRole == "admin") {
-                SectionCard(title = t("space.title")) {
-                    val scope = rememberCoroutineScope()
-                    var spaceSettings by remember(vault) { mutableStateOf<MobileSpaceSettings?>(null) }
-                    var spaceBusy by remember(vault) { mutableStateOf(false) }
-                    var pendingOps by remember(vault) { mutableStateOf(listOf<MobilePendingOp>()) }
-                    // S4-6: advisory org policies (recommended settings).
-                    var spacePolicies by remember(vault) { mutableStateOf(mapOf<String, String>()) }
-                    LaunchedEffect(vault) {
-                        spaceSettings = repo.spaceSettingsGet(vault)
-                        pendingOps = repo.approvalsPending(vault)
-                        spacePolicies = repo.policiesList(vault)
-                    }
-
-                    // Team mode (S3-7b): one-way upgrade. The daemon
-                    // gates and re-checks everything; the UI only paves
-                    // the path.
-                    var spaceTeam by remember(vault) { mutableStateOf<MobileSpaceStatus?>(null) }
-                    var teamBusy by remember(vault) { mutableStateOf(false) }
-                    var showFlipConfirm by remember(vault) { mutableStateOf(false) }
-                    var flipWord by remember(vault) { mutableStateOf("") }
-                    LaunchedEffect(vault) {
-                        spaceTeam = repo.spaceStatus(vault)
-                    }
-
-                    fun runPrepare() {
-                        if (teamBusy) return
-                        teamBusy = true
-                        scope.launch {
-                            try {
-                                val r = repo.spacePrepare(vault)
-                                spaceTeam = repo.spaceStatus(vault)
-                                when {
-                                    r == null -> Toast.error(t("error.generic"))
-                                    r.missing > 0 -> Toast.error(t("space.teamMissing", r.missing.toString()))
-                                    else -> Toast.success(t("space.teamPrepared"))
-                                }
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Toast.error(t("error.generic"))
-                            } finally {
-                                teamBusy = false
-                            }
-                        }
-                    }
-
-                    fun runFlip() {
-                        // D47: a typed-confirm guard needs a non-empty
-                        // typed value, and the dialog stays open through
-                        // the call so a failure is visible in place.
-                        if (teamBusy || flipWord.trim() != "team") return
-                        teamBusy = true
-                        scope.launch {
-                            try {
-                                repo.spaceFlip(vault)
-                                spaceTeam = repo.spaceStatus(vault)
-                                Toast.success(t("space.teamDone"))
-                                showFlipConfirm = false
-                                onSyncNudge()
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                // The core refusal is plain language;
-                                // surface it instead of a generic error.
-                                val raw = e.message ?: ""
-                                val detail = if (raw.startsWith("detail=")) raw.removePrefix("detail=") else raw
-                                Toast.error(detail.ifBlank { t("error.generic") })
-                            } finally {
-                                teamBusy = false
-                            }
-                        }
-                    }
-
-                    fun setSpace(
-                        inviteAuthority: String? = null,
-                        allowViewerExport: Boolean? = null,
-                        guestEnabled: Boolean? = null,
-                        trashPolicy: String? = null,
-                        joinApproval: String? = null,
-                        quorumAdminOps: ULong? = null,
-                        collectionCreateAuthority: String? = null,
-                    ) {
-                        // Synchronous guard: launch dispatches, so a flag
-                        // set inside the coroutine lets two rapid taps
-                        // both through.
-                        if (spaceBusy) return
-                        if (inviteAuthority != null && spaceSettings?.inviteAuthority == inviteAuthority) return
-                        if (trashPolicy != null && spaceSettings?.trashPolicy == trashPolicy) return
-                        if (joinApproval != null && spaceSettings?.joinApproval == joinApproval) return
-                        if (quorumAdminOps != null && spaceSettings?.quorumAdminOps == quorumAdminOps.toInt()) return
-                        if (collectionCreateAuthority != null && spaceSettings?.collectionCreateAuthority == collectionCreateAuthority) return
-                        spaceBusy = true
-                        scope.launch {
-                            try {
-                                repo.spaceSettingsSet(vault, inviteAuthority, allowViewerExport, guestEnabled, trashPolicy, joinApproval, quorumAdminOps, collectionCreateAuthority)
-                                spaceSettings = repo.spaceSettingsGet(vault)
-                                pendingOps = repo.approvalsPending(vault)
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Toast.error(t("error.generic"))
-                            } finally {
-                                spaceBusy = false
-                            }
-                        }
-                    }
-
-                    // Team mode status + upgrade path. Rendered
-                    // unconditionally inside the admin card; gating the
-                    // state-creating control on its own state deadlocks
-                    // fresh vaults (the wave-23 lesson).
-                    Text(t("space.teamLabel"), style = MaterialTheme.typography.bodyMedium)
-                    if (spaceTeam?.flipped == true) {
-                        Text(
-                            text = t("space.teamOn"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        Text(
-                            text = t("space.teamOff"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        val missing = spaceTeam?.missingWrapPubkey ?: 0
-                        if (missing > 0) {
-                            Text(
-                                text = t("space.teamMissing", missing.toString()),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                enabled = !teamBusy && spaceTeam != null,
-                                onClick = { runPrepare() },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(t("space.teamPrepare"))
-                            }
-                            OutlinedButton(
-                                enabled = !teamBusy && spaceTeam?.prepared == true && missing == 0,
-                                onClick = {
-                                    flipWord = "" // no leak across dialog opens
-                                    showFlipConfirm = true
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(t("space.teamUpgrade"))
-                            }
-                        }
-                    }
-                    if (showFlipConfirm) {
-                        AlertDialog(
-                            onDismissRequest = { if (!teamBusy) showFlipConfirm = false },
-                            title = { Text(t("space.teamConfirmTitle")) },
-                            text = {
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(t("space.teamConfirmBody"))
-                                    BaluardTextField(
-                                        value = flipWord,
-                                        onValueChange = { flipWord = it },
-                                        label = t("space.teamConfirmWord"),
-                                    )
-                                }
-                            },
-                            confirmButton = {
-                                TextButton(
-                                    enabled = !teamBusy && flipWord.trim() == "team",
-                                    onClick = { runFlip() },
-                                ) { Text(t("space.teamUpgrade")) }
-                            },
-                            dismissButton = {
-                                TextButton(enabled = !teamBusy, onClick = { showFlipConfirm = false }) {
-                                    Text(t("common.cancel"))
-                                }
-                            },
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    // Who may invite members (admins+owner, or owner only).
+                    SettingsCategory.DirectSharing -> {
+            SectionCard(title = t("contacts.listTitle")) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenContacts() },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        text = t("space.inviteAuthorityLabel"),
+                        text = t("contacts.entrySubtitle"),
                         style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        text = t("space.inviteAuthorityDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(inviteAuthority = "admins") },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(t("space.authorityAdmins"))
-                        }
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(inviteAuthority = "owners") },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(t("space.authorityOwners"))
-                        }
-                    }
-                    if (spaceSettings != null) {
-                        Text(
-                            text = t(
-                                if (spaceSettings!!.inviteAuthority == "owners") {
-                                    "space.authorityOwners"
-                                } else {
-                                    "space.authorityAdmins"
-                                }
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
+                }
+                Spacer(Modifier.height(12.dp))
+                BaluardPrimaryButton(
+                    text = t("contacts.open"),
+                    onClick = { onOpenContacts() },
+                )
+            }
+            if (OutboxFolderSupport.isSupported()) {
+                SectionCard(title = t("outbox.title")) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenOutboxes() },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(t("space.viewerExportLabel"), style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = t("space.viewerExportDesc"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            enabled = !spaceBusy && spaceSettings != null,
-                            checked = spaceSettings?.allowViewerExport == true,
-                            onCheckedChange = { setSpace(allowViewerExport = it) },
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(t("space.guestLabel"), style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = t("space.guestDesc"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            enabled = !spaceBusy && spaceSettings != null,
-                            checked = spaceSettings?.guestEnabled == true,
-                            onCheckedChange = { setSpace(guestEnabled = it) },
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                    // G6: Space Recovery Kit. Family vaults carry one from
-                    // creation; enabling over it (or disabling) may demand
-                    // the fixed two-admin confirmation, which surfaces in
-                    // the pending asks above.
-                    var kitEnabled by remember(vault) { mutableStateOf<Boolean?>(null) }
-                    var kitBusy by remember { mutableStateOf(false) }
-                    var kitConfirm by remember { mutableStateOf<String?>(null) }
-                    var kitWords by remember { mutableStateOf<List<String>?>(null) }
-                    LaunchedEffect(vault) {
-                        runCatching {
-                            val json = repo.spaceKitStatus(vault)
-                            kitEnabled = (Json.parseToJsonElement(json) as? JsonObject)
-                                ?.get("enabled")?.jsonPrimitive?.content == "true"
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(t("space.kitLabel"), style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                text = t("space.kitDesc"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    // Replace re-runs enable (enable-over rotates the
-                    // phrase behind the fixed threshold); Disable is a
-                    // separate destructive affordance.
-                    val kitRunEnable: () -> Unit = kitRunEnable@{
-                        kitBusy = true
-                        scope.launch {
-                            try {
-                                val json = repo.spaceKitEnable(vault)
-                                val words = (Json.parseToJsonElement(json) as? JsonObject)
-                                    ?.get("phrase")?.jsonPrimitive?.content
-                                    ?.trim()?.split(Regex("\\s+")).orEmpty()
-                                kitWords = if (words.size == 24) words else null
-                                kitEnabled = true
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                Toast.error(e.message ?: t("space.kitFailed"))
-                            }
-                            kitBusy = false
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(
-                            enabled = !kitBusy && kitEnabled != null,
-                            onClick = { kitRunEnable() },
-                        ) {
-                            Text(
-                                when (kitEnabled) {
-                                    true -> t("space.kitReplace")
-                                    false -> t("space.kitEnable")
-                                    null -> t("common.loading")
-                                },
-                            )
-                        }
-                        if (kitEnabled == true) {
-                            TextButton(
-                                enabled = !kitBusy,
-                                onClick = { kitConfirm = "disable" },
-                            ) {
-                                Text(t("space.kitDisable"), color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                    }
-                    if (kitEnabled == false) {
                         Text(
-                            t("space.kitOffHint"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = t("outbox.entrySubtitle"),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
                         )
                     }
-                    
-                    if (kitConfirm == "disable") {
-                        AlertDialog(
-                            onDismissRequest = { if (!kitBusy) kitConfirm = null },
-                            title = { Text(t("space.kitDisableTitle")) },
-                            text = { Text(t("space.kitDisableBody")) },
-                            confirmButton = {
-                                TextButton(enabled = !kitBusy, onClick = {
-                                    kitBusy = true
-                                    scope.launch {
-                                        try {
-                                            repo.spaceKitDisable(vault)
-                                            kitEnabled = false
-                                            Toast.success(t("space.kitDisabled"))
-                                        } catch (e: kotlinx.coroutines.CancellationException) {
-                                            throw e
-                                        } catch (e: Exception) {
-                                            Toast.error(e.message ?: t("space.kitFailed"))
-                                        }
-                                        kitBusy = false
-                                        kitConfirm = null
-                                    }
-                                }) { Text(t("space.kitDisable"), color = MaterialTheme.colorScheme.error) }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { kitConfirm = null }) { Text(t("common.cancel")) }
-                            },
-                        )
-                    }
-
-                    kitWords?.let { words ->
-                        AlertDialog(
-                            onDismissRequest = {},
-                            title = { Text(t("space.kitPhraseTitle")) },
-                            text = {
-                                Column {
-                                    Text(
-                                        t("space.kitPhraseBody"),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Spacer(Modifier.height(8.dp))
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        words.chunked(2).forEachIndexed { rowIdx, pair ->
-                                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                                pair.forEachIndexed { colIdx, w ->
-                                                    Text(
-                                                        text = "${rowIdx * 2 + colIdx + 1}. $w",
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        fontFamily = FontFamily.Monospace,
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    copyToClipboard(words.joinToString(" "))
-                                    Toast.success(t("common.copied"))
-                                }) { Text(t("recovery.copyPhrase")) }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { kitWords = null }) { Text(t("common.done")) }
-                            },
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    // Who may trash entries (§6.5 trash_policy).
-                    Text(t("space.trashPolicyLabel"), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = t("space.trashPolicyDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(trashPolicy = "write_scope_can_trash") },
-                        ) {
-                            Text(t("space.trashWriteScope"))
-                        }
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(trashPolicy = "admins_only") },
-                        ) {
-                            Text(t("space.trashAdminsOnly"))
-                        }
-                    }
-                    if (spaceSettings != null) {
-                        Text(
-                            text = t(
-                                if (spaceSettings!!.trashPolicy == "admins_only") {
-                                    "space.trashAdminsOnly"
-                                } else {
-                                    "space.trashWriteScope"
-                                }
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    // How join asks are approved (§6.5 join_approval).
-                    Text(t("space.joinApprovalLabel"), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = t("space.joinApprovalDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(joinApproval = "manual") },
-                        ) {
-                            Text(t("space.joinManual"))
-                        }
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(joinApproval = "code") },
-                        ) {
-                            Text(t("space.joinCode"))
-                        }
-                    }
-                    if (spaceSettings != null) {
-                        Text(
-                            text = t(
-                                if (spaceSettings!!.joinApproval == "code") {
-                                    "space.joinCode"
-                                } else {
-                                    "space.joinManual"
-                                }
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    // How many admins must confirm sensitive ops
-                    // (§6.5 quorum_admin_ops, decided 2026-09-27).
-                    Text(t("space.quorumLabel"), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = t("space.quorumDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(1UL, 2UL, 3UL).forEach { n ->
-                            OutlinedButton(
-                                enabled = !spaceBusy,
-                                onClick = { setSpace(quorumAdminOps = n) },
-                            ) {
-                                Text(n.toString())
-                            }
-                        }
-                    }
-                    if (spaceSettings != null) {
-                        Text(
-                            text = t("space.quorumCurrent", spaceSettings!!.quorumAdminOps),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    // Who may create collections (§6.5, decided
-                    // 2026-09-27): admins by default, editors optional.
-                    Text(t("space.createAuthLabel"), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = t("space.createAuthDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(collectionCreateAuthority = "admins") },
-                        ) {
-                            Text(t("space.createAdmins"))
-                        }
-                        OutlinedButton(
-                            enabled = !spaceBusy,
-                            onClick = { setSpace(collectionCreateAuthority = "editors") },
-                        ) {
-                            Text(t("space.createEditors"))
-                        }
-                    }
-                    if (spaceSettings != null) {
-                        Text(
-                            text = t(
-                                if (spaceSettings!!.collectionCreateAuthority == "editors") {
-                                    "space.createEditors"
-                                } else {
-                                    "space.createAdmins"
-                                }
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-
-                    // S4-6: recommendations that DIFFER from the current
-                    // value render as one hint block (a small screen shows
-                    // what is worth acting on, not the full list).
-                    val policyDiffs = spacePolicies.entries.mapNotNull { (key, rec) ->
-                        val label = when (key) {
-                            "space_invite_authority" -> t("space.inviteAuthorityLabel")
-                            "allow_viewer_export" -> t("space.viewerExportLabel")
-                            "guest_enabled" -> t("space.guestLabel")
-                            "trash_policy" -> t("space.trashPolicyLabel")
-                            "join_approval" -> t("space.joinApprovalLabel")
-                            "quorum_admin_ops" -> t("space.quorumLabel")
-                            "collection_create_authority" -> t("space.createAuthLabel")
-                            else -> return@mapNotNull null
-                        }
-                        val current = when (key) {
-                            "space_invite_authority" -> spaceSettings?.inviteAuthority
-                            "allow_viewer_export" -> spaceSettings?.allowViewerExport?.toString()
-                            "guest_enabled" -> spaceSettings?.guestEnabled?.toString()
-                            "trash_policy" -> spaceSettings?.trashPolicy
-                            "join_approval" -> spaceSettings?.joinApproval
-                            "quorum_admin_ops" -> spaceSettings?.quorumAdminOps?.toString()
-                            "collection_create_authority" -> spaceSettings?.collectionCreateAuthority
-                            else -> null
-                        }
-                        // Render the recommendation through its existing
-                        // chip label, never as a raw wire string.
-                        val recLabel = when (rec) {
-                            "admins" -> t("space.authorityAdmins")
-                            "owners" -> t("space.authorityOwners")
-                            "editors" -> t("space.createEditors")
-                            "write_scope_can_trash" -> t("space.trashWriteScope")
-                            "admins_only" -> t("space.trashAdminsOnly")
-                            "manual" -> t("space.joinManual")
-                            "code" -> t("space.joinCode")
-                            "true" -> t("settings.enabled")
-                            "false" -> t("settings.disabled")
-                            else -> rec
-                        }
-                        if (current != null && current != rec) label to recLabel else null
-                    }
-                    if (policyDiffs.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(t("space.policyTitle"), style = MaterialTheme.typography.bodyMedium)
-                        policyDiffs.forEach { (label, rec) ->
-                            Text(
-                                text = t("space.policyHint", "$label: $rec"),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = BaluardTheme.colors.textPrimary,
-                            )
-                        }
-                    }
-
-                    // Pending sensitive-op asks (visible when quorum > 1).
-                    if (pendingOps.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(t("space.pendingTitle"), style = MaterialTheme.typography.bodyMedium)
-                        pendingOps.forEach { op ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text(t(s4OpLabel(op.kind)), style = MaterialTheme.typography.bodySmall)
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = t("space.pendingItem", op.approvals, op.required),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    // §13 review F1: confirming a pending
-                                    // claim repeats the SAME ask — the row
-                                    // carries the claimant id. A pending
-                                    // transfer works the same way: the
-                                    // owner initiates, an admin confirms
-                                    // the named successor.
-                                    if (op.kind == "ownership_claim" && op.claimantId != null) {
-                                        TextButton(onClick = {
-                                            scope.launch {
-                                                try {
-                                                    repo.memberClaim(vault, op.claimantId!!)
-                                                    pendingOps = repo.approvalsPending(vault)
-                                                } catch (e: Exception) {
-                                                    Toast.error(e.message ?: t("error.generic"))
-                                                }
-                                            }
-                                        }) {
-                                            Text(t("people.approve"))
-                                        }
-                                    }
-                                    if (op.kind == "kit.replace" || op.kind == "kit.disable") {
-                                        TextButton(onClick = {
-                                            scope.launch {
-                                                try {
-                                                    if (op.kind == "kit.replace") {
-                                                        val json = repo.spaceKitEnable(vault)
-                                                        // The replacement phrase is
-                                                        // shown once; dropping it here
-                                                        // loses the kit forever.
-                                                        val words = (Json.parseToJsonElement(json) as? JsonObject)
-                                                            ?.get("phrase")?.jsonPrimitive?.content
-                                                            ?.trim()?.split(Regex("\\s+")).orEmpty()
-                                                        kitWords = if (words.size == 24) words else null
-                                                        kitEnabled = true
-                                                    } else {
-                                                        repo.spaceKitDisable(vault)
-                                                        kitEnabled = false
-                                                    }
-                                                    pendingOps = repo.approvalsPending(vault)
-                                                    Toast.success(t("space.kitConfirmed"))
-                                                } catch (e: kotlinx.coroutines.CancellationException) {
-                                                    throw e
-                                                } catch (e: Exception) {
-                                                    Toast.error(e.message ?: t("space.kitFailed"))
-                                                }
-                                            }
-                                        }) {
-                                            Text(t("people.approve"))
-                                        }
-                                    }
-                                    if (op.kind == "transfer_ownership" && op.transferTarget != null) {
-                                        TextButton(onClick = {
-                                            scope.launch {
-                                                try {
-                                                    repo.memberTransfer(vault, op.transferTarget!!)
-                                                    pendingOps = repo.approvalsPending(vault)
-                                                } catch (e: Exception) {
-                                                    Toast.error(e.message ?: t("error.generic"))
-                                                }
-                                            }
-                                        }) {
-                                            Text(t("people.approve"))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    BaluardDivider(modifier = Modifier.padding(vertical = 12.dp))
-                    // Restore is admin-only in v1 — single-valued, shown
-                    // read-only so the surface tells the whole truth.
-                    Text(t("space.restorePolicyLabel"), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = t("space.restorePolicyDesc"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = t("space.restoreAdminsOnly"),
-                        style = MaterialTheme.typography.bodySmall,
+                    Spacer(Modifier.height(12.dp))
+                    BaluardPrimaryButton(
+                        text = t("outbox.open"),
+                        onClick = { onOpenOutboxes() },
                     )
                 }
             }
@@ -3457,10 +2836,9 @@ private fun SiteIconBackfillSection(vault: MobileVault, repo: VaultRepository, o
 }
 
 @Composable
-private fun SettingsCategoryIndex(canManageSpace: Boolean, onSelect: (SettingsCategory) -> Unit) {
+private fun SettingsCategoryIndex(onSelect: (SettingsCategory) -> Unit) {
     val categories = settingsCategories(
         autofillSupported = AutofillRole.isSupported(),
-        canManageSpace = canManageSpace,
     )
     BaluardCard(contentPadding = PaddingValues(0.dp)) {
         categories.forEachIndexed { index, category ->
@@ -3468,8 +2846,8 @@ private fun SettingsCategoryIndex(canManageSpace: Boolean, onSelect: (SettingsCa
                 SettingsCategory.Sync -> Icons.Default.CloudSync
                 SettingsCategory.Security -> Icons.Default.Shield
                 SettingsCategory.Autofill -> Icons.Default.Password
-                SettingsCategory.Sharing -> Icons.Default.People
-                SettingsCategory.Space -> Icons.Default.Group
+                SettingsCategory.SharedVaults -> Icons.Default.People
+                SettingsCategory.DirectSharing -> Icons.Default.Group
                 SettingsCategory.Data -> Icons.Default.Save
                 SettingsCategory.Vault -> Icons.Default.AccountCircle
                 SettingsCategory.About -> Icons.Default.Info

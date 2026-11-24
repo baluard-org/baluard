@@ -445,6 +445,8 @@
     "tabContacts": "Contatos",
     "tabOutboxes": "Caixas de saída",
     "tabSpace": "Cofre",
+    "tabSharedVaults": "Cofres compartilhados",
+    "tabDirectSharing": "Compartilhamento direto",
     "hwKeyTitle": "Proteger com sua chave de segurança",
     "hwKeyOn": "Este cofre está protegido por sua chave de segurança.",
     "hwKeyOff": "Este cofre não está protegido por uma chave de segurança.",

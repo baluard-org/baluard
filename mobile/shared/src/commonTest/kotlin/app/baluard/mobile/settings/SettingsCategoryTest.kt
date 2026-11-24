@@ -11,28 +11,29 @@ class SettingsCategoryTest {
                 SettingsCategory.Sync,
                 SettingsCategory.Security,
                 SettingsCategory.Autofill,
-                SettingsCategory.Sharing,
-                SettingsCategory.Space,
+                SettingsCategory.SharedVaults,
+                SettingsCategory.DirectSharing,
                 SettingsCategory.Data,
                 SettingsCategory.Vault,
                 SettingsCategory.About,
             ),
-            settingsCategories(autofillSupported = true, canManageSpace = true),
+            settingsCategories(autofillSupported = true),
         )
     }
 
     @Test
-    fun unsupportedOrUnauthorizedDestinationsStayHidden() {
+    fun unsupportedDestinationsStayHiddenWhileSharedVaultsRemainsForActivity() {
         assertEquals(
             listOf(
                 SettingsCategory.Sync,
                 SettingsCategory.Security,
-                SettingsCategory.Sharing,
+                SettingsCategory.SharedVaults,
+                SettingsCategory.DirectSharing,
                 SettingsCategory.Data,
                 SettingsCategory.Vault,
                 SettingsCategory.About,
             ),
-            settingsCategories(autofillSupported = false, canManageSpace = false),
+            settingsCategories(autofillSupported = false),
         )
     }
 }

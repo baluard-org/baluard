@@ -21,18 +21,18 @@ appId: app.baluard.mobile
     timeout: 45000
 - tapOn:
     id: e2e/home/settings
-- tapOn: "Sharing"
+- tapOn: "Shared Vaults"
 # The clickable row is the entry subtitle, not the section title.
+- extendedWaitUntil:
+    visible: "Manage member groups for shared-folder access"
+    timeout: 20000
+- tapOn: "Manage member groups for shared-folder access"
+- extendedWaitUntil:
+    visible: "GROUPS"
+    timeout: 20000
+- back
 - extendedWaitUntil:
     visible: "Members, join requests, and collection grants"
     timeout: 20000
 - tapOn: "Members, join requests, and collection grants"
-# The Groups card sits below the members list inside People.
-- scrollUntilVisible:
-    element:
-      text: "GROUPS"
-    timeout: 20000
-- extendedWaitUntil:
-    visible: "GROUPS"
-    timeout: 20000
 - assertVisible: "Admin"

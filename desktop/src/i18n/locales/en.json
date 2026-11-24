@@ -445,6 +445,8 @@
     "tabContacts": "Contacts",
     "tabOutboxes": "Outboxes",
     "tabSpace": "Vault",
+    "tabSharedVaults": "Shared Vaults",
+    "tabDirectSharing": "Direct sharing",
     "hwKeyTitle": "Guard with your security key",
     "hwKeyOn": "This vault is guarded by your security key.",
     "hwKeyOff": "This vault is not guarded by a security key.",

@@ -76,6 +76,12 @@ vi.mock("../context/toastSignal.js", () => ({
 vi.mock("../components/DeviceFleetPanel.jsx", () => ({ default: () => <div data-testid="device-fleet" /> }));
 vi.mock("../components/SyncTab.jsx", () => ({ default: () => <div data-testid="sync-tab" /> }));
 vi.mock("../components/BridgeTab.jsx", () => ({ default: () => <div data-testid="bridge-tab" /> }));
+vi.mock("../components/PeopleTab.jsx", () => ({ default: () => <div data-testid="people-tab" /> }));
+vi.mock("../components/SpaceTab.jsx", () => ({ default: () => <div data-testid="space-tab" /> }));
+vi.mock("../components/CollectionsTab.jsx", () => ({ default: () => <div data-testid="collections-tab" /> }));
+vi.mock("../components/GroupsTab.jsx", () => ({ default: () => <div data-testid="groups-tab" /> }));
+vi.mock("../components/ContactsTab.jsx", () => ({ default: () => <div data-testid="contacts-tab" /> }));
+vi.mock("../components/OutboxesTab.jsx", () => ({ default: () => <div data-testid="outboxes-tab" /> }));
 vi.mock("../components/FocusTrap.jsx", () => ({ default: () => null }));
 
 import { toastSuccess as toastSuccessMock, toastError as toastErrorMock, toastWarning as toastWarningMock } from "../context/toastSignal.js";
@@ -754,5 +760,82 @@ describe("SettingsModal close-to-tray persistence", () => {
     await waitFor(() => expect(toggle.textContent).toContain("settings.enabled"));
     await waitFor(() => expect(toggle.textContent).toContain("settings.disabled"));
     expect(desktopBridgeMocks.setCloseToTray).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("SettingsModal grouped sharing categories", () => {
+  beforeEach(() => {
+    daemonMock.mockReset();
+    vaultMock.showSettingsModal.mockReturnValue(true);
+    daemonMock.mockImplementation((action) => {
+      if (action === "agent.policy.get") {
+        return Promise.resolve(JSON.stringify({ enabled: false, auto_approve: false }));
+      }
+      if (action === "settings.get") {
+        return Promise.resolve(JSON.stringify({ vault_timeout: "15m", fetch_favicons: false }));
+      }
+      if (action === "vault.avatar.get") return Promise.resolve("");
+      if (action === "vault.pin_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      if (action === "vault.biometric_status") return Promise.resolve(JSON.stringify({ enabled: false }));
+      return Promise.resolve("");
+    });
+  });
+
+  it("groups Shared Vaults and Direct sharing in the sidebar with sub-tabs inside", async () => {
+    const { getByTestId, queryByTestId } = render(() => <SettingsModal />);
+    await waitFor(() => expect(getByTestId("settings-tab-shared-vaults")).toBeTruthy());
+    expect(getByTestId("settings-tab-direct-sharing")).toBeTruthy();
+    // Sub-tabs do not clutter the top-level sidebar before opening their category.
+    expect(queryByTestId("settings-tab-people")).toBeNull();
+    expect(queryByTestId("settings-tab-collections")).toBeNull();
+    expect(queryByTestId("settings-tab-groups")).toBeNull();
+    expect(queryByTestId("settings-tab-space")).toBeNull();
+    expect(queryByTestId("settings-tab-contacts")).toBeNull();
+    expect(queryByTestId("settings-tab-outboxes")).toBeNull();
+
+    fireEvent.click(getByTestId("settings-tab-shared-vaults"));
+    flush();
+    const peopleTab = getByTestId("settings-tab-people");
+    const collectionsTab = getByTestId("settings-tab-collections");
+    const groupsTab = getByTestId("settings-tab-groups");
+    const spaceTab = getByTestId("settings-tab-space");
+    expect(peopleTab.getAttribute("aria-selected")).toBe("true");
+    expect(peopleTab.getAttribute("tabindex")).toBe("0");
+    expect(peopleTab.getAttribute("aria-controls")).toBe("settings-tabpanel-people");
+    expect(collectionsTab.getAttribute("aria-selected")).toBe("false");
+    expect(collectionsTab.getAttribute("tabindex")).toBe("-1");
+    expect(document.getElementById("settings-tabpanel-people")?.getAttribute("role")).toBe("tabpanel");
+    expect(getByTestId("people-tab")).toBeTruthy();
+
+    fireEvent.keyDown(peopleTab, { key: "ArrowRight" });
+    flush();
+    expect(collectionsTab.getAttribute("aria-selected")).toBe("true");
+    expect(getByTestId("collections-tab")).toBeTruthy();
+
+    // Switching away and back preserves the selected sub-tab.
+    fireEvent.click(getByTestId("settings-tab-general"));
+    flush();
+    fireEvent.click(getByTestId("settings-tab-shared-vaults"));
+    flush();
+    expect(getByTestId("collections-tab")).toBeTruthy();
+    expect(getByTestId("settings-tab-collections").getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(getByTestId("settings-tab-groups"));
+    flush();
+    expect(getByTestId("groups-tab")).toBeTruthy();
+
+    fireEvent.click(getByTestId("settings-tab-space"));
+    flush();
+    expect(getByTestId("space-tab")).toBeTruthy();
+
+    fireEvent.click(getByTestId("settings-tab-direct-sharing"));
+    flush();
+    expect(getByTestId("settings-tab-contacts").getAttribute("aria-selected")).toBe("true");
+    expect(getByTestId("settings-tab-outboxes").getAttribute("aria-selected")).toBe("false");
+    expect(getByTestId("contacts-tab")).toBeTruthy();
+
+    fireEvent.keyDown(getByTestId("settings-tab-contacts"), { key: "ArrowRight" });
+    flush();
+    expect(getByTestId("outboxes-tab")).toBeTruthy();
   });
 });

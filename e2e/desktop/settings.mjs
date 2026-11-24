@@ -57,7 +57,8 @@ try {
   );
   console.log("PASS reprompt escape");
 
-  // ---- Contacts tab: the vault's own verification code renders.
+  // ---- Contacts tab (inside Direct sharing): the vault's own verification code renders.
+  await (await q("settings-tab-direct-sharing")).click();
   await (await q("settings-tab-contacts")).click();
   const code = await q("contacts-my-code");
   await code.waitForDisplayed({ timeout: 20000 });

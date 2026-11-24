@@ -2125,6 +2125,120 @@ impl MobileVault {
             .map_err(|e| BaluardError::Vault { detail: e })
     }
 
+    /// Mirror one entry into a per-recipient outbox folder.
+    pub async fn outbox_publish(
+        &self,
+        outbox_path: String,
+        cipher_id: String,
+        contact_pubkey: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .outbox_publish(&outbox_path, &cipher_id, &contact_pubkey)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Remove one mirrored entry from an outbox folder.
+    pub async fn outbox_unpublish(
+        &self,
+        outbox_path: String,
+        cipher_id: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .outbox_unpublish(&outbox_path, &cipher_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Revoke an outbox folder and forget its owner record.
+    pub async fn outbox_revoke(&self, outbox_path: String) -> Result<(), BaluardError> {
+        self.state
+            .outbox_revoke(&outbox_path)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// List owner-side outboxes (symmetric content keys are stripped).
+    pub async fn outbox_list(&self) -> Result<String, BaluardError> {
+        self.state
+            .outbox_list()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Link a received outbox folder for view-only access (key stripped).
+    pub async fn outbox_link(&self, outbox_path: String) -> Result<String, BaluardError> {
+        self.state
+            .outbox_link(&outbox_path)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// List linked received outbox folders (keys stripped).
+    pub async fn outbox_links(&self) -> Result<String, BaluardError> {
+        self.state
+            .outbox_links()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Forget a linked received outbox folder without touching files.
+    pub async fn outbox_forget(&self, outbox_id: String) -> Result<(), BaluardError> {
+        self.state
+            .outbox_forget(&outbox_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// Read one entry from a linked outbox folder (view-only).
+    pub async fn outbox_read(
+        &self,
+        outbox_id: String,
+        cipher_id: String,
+    ) -> Result<String, BaluardError> {
+        self.state
+            .outbox_read(&outbox_id, &cipher_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
+    /// List entry summaries inside a linked outbox folder (secret fields omitted).
+    pub async fn outbox_entries(&self, outbox_id: String) -> Result<String, BaluardError> {
+        let raw = self
+            .state
+            .outbox_entries(&outbox_id)
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })?;
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&raw)
+            .map_err(|e| BaluardError::Vault { detail: format!("{e}") })?;
+        let summaries: Vec<serde_json::Value> = parsed
+            .into_iter()
+            .map(|row| {
+                let name = row["item"]["name"]
+                    .as_str()
+                    .or_else(|| row["item"]["kind"]["data"]["name"].as_str())
+                    .unwrap_or("")
+                    .to_string();
+                serde_json::json!({
+                    "cipher_id": row["cipher_id"],
+                    "sender_name": row["sender_name"],
+                    "updated_at": row["updated_at"],
+                    "name": name,
+                })
+            })
+            .collect();
+        serde_json::to_string(&summaries)
+            .map_err(|e| BaluardError::Vault { detail: format!("{e}") })
+    }
+
+    /// Re-mirror all dirty outboxes against current vault entries.
+    pub async fn outbox_resync(&self) -> Result<String, BaluardError> {
+        self.state
+            .outbox_resync()
+            .await
+            .map_err(|e| BaluardError::Vault { detail: e })
+    }
+
     /// Join a shared space (member side of the join ceremony). The vault
     /// must already be cloned locally (see `clone_vault_start`). Payload
     /// fields: `code` (the invite code), `password` (the joiner's chosen
@@ -3533,6 +3647,125 @@ mod tests {
         let list: serde_json::Value = serde_json::from_str(&list).unwrap();
         assert_eq!(list["contacts"].as_array().unwrap().len(), 0);
         let _ = mine2;
+    }
+
+    #[tokio::test]
+    async fn outbox_roundtrip_via_ffi_never_exposes_content_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let recipient_dir = tmp.path().join("recipient");
+        let outbox_dir = tmp.path().join("outbox");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&recipient_dir).unwrap();
+
+        let owner = create_vault(
+            owner_dir.to_str().unwrap().to_string(),
+            "pw".to_string(),
+            "owner-dev".to_string(),
+        )
+        .await
+        .unwrap();
+        owner.unlock("pw".to_string()).await.unwrap();
+
+        let recipient = create_vault(
+            recipient_dir.to_str().unwrap().to_string(),
+            "pw2".to_string(),
+            "recipient-dev".to_string(),
+        )
+        .await
+        .unwrap();
+        recipient.unlock("pw2".to_string()).await.unwrap();
+
+        let r_card: serde_json::Value =
+            serde_json::from_str(&recipient.my_contact_card().await.unwrap()).unwrap();
+        owner
+            .contact_import_card(r_card["card"].as_str().unwrap().to_string())
+            .await
+            .unwrap();
+        let contacts: serde_json::Value =
+            serde_json::from_str(&owner.contacts_list().await.unwrap()).unwrap();
+        let contact_pub = contacts["contacts"][0]["identity_signing_pubkey"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let payload = serde_json::json!({
+            "name": "Outbox Secret",
+            "kind": {"type": "login", "data": {
+                "username": "alice",
+                "password": "s3cr3t-outbox-pw",
+                "uris": [],
+                "totp_uri": null,
+                "autofill_on_page_load": false,
+                "password_revision_date": null,
+                "favicon": null,
+                "fido2_credentials": null
+            }}
+        })
+        .to_string();
+        let cipher_id = owner.add_cipher(payload).await.unwrap();
+        let outbox_path = outbox_dir.to_str().unwrap().to_string();
+
+        owner
+            .outbox_publish(outbox_path.clone(), cipher_id.clone(), contact_pub.clone())
+            .await
+            .unwrap();
+
+        let owner_list_raw = owner.outbox_list().await.unwrap();
+        assert!(!owner_list_raw.contains("content_key_hex"));
+        let owner_list: serde_json::Value = serde_json::from_str(&owner_list_raw).unwrap();
+        assert_eq!(owner_list.as_array().unwrap().len(), 1);
+
+        let link_raw = recipient.outbox_link(outbox_path.clone()).await.unwrap();
+        assert!(!link_raw.contains("content_key_hex"));
+        let link: serde_json::Value = serde_json::from_str(&link_raw).unwrap();
+        let outbox_id = link["outbox_id"].as_str().unwrap().to_string();
+
+        let links_raw = recipient.outbox_links().await.unwrap();
+        assert!(!links_raw.contains("content_key_hex"));
+
+        let overlap = owner
+            .outbox_publish(
+                owner_dir.to_str().unwrap().to_string(),
+                cipher_id.clone(),
+                contact_pub.clone(),
+            )
+            .await;
+        assert!(overlap.is_err(), "outbox inside vault dir must fail");
+
+        let entries_raw = recipient.outbox_entries(outbox_id.clone()).await.unwrap();
+        assert!(!entries_raw.contains("s3cr3t-outbox-pw"));
+        assert!(!entries_raw.contains("alice"));
+        let entries: serde_json::Value = serde_json::from_str(&entries_raw).unwrap();
+        assert_eq!(entries.as_array().unwrap().len(), 1);
+        assert_eq!(entries[0]["name"].as_str(), Some("Outbox Secret"));
+
+        let opened: serde_json::Value = serde_json::from_str(
+            &recipient
+                .outbox_read(outbox_id.clone(), cipher_id.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(opened["item"]["name"].as_str(), Some("Outbox Secret"));
+        assert_eq!(
+            opened["item"]["kind"]["data"]["password"].as_str(),
+            Some("s3cr3t-outbox-pw")
+        );
+
+        let resync_raw = owner.outbox_resync().await.unwrap();
+        let resync: serde_json::Value = serde_json::from_str(&resync_raw).unwrap();
+        assert_eq!(resync.as_array().unwrap().len(), 1);
+
+        owner
+            .outbox_unpublish(outbox_path.clone(), cipher_id.clone())
+            .await
+            .unwrap();
+        recipient.outbox_forget(outbox_id).await.unwrap();
+        owner.outbox_revoke(outbox_path).await.unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&owner.outbox_list().await.unwrap()).unwrap();
+        assert_eq!(after.as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]

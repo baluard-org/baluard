@@ -96,7 +96,7 @@ private fun pushMirrorToSaf(context: Context, mirrorDir: File, treeUri: Uri) {
     copyDirEntriesToDocTree(context, children, root, inRefs = false)
 }
 
-private fun copyDocTreeToDir(
+internal fun copyDocTreeToDir(
     context: Context,
     doc: DocumentFile,
     dstDir: File,
@@ -124,7 +124,7 @@ private fun copyDocTreeToDir(
     }
 }
 
-private fun copyDirEntriesToDocTree(
+internal fun copyDirEntriesToDocTree(
     context: Context,
     entries: List<File>,
     dstDoc: DocumentFile,

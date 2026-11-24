@@ -13,7 +13,7 @@ import { toastError, toastSuccess, toastWarning } from "../context/toastSignal.j
 import { buildImportPayload } from "../lib/payload.js";
 import { VAULT_TIMEOUT_PRESETS, normalizeVaultTimeout } from "../lib/vaultTimeout.js";
 import { biometryAvailable } from "../lib/biometry.js";
-import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconFolder, IconIdentity, IconInbox, IconLinkSimple, IconClock, IconSpinner, IconCheck, IconAlert, IconKey } from "./Icon.jsx";
+import { IconX, IconMoon, IconSunFull, IconDownload, IconMonitor, IconRefresh, IconPencil, IconCopy, IconCog, IconShield, IconUsers, IconSwitch, IconLinkSimple, IconClock, IconSpinner, IconCheck, IconAlert, IconKey } from "./Icon.jsx";
 import IconInfo from "./IconInfo.jsx";
 import FocusTrap from "./FocusTrap.jsx";
 import UpdateSettingsRow from "./UpdateSettingsRow.jsx";
@@ -31,6 +31,56 @@ import BridgeTab from "./BridgeTab.jsx";
 import RecoveryPhraseCard from "./RecoveryPhraseCard.jsx";
 import LegacyTab from "./LegacyTab.jsx";
 import AboutTab from "./AboutTab.jsx";
+
+function SubTabBar(props) {
+  function handleKeyDown(e, index) {
+    const tabs = props.tabs;
+    if (!tabs || tabs.length === 0) return;
+    let nextIndex = null;
+    if (e.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") nextIndex = 0;
+    else if (e.key === "End") nextIndex = tabs.length - 1;
+    if (nextIndex === null) return;
+    e.preventDefault();
+    const nextTab = tabs[nextIndex];
+    props.onChange(nextTab.id);
+    e.currentTarget.parentElement
+      ?.querySelector(`[data-testid="settings-tab-${nextTab.id}"]`)
+      ?.focus();
+  }
+
+  return (
+    <div
+      role="tablist"
+      aria-label={props.label}
+      class="flex flex-wrap items-center gap-1.5 pb-3 border-b border-[var(--color-border)]"
+    >
+      <For each={props.tabs}>
+        {(tab, index) => (
+          <button
+            type="button"
+            id={`settings-subtab-${tab.id}`}
+            role="tab"
+            aria-selected={props.active === tab.id ? "true" : "false"}
+            aria-controls={`settings-tabpanel-${tab.id}`}
+            tabIndex={props.active === tab.id ? 0 : -1}
+            data-testid={`settings-tab-${tab.id}`}
+            onClick={() => props.onChange(tab.id)}
+            onKeyDown={(e) => handleKeyDown(e, index())}
+            class={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+              props.active === tab.id
+                ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+                : "text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-sidebar)]"
+            }`}
+          >
+            {tab.label}
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
 
 function TabButton(props) {
   const Icon = props.icon;
@@ -127,6 +177,20 @@ export default function SettingsModal() {
     animateModalResize();
   }
   const [activeTab, setActiveTab] = createSignal("general"); // "general" or "data"
+  const [sharedVaultTab, setSharedVaultTab] = createSignal("people");
+  const [directSharingTab, setDirectSharingTab] = createSignal("contacts");
+
+  function handleSharedVaultTabChange(id) {
+    if (id === sharedVaultTab()) return;
+    setSharedVaultTab(id);
+    animateModalResize();
+  }
+
+  function handleDirectSharingTabChange(id) {
+    if (id === directSharingTab()) return;
+    setDirectSharingTab(id);
+    animateModalResize();
+  }
   
   // Auto-lock state (vault timeout policy token)
   const [timeoutToken, setTimeoutToken] = createSignal("15m");
@@ -899,12 +963,8 @@ export default function SettingsModal() {
                 <TabButton id="general" icon={IconCog} label={t("settings.tabGeneral")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="data" icon={IconShield} label={t("settings.tabData")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="sync" icon={IconRefresh} label={t("settings.tabSync")} active={activeTab()} setActiveTab={handleTabChange} />
-                <TabButton id="people" icon={IconUsers} label={t("settings.tabPeople")} active={activeTab()} setActiveTab={handleTabChange} />
-                <TabButton id="space" icon={IconFolder} label={t("settings.tabSpace")} active={activeTab()} setActiveTab={handleTabChange} />
-                <TabButton id="collections" icon={IconFolder} label={t("settings.tabCollections")} active={activeTab()} setActiveTab={handleTabChange} />
-                <TabButton id="groups" icon={IconUsers} label={t("settings.tabGroups")} active={activeTab()} setActiveTab={handleTabChange} />
-                <TabButton id="contacts" icon={IconIdentity} label={t("settings.tabContacts")} active={activeTab()} setActiveTab={handleTabChange} />
-                <TabButton id="outboxes" icon={IconInbox} label={t("settings.tabOutboxes")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="shared-vaults" icon={IconUsers} label={t("settings.tabSharedVaults")} active={activeTab()} setActiveTab={handleTabChange} />
+                <TabButton id="direct-sharing" icon={IconSwitch} label={t("settings.tabDirectSharing")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="devices" icon={IconMonitor} label={t("settings.tabDevices")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="agents" icon={IconKey} label={t("settings.tabAgents")} active={activeTab()} setActiveTab={handleTabChange} />
                 <TabButton id="bridge" icon={IconLinkSimple} label={t("settings.tabBridge")} active={activeTab()} setActiveTab={handleTabChange} />
@@ -1499,23 +1559,60 @@ export default function SettingsModal() {
                 <SyncTab />
               </Show>
 
-              <Show when={activeTab() === "people"}>
-                <PeopleTab />
+              <Show when={activeTab() === "shared-vaults"}>
+                <SubTabBar
+                  label={t("settings.tabSharedVaults")}
+                  active={sharedVaultTab()}
+                  onChange={handleSharedVaultTabChange}
+                  tabs={[
+                    { id: "people", label: t("settings.tabPeople") },
+                    { id: "collections", label: t("settings.tabCollections") },
+                    { id: "groups", label: t("settings.tabGroups") },
+                    { id: "space", label: t("settings.tabSpace") },
+                  ]}
+                />
+                <div
+                  role="tabpanel"
+                  id={`settings-tabpanel-${sharedVaultTab()}`}
+                  aria-labelledby={`settings-subtab-${sharedVaultTab()}`}
+                >
+                  <Show when={sharedVaultTab() === "people"}>
+                    <PeopleTab />
+                  </Show>
+                  <Show when={sharedVaultTab() === "collections"}>
+                    <CollectionsTab />
+                  </Show>
+                  <Show when={sharedVaultTab() === "groups"}>
+                    <GroupsTab />
+                  </Show>
+                  <Show when={sharedVaultTab() === "space"}>
+                    <SpaceTab />
+                  </Show>
+                </div>
               </Show>
-              <Show when={activeTab() === "space"}>
-                <SpaceTab />
-              </Show>
-              <Show when={activeTab() === "collections"}>
-                <CollectionsTab />
-              </Show>
-              <Show when={activeTab() === "groups"}>
-                <GroupsTab />
-              </Show>
-              <Show when={activeTab() === "contacts"}>
-                <ContactsTab />
-              </Show>
-              <Show when={activeTab() === "outboxes"}>
-                <OutboxesTab />
+
+              <Show when={activeTab() === "direct-sharing"}>
+                <SubTabBar
+                  label={t("settings.tabDirectSharing")}
+                  active={directSharingTab()}
+                  onChange={handleDirectSharingTabChange}
+                  tabs={[
+                    { id: "contacts", label: t("settings.tabContacts") },
+                    { id: "outboxes", label: t("settings.tabOutboxes") },
+                  ]}
+                />
+                <div
+                  role="tabpanel"
+                  id={`settings-tabpanel-${directSharingTab()}`}
+                  aria-labelledby={`settings-subtab-${directSharingTab()}`}
+                >
+                  <Show when={directSharingTab() === "contacts"}>
+                    <ContactsTab />
+                  </Show>
+                  <Show when={directSharingTab() === "outboxes"}>
+                    <OutboxesTab />
+                  </Show>
+                </div>
               </Show>
 
               <Show when={activeTab() === "devices"}>

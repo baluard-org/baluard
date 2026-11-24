@@ -678,6 +678,8 @@
     "tabContacts": "Contacts",
     "tabOutboxes": "Boîtes d'envoi",
     "tabSpace": "Coffre",
+    "tabSharedVaults": "Coffres partagés",
+    "tabDirectSharing": "Partage direct",
     "hwKeyTitle": "Protéger avec votre clé de sécurité",
     "hwKeyOn": "Ce coffre est protégé par votre clé de sécurité.",
     "hwKeyOff": "Ce coffre n'est pas protégé par une clé de sécurité.",

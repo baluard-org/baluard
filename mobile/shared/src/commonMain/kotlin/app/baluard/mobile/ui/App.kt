@@ -83,6 +83,11 @@ import app.baluard.mobile.settings.GitBackupScreen
 import app.baluard.mobile.settings.PeopleScreen
 import app.baluard.mobile.settings.ActivityScreen
 import app.baluard.mobile.settings.CollectionsScreen
+import app.baluard.mobile.settings.ContactsScreen
+import app.baluard.mobile.settings.GroupsScreen
+import app.baluard.mobile.settings.OutboxesScreen
+import app.baluard.mobile.settings.SpaceScreen
+import app.baluard.mobile.settings.SettingsCategory
 import app.baluard.mobile.settings.SettingsScreen
 import app.baluard.mobile.settings.SettingsViewModel
 import app.baluard.mobile.settings.VaultDiagnosticsScreen
@@ -113,7 +118,11 @@ private sealed interface Nav {
     data object Settings : Nav
     data object People : Nav
     data object Collections : Nav
+    data object Groups : Nav
+    data object Space : Nav
     data object Activity : Nav
+    data object Contacts : Nav
+    data object Outboxes : Nav
     data object GitBackup : Nav
     data object Diagnostics : Nav
     data class EntryList(val kind: EntryListKind) : Nav
@@ -125,7 +134,7 @@ private fun navDepth(nav: Nav): Int = when (nav) {
     is Nav.List -> 0
     is Nav.Detail, Nav.Generator, Nav.Settings, is Nav.EntryList, Nav.CategoryList, Nav.TagList -> 1
     // Settings sub-pages sit one level below Settings: back animates a pop.
-    Nav.People, Nav.Collections, Nav.Activity, Nav.GitBackup, Nav.Diagnostics -> 2
+    Nav.People, Nav.Collections, Nav.Groups, Nav.Space, Nav.Activity, Nav.Contacts, Nav.Outboxes, Nav.GitBackup, Nav.Diagnostics -> 2
     is Nav.Edit -> 2
 }
 
@@ -248,6 +257,9 @@ fun App(
         val editVm = remember { EditCipherViewModel(repo) }
         val totpVm = remember { TotpViewModel(repo) }
         val generatorVm = remember { GeneratorViewModel(repo) }
+        var autoLockToken by remember { mutableStateOf(VaultRepository.DEFAULT_VAULT_TIMEOUT) }
+        var nav by remember { mutableStateOf<Nav>(Nav.List) }
+        var settingsCategory by remember { mutableStateOf<SettingsCategory?>(null) }
         // A locked vault must not keep decrypted entries or the search
         // haystack in memory — one observer covers every lock path.
         LaunchedEffect(unlocked) {
@@ -255,10 +267,9 @@ fun App(
                 listVm.clear()
                 detailVm.clear()
                 editVm.clear()
+                settingsCategory = null
             }
         }
-        var autoLockToken by remember { mutableStateOf(VaultRepository.DEFAULT_VAULT_TIMEOUT) }
-        var nav by remember { mutableStateOf<Nav>(Nav.List) }
         // Cached auto-lock policy so onResume can lock synchronously, before
         // a single frame of unlocked content draws.
         var timeoutMins by remember { mutableStateOf<Long?>(null) }
@@ -374,7 +385,11 @@ fun App(
                         detailOrigin = null
                     }
                     // Settings sub-pages sit below Settings, not the list.
-                    unlocked && (nav is Nav.People || nav is Nav.Collections || nav is Nav.Activity) -> {
+                    unlocked && (
+                        nav is Nav.People || nav is Nav.Collections || nav is Nav.Groups ||
+                        nav is Nav.Space || nav is Nav.Activity || nav is Nav.Contacts ||
+                        nav is Nav.Outboxes || nav is Nav.GitBackup || nav is Nav.Diagnostics
+                    ) -> {
                         nav = Nav.Settings
                     }
                     unlocked && nav != Nav.List -> nav = Nav.List
@@ -689,7 +704,10 @@ fun App(
                                     onSyncClick = { startSync(vault) { homeSyncPhase = it } },
                                     onAddEntry = { nav = Nav.Edit(null) },
                                     onOpenGenerator = { nav = Nav.Generator },
-                                    onOpenSettings = { nav = Nav.Settings },
+                                    onOpenSettings = {
+                                        settingsCategory = null
+                                        nav = Nav.Settings
+                                    },
                                     onLock = {
                                         scope.launch {
                                             auth.lock()
@@ -855,10 +873,16 @@ fun App(
                                     repo = repo,
                                     onOpenPeople = { nav = Nav.People },
                                     onOpenCollections = { nav = Nav.Collections },
+                                    onOpenGroups = { nav = Nav.Groups },
+                                    onOpenSpace = { nav = Nav.Space },
                                     onSyncNudge = { notifyMutation() },
                                     onOpenActivity = { nav = Nav.Activity },
+                                    onOpenContacts = { nav = Nav.Contacts },
+                                    onOpenOutboxes = { nav = Nav.Outboxes },
                                     onOpenDiagnostics = { nav = Nav.Diagnostics },
                                     onOpenGitBackup = { nav = Nav.GitBackup },
+                                    selectedCategory = settingsCategory,
+                                    onSelectCategory = { settingsCategory = it },
                                     onVaultTimeoutChange = { token ->
                                         autoLockToken = token
                                         scope.launch {
@@ -882,10 +906,34 @@ fun App(
                                     onBack = { nav = Nav.Settings },
                                     onSyncNudge = { notifyMutation() },
                                 )
+                                Nav.Groups -> GroupsScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
+                                )
+                                Nav.Space -> SpaceScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
+                                )
                                 Nav.Activity -> ActivityScreen(
                                     vault = vault,
                                     repo = repo,
                                     onBack = { nav = Nav.Settings },
+                                )
+                                Nav.Contacts -> ContactsScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
+                                )
+                                Nav.Outboxes -> OutboxesScreen(
+                                    vault = vault,
+                                    repo = repo,
+                                    onBack = { nav = Nav.Settings },
+                                    onSyncNudge = { notifyMutation() },
                                 )
                                 Nav.GitBackup -> GitBackupScreen(
                                     vault = vault,
