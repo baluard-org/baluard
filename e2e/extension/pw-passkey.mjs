@@ -42,7 +42,10 @@ async function pickInPopout(ctx) {
   }
   if (!popout) return null;
   await popout.waitForSelector(".match-card", { timeout: 10000 });
-  await popout.locator(".match-card").first().click();
+  // The SW closes the popout once the decision lands; that close races the
+  // click's bookkeeping, so a closed-target error still means the pick was
+  // delivered — the caller's RP waitFor judges the outcome.
+  await popout.locator(".match-card").first().click().catch(() => {});
   return popout;
 }
 
@@ -249,10 +252,10 @@ try {
     await dumpPage(page);
     fail("registration popout never opened");
   }
-  await popout.waitForSelector(".state-title", { timeout: 10000 });
-  // The confirm view has exactly one .btn-secondary: "create a new entry"
-  // (locale-independent; the site-row cards are .match-card elements).
-  await popout.locator("button.btn-secondary").last().click();
+  // 5140dfe1 restyled the popout confirm view from StateBlock to pk-hero.
+  await popout.waitForSelector(".pk-title", { timeout: 10000 });
+  // The confirm view's footer has exactly one button: "create a new entry".
+  await popout.locator(".pk-footer button.btn-primary").last().click();
   await waitFor(
     page,
     () => {
@@ -352,7 +355,10 @@ try {
   }
   console.log("PASS fallback (native ceremony rejected; Baluard UI stayed out)");
 
-  // ── 5. UV-required assertion rides the popout picker ──
+  // ── 5. UV-required assertion refuses with a clean NotAllowedError ──
+  // BL0002: the extension reports presence only; a picker pick is not a
+  // verification gesture, so the daemon fail-closes UV-required ceremonies
+  // (passkey:uv-required) and the page sees a plain NotAllowedError.
   await page.click("#signin-uv");
   let uvPopout = null;
   for (let i = 0; i < 40; i++) {
@@ -365,17 +371,24 @@ try {
     fail("UV assertion picker never opened");
   }
   await uvPopout.waitForSelector(".match-card", { timeout: 10000 });
-  await uvPopout.locator(".match-card").first().click();
-  const uvStatus = await waitFor(
+  // The SW closes the popout the moment the decision lands; that close can
+  // race the click's own bookkeeping, so a closed-target error here only
+  // means the pick went through — the waitFor below judges the outcome.
+  await uvPopout.locator(".match-card").first().click().catch(() => {});
+  // The pick still exercises the full stack: SW -> bridge -> daemon, where
+  // the UV gate refuses. The RP page must see the mapped DOM error, and the
+  // RP must never receive an assertion to verify.
+  await waitFor(
     page,
     () => {
       const s = document.getElementById("status").textContent;
-      return s.includes("UV ") && s.includes('"verified":true') ? s : null;
+      return s.includes("UV-ERR NotAllowedError: This site requires user verification that Baluard cannot provide")
+        ? s
+        : null;
     },
-    "RP UV assertion verification"
+    "RP UV refusal surfacing"
   );
-  if (!uvStatus.includes('"uv":true')) fail("UV flag missing in RP verification");
-  console.log("PASS uv-picker (popout picker granted user verification)");
+  console.log("PASS uv-refusal (UV-required ceremony fails closed, clean NotAllowedError)");
 
   // ── 6. RP negatives: flipped signature byte + replayed challenge ──
   const tamper = await page.evaluate(async () =>
@@ -448,6 +461,8 @@ try {
     document.getElementById("status").textContent = "";
   });
   const idleCdp = await ctx.newCDPSession(page);
+  // stopAllWorkers is gated behind an explicit domain enable on the session.
+  await idleCdp.send("ServiceWorker.enable");
   await idleCdp.send("ServiceWorker.stopAllWorkers");
   await sleep(1500);
   const idleWrap = await page.evaluate(() => window.__baluardPasskey);

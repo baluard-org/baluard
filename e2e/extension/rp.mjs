@@ -418,6 +418,14 @@ const server = createServer((req, res) => {
     json({ ok: true });
     return;
   }
+  // SPA fallback: reloads of client-side routes (history.pushState paths)
+  // must serve the app, mirroring a real single-page RP. API routes above
+  // have already matched; only stragglers land here.
+  if (req.method === "GET") {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(PAGE);
+    return;
+  }
   res.writeHead(404);
   res.end("not found");
 });
