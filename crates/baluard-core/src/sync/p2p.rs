@@ -385,6 +385,20 @@ async fn read_frame(
 mod tests {
     use super::*;
 
+    /// Hermetic endpoints: the default relay map dials n0 relays, which this
+    /// environment cannot always reach, and the relay stall intermittently
+    /// blew iroh's 30s handshake budget (3/10 flakes). The test only needs
+    /// same-host direct paths.
+    async fn build_test_endpoint(secret_key: SecretKey) -> Result<Endpoint, SyncError> {
+        Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(iroh::RelayMode::Disabled)
+            .alpns(vec![P2P_ALPN.to_vec()])
+            .bind()
+            .await
+            .map_err(|e| SyncError::Git(format!("p2p endpoint bind: {e}")))
+    }
+
     #[tokio::test]
     async fn p2p_pack_transfer_and_revocation_gate() {
         let mut rng = rand::rngs::OsRng;
@@ -412,9 +426,9 @@ mod tests {
 
         let auth_a = RosterAuthorizer::new([id_b]);
         let auth_b = RosterAuthorizer::new([id_a]);
-        let ep_a = build_endpoint(sk_a).await.unwrap();
-        let ep_b = build_endpoint(sk_b).await.unwrap();
-        let ep_rogue = build_endpoint(sk_rogue).await.unwrap();
+        let ep_a = build_test_endpoint(sk_a).await.unwrap();
+        let ep_b = build_test_endpoint(sk_b).await.unwrap();
+        let ep_rogue = build_test_endpoint(sk_rogue).await.unwrap();
 
         let addr_a = ep_a.node_addr().await.unwrap();
         let vault_a = dir_a.path().to_path_buf();
