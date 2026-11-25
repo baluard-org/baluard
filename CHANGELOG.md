@@ -2,11 +2,6 @@
 
 Notable user-facing changes per release.
 
-## 0.7.6 - 2026-11-19
-
-- Browser: Baluard now offers passkeys on sites where another password manager (1Password) already installed its own hook, even when that manager's passkey offering is turned off. Before this fix, Baluard showed an error instead of offering to sign in or save.
-- Browser: the passkey popout has a refreshed look that matches the app: the Baluard logo, cleaner cards, and the "Use another method" action stays at the bottom.
-
 ## [UNRELEASED]
 
 No user-facing changes yet.
@@ -63,6 +58,11 @@ No user-facing changes yet.
 - All apps: recover a vault with its 24-word phrase when the master password is gone. New vaults mint a recovery kit at creation; older vaults turn it on in Settings, under Space. The desktop sign-in screen now has a "Forgot your master password?" link, mobile reaches the same flow from its welcome screen, and `baluard vaults recover-kit` covers the command line. Recovery works on the device in hand or on a fresh install, and your entries stay.
 
 - Windows: a portable Baluard that runs without installing. Unzip it anywhere, including a USB stick, start it with no admin rights, and take it with you. The app updates itself in place, like the installed version.
+
+## 0.7.6 - 2026-11-19
+
+- Browser: Baluard now offers passkeys on sites where another password manager (1Password) already installed its own hook, even when that manager's passkey offering is turned off. Before this fix, Baluard showed an error instead of offering to sign in or save.
+- Browser: the passkey popout has a refreshed look that matches the app: the Baluard logo, cleaner cards, and the "Use another method" action stays at the bottom.
 
 ## 0.7.5 - 2026-11-19
 
