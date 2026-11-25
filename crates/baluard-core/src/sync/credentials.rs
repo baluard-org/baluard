@@ -446,14 +446,10 @@ fn credentials_attempt(
         userpass_attempts.set(userpass_attempts.get() + 1);
         if let Some(ref token) = cfg.https_token {
             let target_host = extract_host(url);
-            if let Some(ref allowed) = cfg.allowed_hosts {
-                if let Some(ref th) = target_host {
-                    if !allowed.iter().any(|h| h.eq_ignore_ascii_case(th)) {
-                        return Err(git2::Error::from_str(&format!(
-                            "refusing to send provider token to untrusted host: {th}"
-                        )));
-                    }
-                }
+            if !token_host_allowed(&cfg.allowed_hosts, url) {
+                return Err(git2::Error::from_str(
+                    "refusing to send the provider token: the target host is untrusted or could not be determined",
+                ));
             }
             // Host-bound custom token: released only for its own host,
             // so a server-side redirect can never capture it.
@@ -1301,6 +1297,45 @@ mod custom_remote_tests {
         assert_eq!(id.len(), 32);
         // Consumed by the trust route's take_observation(id).
         assert!(crate::sync::known_hosts::take_observation(id).is_some());
+    }
+
+    /// BL0025: the userpass arm's allowed_hosts gate must fail closed like
+    /// the SSH arm: a URL whose host cannot be parsed never releases the
+    /// token, while an unbound (None) config keeps its fallback release.
+    #[test]
+    fn userpass_allowed_hosts_fails_closed_on_an_unparseable_host() {
+        let cfg = CredentialConfig {
+            allowed_hosts: Some(vec!["github.com".to_string()]),
+            ..CredentialConfig::in_memory(
+                Some("tok1".into()),
+                Some("alex".into()),
+                None,
+                None,
+                None,
+            )
+        };
+        let ssh = std::cell::Cell::new(0u32);
+        let up = std::cell::Cell::new(0u32);
+        let types = git2::CredentialType::USER_PASS_PLAINTEXT;
+        let Err(err) = credentials_attempt(&cfg, "file:///tmp/vault.git", None, types, &ssh, &up)
+        else {
+            panic!("an unparseable host must not release the token");
+        };
+        assert!(
+            err.message()
+                .contains("refusing to send the provider token"),
+            "{err}"
+        );
+        let unbound = CredentialConfig::in_memory(
+            Some("tok1".into()),
+            Some("alex".into()),
+            None,
+            None,
+            None,
+        );
+        assert!(
+            credentials_attempt(&unbound, "file:///tmp/vault.git", None, types, &ssh, &up).is_ok()
+        );
     }
 
     #[test]
