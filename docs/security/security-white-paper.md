@@ -1,6 +1,6 @@
 # Baluard security white paper
 
-This paper describes how Baluard protects your data, in enough detail to check our claims against the source code. It covers the 0.1.0 release. Every mechanism named here exists in the repository you can read; where a claim depends on deeper detail, we link the document that carries it.
+This paper describes how Baluard protects your data, in enough detail to check our claims against the source code. It covers the stable release. Every mechanism named here exists in the repository you can read; where a claim depends on deeper detail, we link the document that carries it.
 
 Baluard is a local-first password manager: your vault lives on your devices as encrypted files, and nothing in the product's normal operation talks to a Baluard server, because there is no Baluard server. Sync, when you enable it, rides any ordinary git host, and that host stores only ciphertext. Baluard is free software under GPL-3.0-or-later and we built it as an independent project; section 12 covers assurance: what we have verified, what we still owe, and how to report a vulnerability.
 
