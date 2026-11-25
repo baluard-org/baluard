@@ -255,6 +255,8 @@ const DESKTOP_ALLOWED_ACTIONS: &[&str] = &[
     "vault.export",
     "vault.list",
     "vault.list_full",
+    "vault.list_ids",
+    "vault.list_full_batch",
     "vault.trash.purge",
     "vault.trash.restore",
     "vault.unarchive",

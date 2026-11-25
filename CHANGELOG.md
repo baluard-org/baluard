@@ -12,6 +12,7 @@ No user-facing changes yet.
 - Desktop: a manual update check that finds nothing new now shows a toast instead of staying silent.
 - Desktop: agent activity cards show timestamps.
 - Android: purchases are verified directly on device with Google Play. The supporter status in Settings now appears only when the Fellowship companion app is installed.
+- Desktop: the entry list could open with fewer entries than the vault holds, until a restart. Fixed.
 
 ## 0.9.0 - 2026-11-24
 

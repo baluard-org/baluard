@@ -103,17 +103,22 @@ describe("VaultView activeSlug reset regressions", () => {
   });
 
   it("keeps entries when activeSlug hydrates from null to the unlocked slug after mount", async () => {
-    daemonMock.mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
         return JSON.stringify({
-          ciphers: [C("1", "Alpha"), C("2", "Beta")],
+          ids: ["1", "2"],
           folders: [],
           tags: [],
           trash: [],
           archived: [],
           unreadable: 0,
-          has_more: false,
+          total: 2,
         });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        const all = [C("1", "Alpha"), C("2", "Beta")];
+        return JSON.stringify({ ciphers: all.filter((c) => want.includes(c.id)) });
       }
       return "{}";
     });
@@ -137,18 +142,24 @@ describe("VaultView activeSlug reset regressions", () => {
     setActiveSlug("vault-a");
     let useVaultB = false;
     let listCalls = 0;
-    daemonMock.mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
         listCalls += 1;
+        const rows = useVaultB ? ["b1"] : ["a1"];
         return JSON.stringify({
-          ciphers: useVaultB ? [C("b1", "Vault B Entry")] : [C("a1", "Stale Vault A Entry")],
+          ids: rows,
           folders: [],
           tags: [],
           trash: [],
           archived: [],
           unreadable: 0,
-          has_more: false,
+          total: rows.length,
         });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        const ciphers = useVaultB ? [C("b1", "Vault B Entry")] : [C("a1", "Stale Vault A Entry")];
+        return JSON.stringify({ ciphers: ciphers.filter((c) => want.includes(c.id)) });
       }
       return "{}";
     });
@@ -172,17 +183,23 @@ describe("VaultView activeSlug reset regressions", () => {
   it("resets and reloads when activeSlug dips to null before changing to another slug", async () => {
     setActiveSlug("vault-a");
     let useVaultB = false;
-    daemonMock.mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
+        const rows = useVaultB ? ["b1"] : ["a1"];
         return JSON.stringify({
-          ciphers: useVaultB ? [C("b1", "Vault B Entry")] : [C("a1", "Vault A Entry")],
+          ids: rows,
           folders: [],
           tags: [],
           trash: [],
           archived: [],
           unreadable: 0,
-          has_more: false,
+          total: rows.length,
         });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        const all = useVaultB ? [C("b1", "Vault B Entry")] : [C("a1", "Vault A Entry")];
+        return JSON.stringify({ ciphers: all.filter((c) => want.includes(c.id)) });
       }
       return "{}";
     });
@@ -208,18 +225,23 @@ describe("VaultView activeSlug reset regressions", () => {
   it("preserves entries without reloading when activeSlug dips to null and returns to the same slug", async () => {
     setActiveSlug("vault-a");
     let listCalls = 0;
-    daemonMock.mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
         listCalls += 1;
         return JSON.stringify({
-          ciphers: [C("a1", "Vault A Entry")],
+          ids: ["a1"],
           folders: [],
           tags: [],
           trash: [],
           archived: [],
           unreadable: 0,
-          has_more: false,
+          total: 1,
         });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        const all = [C("a1", "Vault A Entry")];
+        return JSON.stringify({ ciphers: all.filter((c) => want.includes(c.id)) });
       }
       return "{}";
     });
@@ -242,12 +264,12 @@ describe("VaultView activeSlug reset regressions", () => {
     expect(listCalls).toBe(1);
   });
 
-  it("ignores a slower earlier list_full response after activeSlug switches", async () => {
+  it("ignores a slower earlier list_ids response after activeSlug switches", async () => {
     setActiveSlug("vault-a");
     let resolveSlowVaultA;
     let callIndex = 0;
-    daemonMock.mockImplementation((action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation((action, payload) => {
+      if (action === "vault.list_ids") {
         callIndex += 1;
         if (callIndex === 1) {
           return new Promise((resolve) => {
@@ -256,14 +278,20 @@ describe("VaultView activeSlug reset regressions", () => {
         }
         return Promise.resolve(
           JSON.stringify({
-            ciphers: [C("b1", "Vault B Entry")],
+            ids: ["b1"],
             folders: [],
             tags: [],
             trash: [],
             archived: [],
             unreadable: 0,
-            has_more: false,
+            total: 1,
           }),
+        );
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        return Promise.resolve(
+          JSON.stringify({ ciphers: want.map(() => C("b1", "Vault B Entry")) }),
         );
       }
       return Promise.resolve("{}");
@@ -282,13 +310,13 @@ describe("VaultView activeSlug reset regressions", () => {
 
     resolveSlowVaultA(
       JSON.stringify({
-        ciphers: [C("a1", "Stale Vault A Entry")],
+        ids: ["a1"],
         folders: [],
         tags: [],
         trash: [],
         archived: [],
         unreadable: 0,
-        has_more: false,
+        total: 1,
       }),
     );
     await new Promise((r) => setTimeout(r, 30));
@@ -299,17 +327,23 @@ describe("VaultView activeSlug reset regressions", () => {
   it("keeps newly unlocked vault entries after SwitchUnlockModal unlocks", async () => {
     setActiveSlug("vault-a");
     let switched = false;
-    daemonMock.mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
+        const rows = switched ? ["b1"] : ["a1"];
         return JSON.stringify({
-          ciphers: switched ? [C("b1", "Vault B Secret")] : [C("a1", "Vault A Secret")],
+          ids: rows,
           folders: [],
           tags: [],
           trash: [],
           archived: [],
           unreadable: 0,
-          has_more: false,
+          total: rows.length,
         });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        const all = switched ? [C("b1", "Vault B Secret")] : [C("a1", "Vault A Secret")];
+        return JSON.stringify({ ciphers: all.filter((c) => want.includes(c.id)) });
       }
       return "{}";
     });

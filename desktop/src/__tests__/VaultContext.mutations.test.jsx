@@ -29,7 +29,7 @@ describe("VaultContext single-entry mutations", () => {
     vi.mocked(daemon).mockReset();
   });
 
-  it("updateCipher updates the cipher in-place via vault.get without calling vault.list_full", async () => {
+  it("updateCipher updates the cipher in-place via vault.get without calling vault.list_ids", async () => {
     const { ctx, unmount } = mountVault();
     ctx.setCiphers([
       {
@@ -101,8 +101,8 @@ describe("VaultContext single-entry mutations", () => {
     );
     expect(ctx.tags()).toEqual(["beta"]);
 
-    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full", expect.anything());
-    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full");
+    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_ids");
+    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full_batch", expect.anything());
     unmount();
   });
 
@@ -139,21 +139,29 @@ describe("VaultContext single-entry mutations", () => {
     expect(ctx.trashCiphers()).toHaveLength(0);
     expect(ctx.ciphers()).toHaveLength(1);
 
-    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full", expect.anything());
-    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full");
+    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_ids");
+    expect(vi.mocked(daemon)).not.toHaveBeenCalledWith("vault.list_full_batch", expect.anything());
     unmount();
   });
 
   it("refreshes ciphers when baluard:vault-synced is dispatched", async () => {
     const { ctx, unmount } = mountVault();
-    vi.mocked(daemon).mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    vi.mocked(daemon).mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
         return JSON.stringify({
-          ciphers: [{ id: "c1", name: "HidroShopCL", cipher_type: "login", tags: [] }],
+          ids: ["c1"],
           folders: [],
           tags: [],
           trash: [],
           archived: [],
+          unreadable: 0,
+          total: 1,
+        });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        return JSON.stringify({
+          ciphers: want.map((id) => ({ id, name: "HidroShopCL", cipher_type: "login", tags: [] })),
         });
       }
       if (action === "collections.list") return JSON.stringify({ collections: [] });
@@ -164,7 +172,7 @@ describe("VaultContext single-entry mutations", () => {
 
     window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
     await vi.waitFor(() => {
-      expect(vi.mocked(daemon)).toHaveBeenCalledWith("vault.list_full", expect.anything());
+      expect(vi.mocked(daemon)).toHaveBeenCalledWith("vault.list_ids");
       expect(ctx.ciphers().map((c) => c.name)).toEqual(["HidroShopCL"]);
     });
     unmount();

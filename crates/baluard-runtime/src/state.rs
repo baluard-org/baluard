@@ -10,6 +10,15 @@ use base64::Engine;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// (folders, tags, trash, archived) envelope metas shared by the full and
+/// snapshot-id envelope builders.
+type MetaLists = (
+    Vec<baluard_core::vault::manifest::Folder>,
+    Vec<String>,
+    Vec<serde_json::Value>,
+    Vec<serde_json::Value>,
+);
 use tokio::sync::RwLock;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -1347,25 +1356,13 @@ impl VaultState {
         serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
     }
 
-    /// Paginated variant of `list_all` for large vaults so each IPC frame
-    /// stays bounded. Page 0 (`offset == 0`) carries folders, trash, archived,
-    /// and tags; subsequent pages carry only the next slice of `ciphers`.
-    pub async fn list_all_page(&self, offset: usize, limit: usize) -> Result<String, String> {
-        let result = self.full_envelope_range(Some((offset, limit))).await?;
-        serde_json::to_string(&result).map_err(|e| format!("Serialization: {e}"))
-    }
-
-    /// The `vault.list_full` payload as a structured Value. Shared by the
-    /// single-vault route and the merged multi-vault `vaults.list_full_all`
-    /// host route (S2-5).
-    pub async fn full_envelope(&self) -> Result<serde_json::Value, String> {
-        self.full_envelope_range(None).await
-    }
-
-    async fn full_envelope_range(
-        &self,
-        page: Option<(usize, usize)>,
-    ) -> Result<serde_json::Value, String> {
+    /// Snapshot entry-list walk, page zero: the sorted cipher id list plus
+    /// folder/tag/trash/archive meta lists in ONE atomic call. The client
+    /// then fetches envelope chunks for explicit ids via
+    /// `vault.list_full_batch`. Offset pagination over the live list used
+    /// to skip entries whenever the unlock-time sync pull reordered the
+    /// index between page calls; an id snapshot cannot skew.
+    pub async fn list_ids_envelope(&self) -> Result<String, String> {
         let guard = self.inner.read().await;
         let handle = guard.as_ref().ok_or("Vault not opened")?;
 
@@ -1373,14 +1370,88 @@ impl VaultState {
             return Err("Vault is locked. Unlock first.".into());
         }
 
-        let include_meta_lists = page.map(|(offset, _)| offset == 0).unwrap_or(true);
+        let (mut metas, unreadable) = handle
+            .list_cipher_meta_full_with_skipped()
+            .map_err(|e| format!("{e}"))?;
+        metas.sort_unstable_by_key(|m| m.id);
+        let ids: Vec<String> = metas.iter().map(|m| m.id.to_string()).collect();
+        let (folders, tags, trash, archived) = Self::meta_lists(handle)?;
 
-        // Folders
-        let folders = if include_meta_lists {
-            handle.list_folders().map_err(|e| format!("{e}"))?
-        } else {
-            Vec::new()
-        };
+        let env = serde_json::json!({
+            "ids": ids,
+            "total": metas.len(),
+            "unreadable": unreadable,
+            "folders": folders,
+            "trash": trash,
+            "archived": archived,
+            "tags": tags,
+        });
+        serde_json::to_string(&env).map_err(|e| format!("Serialization: {e}"))
+    }
+
+    /// Snapshot entry-list walk, envelope chunks: decrypted payloads for
+    /// exactly the requested ids. Ids the meta scan or decryption cannot
+    /// resolve are counted in `missing` so the client can reconcile.
+    pub async fn list_full_batch(&self, payload: &str) -> Result<String, String> {
+        let req: serde_json::Value =
+            serde_json::from_str(payload).map_err(|e| format!("Bad payload: {e}"))?;
+        let mut ids = Vec::with_capacity(req["ids"].as_array().map_or(0, |a| a.len()));
+        for v in req["ids"].as_array().into_iter().flatten() {
+            let s = v.as_str().ok_or("ids must be an array of uuid strings")?;
+            ids.push(uuid::Uuid::parse_str(s).map_err(|e| format!("Bad id {s}: {e}"))?);
+        }
+
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
+
+        let (metas, _) = handle
+            .list_cipher_meta_full_with_skipped()
+            .map_err(|e| format!("{e}"))?;
+        let by_id: std::collections::HashMap<_, _> = metas.iter().map(|m| (m.id, m)).collect();
+
+        let mut ciphers = Vec::with_capacity(ids.len());
+        let mut missing = 0usize;
+        for id in ids {
+            let Some(meta) = by_id.get(&id) else {
+                missing += 1;
+                continue;
+            };
+            match handle.get_cipher(id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let mut json = cipher_to_json(c);
+                    json["_meta"] = serde_json::json!({
+                        "id": meta.id.to_string(),
+                        "name": meta.name,
+                        "cipher_type": meta.cipher_type,
+                        "favorite": meta.favorite,
+                        "username": meta.username,
+                        "collection_id": meta.collection_id,
+                    });
+                    ciphers.push(json);
+                }
+                _ => {
+                    missing += 1;
+                }
+            }
+        }
+        serde_json::to_string(&serde_json::json!({ "ciphers": ciphers, "missing": missing }))
+            .map_err(|e| format!("Serialization: {e}"))
+    }
+
+    /// The `vault.list_full` payload as a structured Value. Shared by the
+    /// single-vault route and the merged multi-vault `vaults.list_full_all`
+    /// host route (S2-5).
+    pub async fn full_envelope(&self) -> Result<serde_json::Value, String> {
+        let guard = self.inner.read().await;
+        let handle = guard.as_ref().ok_or("Vault not opened")?;
+
+        if !handle.is_unlocked() {
+            return Err("Vault is locked. Unlock first.".into());
+        }
 
         // Main ciphers (excludes archived). The unreadable count covers
         // entries this build cannot decrypt (newer kind, foreign epoch,
@@ -1389,21 +1460,8 @@ impl VaultState {
         let (metas, unreadable) = handle
             .list_cipher_meta_full_with_skipped()
             .map_err(|e| format!("{e}"))?;
-        let total_ciphers = metas.len();
-        let (slice, has_more, next_offset) = match page {
-            Some((offset, limit)) => {
-                if offset >= total_ciphers || limit == 0 {
-                    (&metas[0..0], false, None)
-                } else {
-                    let end = offset.saturating_add(limit).min(total_ciphers);
-                    let more = end < total_ciphers;
-                    (&metas[offset..end], more, more.then_some(end))
-                }
-            }
-            None => (metas.as_slice(), false, None),
-        };
-        let mut ciphers = Vec::with_capacity(slice.len());
-        for meta in slice {
+        let mut ciphers = Vec::with_capacity(metas.len());
+        for meta in &metas {
             match handle.get_cipher(meta.id) {
                 Ok(CipherRead::Decrypted(ref c)) => {
                     let mut json = cipher_to_json(c);
@@ -1421,75 +1479,74 @@ impl VaultState {
             }
         }
 
-        // Trash & Archived (page 0 or unpaginated only)
-        let mut trash = Vec::new();
-        let mut archived = Vec::new();
-        let tags = if include_meta_lists {
-            let trash_entries = handle.list_trash_entries().map_err(|e| format!("{e}"))?;
-            trash.reserve(trash_entries.len());
-            for (id, collection_id) in &trash_entries {
-                match handle.get_cipher(*id) {
-                    Ok(CipherRead::Decrypted(ref c)) => {
-                        let mut json = cipher_to_json(c);
-                        let username = match &c.kind {
-                            baluard_core::types::CipherKind::Login(data) => data.username.clone(),
-                            _ => None,
-                        };
-                        json["_meta"] = serde_json::json!({
-                            "id": id.to_string(),
-                            "name": c.name,
-                            "cipher_type": c.kind.cipher_type(),
-                            "favorite": c.favorite,
-                            "username": username,
-                            "collection_id": collection_id,
-                        });
-                        trash.push(json);
-                    }
-                    _ => continue,
-                }
-            }
+        let (folders, tags, trash, archived) = Self::meta_lists(handle)?;
 
-            let archived_metas = handle.list_archived_meta().map_err(|e| format!("{e}"))?;
-            archived.reserve(archived_metas.len());
-            for meta in &archived_metas {
-                match handle.get_cipher(meta.id) {
-                    Ok(CipherRead::Decrypted(ref c)) => {
-                        let mut json = cipher_to_json(c);
-                        json["_meta"] = serde_json::json!({
-                            "id": meta.id.to_string(),
-                            "name": meta.name,
-                            "cipher_type": meta.cipher_type,
-                            "favorite": meta.favorite,
-                            "username": meta.username,
-                            "collection_id": meta.collection_id,
-                        });
-                        archived.push(json);
-                    }
-                    _ => continue,
-                }
-            }
-
-            // Rebuild tag index from decrypted cipher data
-            let _ = handle.rebuild_tag_index();
-            handle.list_tags().unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
-        let mut env = serde_json::json!({
+        Ok(serde_json::json!({
             "ciphers": ciphers,
             "folders": folders,
             "trash": trash,
             "archived": archived,
             "tags": tags,
             "unreadable": unreadable,
-        });
-        if page.is_some() {
-            env["total_ciphers"] = serde_json::json!(total_ciphers);
-            env["has_more"] = serde_json::json!(has_more);
-            env["next_offset"] = serde_json::json!(next_offset);
+        }))
+    }
+
+    /// Folder/tag/trash/archive display lists shared by `full_envelope` and
+    /// `list_ids_envelope`.
+    fn meta_lists(handle: &VaultHandle) -> Result<MetaLists, String> {
+        let folders = handle.list_folders().map_err(|e| format!("{e}"))?;
+
+        let mut trash = Vec::new();
+        let mut archived = Vec::new();
+        let trash_entries = handle.list_trash_entries().map_err(|e| format!("{e}"))?;
+        trash.reserve(trash_entries.len());
+        for (id, collection_id) in &trash_entries {
+            match handle.get_cipher(*id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let mut json = cipher_to_json(c);
+                    let username = match &c.kind {
+                        baluard_core::types::CipherKind::Login(data) => data.username.clone(),
+                        _ => None,
+                    };
+                    json["_meta"] = serde_json::json!({
+                        "id": id.to_string(),
+                        "name": c.name,
+                        "cipher_type": c.kind.cipher_type(),
+                        "favorite": c.favorite,
+                        "username": username,
+                        "collection_id": collection_id,
+                    });
+                    trash.push(json);
+                }
+                _ => continue,
+            }
         }
-        Ok(env)
+
+        let archived_metas = handle.list_archived_meta().map_err(|e| format!("{e}"))?;
+        archived.reserve(archived_metas.len());
+        for meta in &archived_metas {
+            match handle.get_cipher(meta.id) {
+                Ok(CipherRead::Decrypted(ref c)) => {
+                    let mut json = cipher_to_json(c);
+                    json["_meta"] = serde_json::json!({
+                        "id": meta.id.to_string(),
+                        "name": meta.name,
+                        "cipher_type": meta.cipher_type,
+                        "favorite": meta.favorite,
+                        "username": meta.username,
+                        "collection_id": meta.collection_id,
+                    });
+                    archived.push(json);
+                }
+                _ => continue,
+            }
+        }
+
+        // Rebuild tag index from decrypted cipher data
+        let _ = handle.rebuild_tag_index();
+        let tags = handle.list_tags().unwrap_or_default();
+
+        Ok((folders, tags, trash, archived))
     }
 
     /// Autofill credential query (Phase 6, plan D1/D2/D4).
@@ -12508,5 +12565,112 @@ mod ssh_serve_sticky_tests {
             v["kind"]["data"]["serve_via_agent"],
             serde_json::json!(false)
         );
+    }
+}
+
+#[cfg(test)]
+mod list_snapshot_tests {
+    use super::VaultState;
+    use serde_json::Value;
+
+    async fn state_with_ciphers(n: usize) -> (tempfile::TempDir, VaultState, Vec<String>) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        state
+            .create_vault(r#"{"password":"snapshot-test-passphrase-42","profile":"mobile_low"}"#)
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for i in 0..n {
+            ids.push(
+                state
+                    .add_cipher(&format!(
+                        r#"{{"name":"Item {i}","kind":{{"type":"login","data":{{"username":"u{i}"}}}}}}"#
+                    ))
+                    .await
+                    .unwrap(),
+            );
+        }
+        (dir, state, ids)
+    }
+
+    #[tokio::test]
+    async fn list_ids_envelope_is_sorted_and_complete() {
+        if !baluard_core::keyring_disabled() {
+            return;
+        }
+        let (_dir, state, added) = state_with_ciphers(5).await;
+        let env: Value = serde_json::from_str(&state.list_ids_envelope().await.unwrap()).unwrap();
+        let ids = env["ids"].as_array().unwrap();
+        assert_eq!(ids.len(), added.len());
+        assert_eq!(env["total"].as_u64().unwrap(), added.len() as u64);
+        assert_eq!(env["unreadable"].as_u64().unwrap(), 0);
+        let got: Vec<&str> = ids.iter().map(|s| s.as_str().unwrap()).collect();
+        let mut sorted = got.clone();
+        sorted.sort_unstable();
+        assert_eq!(got, sorted);
+        for id in &added {
+            assert!(got.contains(&id.as_str()), "missing {id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_full_batch_returns_exactly_requested_envelopes() {
+        if !baluard_core::keyring_disabled() {
+            return;
+        }
+        let (_dir, state, added) = state_with_ciphers(4).await;
+        let payload = serde_json::json!({ "ids": [added[0], added[2]] }).to_string();
+        let env: Value =
+            serde_json::from_str(&state.list_full_batch(&payload).await.unwrap()).unwrap();
+        let ciphers = env["ciphers"].as_array().unwrap();
+        assert_eq!(ciphers.len(), 2);
+        let mut got: Vec<&str> = ciphers
+            .iter()
+            .map(|c| c["_meta"]["id"].as_str().unwrap())
+            .collect();
+        got.sort_unstable();
+        let mut want = vec![added[0].as_str(), added[2].as_str()];
+        want.sort_unstable();
+        assert_eq!(got, want);
+        assert!(ciphers[0]["name"].is_string());
+        let collection_id = &ciphers[0]["_meta"]["collection_id"];
+        assert!(collection_id.is_null() || collection_id.is_string());
+        assert_eq!(env["missing"], 0);
+
+        // Ids absent from the vault are counted, not served and not fatal:
+        // the walk reconciles exactly or the client throws and retries.
+        let with_bogus =
+            serde_json::json!({ "ids": [added[0], added[1], uuid::Uuid::new_v4().to_string()] })
+                .to_string();
+        let env: Value =
+            serde_json::from_str(&state.list_full_batch(&with_bogus).await.unwrap()).unwrap();
+        assert_eq!(env["ciphers"].as_array().unwrap().len(), 2);
+        assert_eq!(env["missing"], 1);
+    }
+
+    #[tokio::test]
+    async fn batch_walk_excludes_ciphers_added_after_the_ids_snapshot() {
+        if !baluard_core::keyring_disabled() {
+            return;
+        }
+        let (_dir, state, _added) = state_with_ciphers(2).await;
+        let snap: Value = serde_json::from_str(&state.list_ids_envelope().await.unwrap()).unwrap();
+        let snap_ids: Vec<String> = snap["ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        // A sync pull landing between the id snapshot and the envelope
+        // batches must not enter the walk: the id set is client-owned.
+        state
+            .add_cipher(r#"{"name":"Late","kind":{"type":"login","data":{"username":"late"}}}"#)
+            .await
+            .unwrap();
+        let payload = serde_json::json!({ "ids": snap_ids }).to_string();
+        let env: Value =
+            serde_json::from_str(&state.list_full_batch(&payload).await.unwrap()).unwrap();
+        assert_eq!(env["ciphers"].as_array().unwrap().len(), snap_ids.len());
     }
 }

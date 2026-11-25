@@ -1,54 +1,37 @@
 import { daemon } from "./daemon.js";
 
-const DEFAULT_PAGE_SIZE = 200;
+// Envelope chunks ride the same IPC frame budget the old offset pages used.
+const BATCH_SIZE = 200;
 
 let _promise = null;
 
 /**
- * Fetch the full unlocked vault in bounded IPC pages so large vaults
- * never exceed the socket frame limit.
+ * Snapshot walk: vault.list_ids returns the sorted cipher id list plus the
+ * meta lists in one atomic call, then explicit id chunks fetch the cipher
+ * envelopes. The old offset pagination re-read the live list on every page,
+ * so the unlock-time sync pull could reorder entries between calls and the
+ * windows would silently skip entries until restart.
  */
-export async function fetchVaultFull(pageSize = DEFAULT_PAGE_SIZE) {
-  let offset = 0;
-  let merged = null;
-
-  for (;;) {
-    const raw = await daemon(
-      "vault.list_full",
-      JSON.stringify({ offset, limit: pageSize })
-    );
+export async function fetchVaultFull() {
+  const base = JSON.parse(await daemon("vault.list_ids"));
+  if (!Array.isArray(base.ids)) throw new Error("vault.list_ids returned no id list");
+  const ids = base.ids;
+  const ciphers = [];
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    const want = ids.slice(i, i + BATCH_SIZE);
+    const raw = await daemon("vault.list_full_batch", JSON.stringify({ ids: want }));
     const page = JSON.parse(raw);
-    if (!page) return null;
-
-    if (!merged) {
-      merged = {
-        ...page,
-        ciphers: Array.isArray(page.ciphers) ? [...page.ciphers] : [],
-      };
-    } else if (Array.isArray(page.ciphers) && page.ciphers.length > 0) {
-      const seen = new Set(merged.ciphers.map((c) => c.id || c._meta?.id));
-      for (const c of page.ciphers) {
-        const id = c.id || c._meta?.id;
-        if (!id || !seen.has(id)) {
-          if (id) seen.add(id);
-          merged.ciphers.push(c);
-        }
-      }
-    }
-
-    if (!page.has_more) break;
-    const next = typeof page.next_offset === "number"
-      ? page.next_offset
-      : offset + pageSize;
-    if (next <= offset) break;
-    offset = next;
+    if (!page || !Array.isArray(page.ciphers)) throw new Error("vault.list_full_batch returned no ciphers");
+    if (page.ciphers.length + (page.missing ?? 0) !== want.length)
+      throw new Error("vault.list_full_batch did not reconcile the requested ids");
+    ciphers.push(...page.ciphers);
   }
-
-  return merged;
+  const { ids: _snapshot, ...rest } = base;
+  return { ...rest, ciphers };
 }
 
 /**
- * Fire paginated vault.list_full immediately after unlock responds.
+ * Fire the snapshot walk immediately after unlock responds.
  * By the time VaultView.onMount fires (~5-15ms later), the
  * response is usually already in-flight or resolved.
  */

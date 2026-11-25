@@ -68,17 +68,22 @@ const C = (id, name) => ({ id, type: "login", name, username: "u" });
 
 function serveCiphers(count) {
   daemonMock.mockReset();
-  daemonMock.mockImplementation(async (action) => {
-    if (action === "vault.list_full") {
+  const ciphers = Array.from({ length: count }, (_, i) => C(`c${i}`, `Entry ${i}`));
+  daemonMock.mockImplementation(async (action, payload) => {
+    if (action === "vault.list_ids") {
       return JSON.stringify({
-        ciphers: Array.from({ length: count }, (_, i) => C(`c${i}`, `Entry ${i}`)),
+        ids: ciphers.map((c) => c.id),
         folders: [],
         tags: [],
         trash: [],
         archived: [],
         unreadable: 0,
-        has_more: false,
+        total: ciphers.length,
       });
+    }
+    if (action === "vault.list_full_batch") {
+      const { ids: want } = JSON.parse(payload);
+      return JSON.stringify({ ciphers: ciphers.filter((c) => want.includes(c.id)) });
     }
     if (action === "vaults.list_full_all") {
       return JSON.stringify({ vaults: [] });

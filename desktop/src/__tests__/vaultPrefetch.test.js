@@ -25,64 +25,55 @@ describe("vaultPrefetch", () => {
     vi.mocked(daemon).mockReset();
   });
 
-  it("start fires paginated vault.list_full and consume returns the parsed promise", async () => {
-    const parsed = { ciphers: [], folders: [], has_more: false };
+  it("start fires vault.list_ids and consume returns the parsed promise", async () => {
+    const parsed = { ids: [], folders: [], total: 0 };
     vi.mocked(daemon).mockResolvedValue(JSON.stringify(parsed));
 
     startVaultPrefetch();
     const promise = consumeVaultPrefetch();
     expect(promise).not.toBeNull();
     const result = await promise;
-    expect(result).toEqual(parsed);
-    expect(daemon).toHaveBeenCalledWith(
-      "vault.list_full",
-      JSON.stringify({ offset: 0, limit: 200 })
-    );
+    expect(result).toEqual({ folders: [], total: 0, ciphers: [] });
+    expect(daemon).toHaveBeenCalledWith("vault.list_ids");
   });
 
-  it("fetchVaultFull merges multiple pages until has_more is false", async () => {
-    vi.mocked(daemon)
-      .mockResolvedValueOnce(
-        JSON.stringify({
-          ciphers: [{ id: "1" }, { id: "2" }],
+  it("fetchVaultFull fetches envelope chunks over the id snapshot", async () => {
+    const ids = Array.from({ length: 511 }, (_, i) => `id-${i}`);
+    vi.mocked(daemon).mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
+        return JSON.stringify({
+          ids,
           folders: [{ id: "f1" }],
           trash: [{ id: "t1" }],
           archived: [{ id: "a1" }],
           tags: ["work"],
-          unreadable: 1,
-          has_more: true,
-          next_offset: 2,
-        })
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify({
-          ciphers: [{ id: "3" }],
-          folders: [],
-          trash: [],
-          archived: [],
-          tags: [],
-          unreadable: 0,
-          has_more: false,
-          next_offset: null,
-        })
-      );
+          unreadable: 2,
+          total: ids.length,
+        });
+      }
+      const { ids: want } = JSON.parse(payload);
+      return JSON.stringify({ ciphers: want.map((id) => ({ id })) });
+    });
 
-    const result = await fetchVaultFull(2);
-    expect(result.ciphers).toEqual([{ id: "1" }, { id: "2" }, { id: "3" }]);
+    const result = await fetchVaultFull();
+    expect(result.ciphers).toHaveLength(511);
+    expect(result.ciphers[0].id).toBe("id-0");
+    expect(result.ciphers[510].id).toBe("id-510");
     expect(result.folders).toEqual([{ id: "f1" }]);
     expect(result.trash).toEqual([{ id: "t1" }]);
     expect(result.archived).toEqual([{ id: "a1" }]);
     expect(result.tags).toEqual(["work"]);
-    expect(result.unreadable).toBe(1);
-    expect(daemon).toHaveBeenNthCalledWith(
-      1,
-      "vault.list_full",
-      JSON.stringify({ offset: 0, limit: 2 })
-    );
+    expect(result.unreadable).toBe(2);
+    expect(result.ids).toBeUndefined();
     expect(daemon).toHaveBeenNthCalledWith(
       2,
-      "vault.list_full",
-      JSON.stringify({ offset: 2, limit: 2 })
+      "vault.list_full_batch",
+      JSON.stringify({ ids: ids.slice(0, 200) })
+    );
+    expect(daemon).toHaveBeenNthCalledWith(
+      3,
+      "vault.list_full_batch",
+      JSON.stringify({ ids: ids.slice(200, 400) })
     );
   });
 
@@ -114,6 +105,42 @@ describe("vaultPrefetch", () => {
     // The promise resolves to null (catch handler swallows the error).
     const result = await p;
     expect(result).toBeNull();
+  });
+
+  it("a batch that fails to reconcile the requested ids rejects the walk", async () => {
+    // Two ids requested, one served, no missing count: a silent skip.
+    // The walk must reject (surfacing as a null prefetch and the normal
+    // load path) instead of resolving a stable undercount.
+    vi.mocked(daemon).mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
+        return JSON.stringify({ ids: ["a", "b"], folders: [], total: 2 });
+      }
+      if (action === "vault.list_full_batch") {
+        return JSON.stringify({ ciphers: [{ id: "a" }] });
+      }
+      return "{}";
+    });
+    startVaultPrefetch();
+    const p = consumeVaultPrefetch();
+    await expect(p).resolves.toBeNull();
+  });
+
+  it("a counted missing id reconciles the batch and the walk resolves", async () => {
+    // A pull deleted the second cipher mid-walk: served 1 + missing 1
+    // accounts for both requested ids, so the walk must NOT throw.
+    vi.mocked(daemon).mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
+        return JSON.stringify({ ids: ["a", "b"], folders: [], total: 2 });
+      }
+      if (action === "vault.list_full_batch") {
+        return JSON.stringify({ ciphers: [{ id: "a" }], missing: 1 });
+      }
+      return "{}";
+    });
+    startVaultPrefetch();
+    const result = await consumeVaultPrefetch();
+    expect(result.ciphers).toHaveLength(1);
+    expect(result.total).toBe(2);
   });
 });
 

@@ -97,17 +97,21 @@ function isSelected(el) {
 describe("VaultView No folder filter (regression)", () => {
   beforeEach(() => {
     daemonMock.mockReset();
-    daemonMock.mockImplementation(async (action) => {
-      if (action === "vault.list_full") {
+    daemonMock.mockImplementation(async (action, payload) => {
+      if (action === "vault.list_ids") {
         return JSON.stringify({
-          ciphers: FIXTURES,
+          ids: FIXTURES.map((f) => f.id),
           folders: FOLDERS,
           tags: [],
           trash: [],
           archived: [],
           unreadable: 0,
-          has_more: false,
+          total: FIXTURES.length,
         });
+      }
+      if (action === "vault.list_full_batch") {
+        const { ids: want } = JSON.parse(payload);
+        return JSON.stringify({ ciphers: FIXTURES.filter((f) => want.includes(f.id)) });
       }
       if (action === "vaults.list_full_all") {
         return JSON.stringify(OTHER_VAULTS);

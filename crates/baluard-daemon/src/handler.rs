@@ -4434,23 +4434,27 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Err(e) => err_response(e),
         },
 
-        "vault.list_full" => {
-            let page = serde_json::from_str::<serde_json::Value>(&req.payload)
-                .ok()
-                .and_then(|v| {
-                    let limit = v.get("limit").and_then(|n| n.as_u64())? as usize;
-                    let offset = v.get("offset").and_then(|n| n.as_u64()).unwrap_or(0) as usize;
-                    Some((offset, limit))
-                });
-            let res = match page {
-                Some((offset, limit)) => state.list_all_page(offset, limit).await,
-                None => state.list_all().await,
-            };
-            match res {
-                Ok(json) => ok_resp(json, token_str),
-                Err(e) => err_response(e),
-            }
-        }
+        "vault.list_full" => match state.full_envelope().await {
+            Ok(json) => match serde_json::to_string(&json) {
+                Ok(s) => ok_resp(s, token_str),
+                Err(e) => err_response(format!("Serialization: {e}")),
+            },
+            Err(e) => err_response(e),
+        },
+
+        // Snapshot entry-list walk: page zero returns the sorted id list
+        // plus meta lists; explicit id chunks fetch the envelopes. Replaces
+        // offset pagination, which skipped entries when the unlock-time
+        // sync pull reordered the live list between page calls.
+        "vault.list_ids" => match state.list_ids_envelope().await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
+
+        "vault.list_full_batch" => match state.list_full_batch(&req.payload).await {
+            Ok(json) => ok_resp(json, token_str),
+            Err(e) => err_response(e),
+        },
 
         "vault.get" => {
             if req.payload.is_empty() {

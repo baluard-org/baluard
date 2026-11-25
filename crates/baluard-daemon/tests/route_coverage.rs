@@ -156,7 +156,7 @@ async fn list_full_returns_folders_and_archived() {
 }
 
 #[tokio::test]
-async fn list_full_page_paginates_ciphers_and_keeps_metadata_on_page_zero() {
+async fn list_ids_snapshots_and_batch_serves_exactly_requested_ids() {
     let (_dir, path) = make_vault("list-full-page");
     let state = Arc::new(VaultState::new(path));
     state.open().await.unwrap();
@@ -171,66 +171,85 @@ async fn list_full_page_paginates_ciphers_and_keeps_metadata_on_page_zero() {
     host.insert("list-full-page".into(), state.clone()).await;
     host.switch("list-full-page").await.unwrap();
     let token = state.get_session_token().await.unwrap();
-
-    // Page 0: limit 2 -> 2 ciphers + folders/trash/archived/tags + has_more=true
-    let p0_req = GatewayRequest {
-        action: "vault.list_full".into(),
-        payload: r#"{"offset":0,"limit":2}"#.into(),
+    let ids_req = GatewayRequest {
+        action: "vault.list_ids".into(),
+        payload: String::new(),
         session_token: token.clone(),
         slug: String::new(),
         ipc_version: 1,
     };
-    let p0_resp = route_host_request(p0_req, &host).await;
-    assert!(p0_resp.success, "p0 err: {}", p0_resp.error_message);
-    let p0: serde_json::Value = serde_json::from_str(&p0_resp.payload).unwrap();
-    assert_eq!(p0["ciphers"].as_array().unwrap().len(), 2);
-    assert_eq!(p0["total_ciphers"], 3);
-    assert_eq!(p0["has_more"], true);
-    assert_eq!(p0["next_offset"], 2);
-    assert!(p0["folders"].is_array());
-    assert!(p0["trash"].is_array());
-    assert!(p0["archived"].is_array());
-
-    // Page 1: offset 2, limit 2 -> 1 cipher + has_more=false
-    let p1_req = GatewayRequest {
-        action: "vault.list_full".into(),
-        payload: r#"{"offset":2,"limit":2}"#.into(),
-        session_token: token.clone(),
-        slug: String::new(),
-        ipc_version: 1,
-    };
-    let p1_resp = route_host_request(p1_req, &host).await;
-    assert!(p1_resp.success, "p1 err: {}", p1_resp.error_message);
-    let p1: serde_json::Value = serde_json::from_str(&p1_resp.payload).unwrap();
-    assert_eq!(p1["ciphers"].as_array().unwrap().len(), 1);
-    assert_eq!(p1["total_ciphers"], 3);
-    assert_eq!(p1["has_more"], false);
-    assert!(p1["next_offset"].is_null());
-
-    // Verify all 3 distinct names arrived across pages
-    let mut names: Vec<String> = p0["ciphers"]
+    let ids_resp = route_host_request(ids_req, &host).await;
+    assert!(ids_resp.success, "ids err: {}", ids_resp.error_message);
+    let snap: serde_json::Value = serde_json::from_str(&ids_resp.payload).unwrap();
+    let snap_ids: Vec<String> = snap["ids"]
         .as_array()
         .unwrap()
         .iter()
-        .chain(p1["ciphers"].as_array().unwrap().iter())
+        .map(|i| i.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(snap_ids.len(), 3);
+    assert!(snap_ids.windows(2).all(|w| w[0] < w[1]), "ids sorted");
+    assert_eq!(snap["total"], 3);
+    assert!(snap["folders"].is_array());
+    assert!(snap["trash"].is_array());
+    assert!(snap["archived"].is_array());
+    assert!(snap["tags"].is_array());
+
+    let batch = |ids: &[String], token: &str| {
+        let req = GatewayRequest {
+            action: "vault.list_full_batch".into(),
+            payload: serde_json::json!({ "ids": ids }).to_string(),
+            session_token: token.to_string(),
+            slug: String::new(),
+            ipc_version: 1,
+        };
+        route_host_request(req, &host)
+    };
+
+    // Partial batch: envelopes for exactly the requested ids.
+    let partial_resp = batch(&snap_ids[..2], &token).await;
+    assert!(
+        partial_resp.success,
+        "batch err: {}",
+        partial_resp.error_message
+    );
+    let partial: serde_json::Value = serde_json::from_str(&partial_resp.payload).unwrap();
+    assert_eq!(partial["ciphers"].as_array().unwrap().len(), 2);
+
+    // Full walk: all three names arrive, exactly once each.
+    let full_resp = batch(&snap_ids, &token).await;
+    assert!(full_resp.success);
+    let full: serde_json::Value = serde_json::from_str(&full_resp.payload).unwrap();
+    let mut names: Vec<String> = full["ciphers"]
+        .as_array()
+        .unwrap()
+        .iter()
         .map(|c| c["name"].as_str().unwrap().to_string())
         .collect();
     names.sort();
     assert_eq!(names, vec!["Alpha", "Beta", "Gamma"]);
 
-    // Out-of-bounds offset returns empty slice with has_more=false
-    let p2_req = GatewayRequest {
-        action: "vault.list_full".into(),
-        payload: r#"{"offset":10,"limit":2}"#.into(),
+    // A cipher added after the snapshot must not enter a batch built on
+    // the original id set: the walk is client-owned, immune to a sync
+    // pull landing mid-walk.
+    state
+        .add_cipher(&serde_json::to_string(&login_input("Delta", "u")).unwrap())
+        .await
+        .unwrap();
+    let stale_resp = batch(&snap_ids, &token).await;
+    assert!(stale_resp.success);
+    let stale: serde_json::Value = serde_json::from_str(&stale_resp.payload).unwrap();
+    assert_eq!(stale["ciphers"].as_array().unwrap().len(), 3);
+    let fresh_req = GatewayRequest {
+        action: "vault.list_ids".into(),
+        payload: String::new(),
         session_token: token,
         slug: String::new(),
         ipc_version: 1,
     };
-    let p2_resp = route_host_request(p2_req, &host).await;
-    assert!(p2_resp.success);
-    let p2: serde_json::Value = serde_json::from_str(&p2_resp.payload).unwrap();
-    assert_eq!(p2["ciphers"].as_array().unwrap().len(), 0);
-    assert_eq!(p2["has_more"], false);
+    let fresh_resp = route_host_request(fresh_req, &host).await;
+    let fresh: serde_json::Value = serde_json::from_str(&fresh_resp.payload).unwrap();
+    assert_eq!(fresh["total"], 4);
 }
 
 // ── Devices tab fleet (vault.device_activity) ─────────────────────
