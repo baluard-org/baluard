@@ -41,11 +41,22 @@ async function pickInPopout(ctx) {
     await sleep(300);
   }
   if (!popout) return null;
+  // rp.mjs never clears #status between clicks; wipe it so the caller's
+  // waitFor cannot pass on the previous leg's stale assertion text.
+  await page.evaluate(() => {
+    document.getElementById("status").textContent = "";
+  });
   await popout.waitForSelector(".match-card", { timeout: 10000 });
   // The SW closes the popout once the decision lands; that close races the
-  // click's bookkeeping, so a closed-target error still means the pick was
-  // delivered — the caller's RP waitFor judges the outcome.
-  await popout.locator(".match-card").first().click().catch(() => {});
+  // click's bookkeeping, so a closed/detached-target error still means the
+  // pick was delivered — the caller's RP waitFor judges the outcome.
+  await popout
+    .locator(".match-card")
+    .first()
+    .click()
+    .catch((e) => {
+      if (!/closed|detached/i.test(String(e))) throw e;
+    });
   return popout;
 }
 
@@ -372,9 +383,15 @@ try {
   }
   await uvPopout.waitForSelector(".match-card", { timeout: 10000 });
   // The SW closes the popout the moment the decision lands; that close can
-  // race the click's own bookkeeping, so a closed-target error here only
-  // means the pick went through — the waitFor below judges the outcome.
-  await uvPopout.locator(".match-card").first().click().catch(() => {});
+  // race the click's own bookkeeping, so a closed/detached-target error here
+  // only means the pick went through — the waitFor below judges the outcome.
+  await uvPopout
+    .locator(".match-card")
+    .first()
+    .click()
+    .catch((e) => {
+      if (!/closed|detached/i.test(String(e))) throw e;
+    });
   // The pick still exercises the full stack: SW -> bridge -> daemon, where
   // the UV gate refuses. The RP page must see the mapped DOM error, and the
   // RP must never receive an assertion to verify.

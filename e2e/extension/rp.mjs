@@ -16,6 +16,8 @@
 //   POST /verify           verify the assertion signature
 //   GET  /state            {registered: bool} for test polling
 //   POST /reset            forget the credential (test isolation)
+//   GET  <other paths>     SPA fallback: serves the test page for any
+//                          document navigation (Accept: text/html)
 
 import { createServer } from "node:http";
 import { createHash, generateKeyPairSync, createPublicKey, verify as cryptoVerify, randomBytes } from "node:crypto";
@@ -419,9 +421,9 @@ const server = createServer((req, res) => {
     return;
   }
   // SPA fallback: reloads of client-side routes (history.pushState paths)
-  // must serve the app, mirroring a real single-page RP. API routes above
-  // have already matched; only stragglers land here.
-  if (req.method === "GET") {
+  // must serve the app, mirroring a real single-page RP. Gated on a
+  // document navigation (Accept: text/html) so a typo'd API GET still 404s.
+  if (req.method === "GET" && String(req.headers.accept || "").includes("text/html")) {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(PAGE);
     return;
