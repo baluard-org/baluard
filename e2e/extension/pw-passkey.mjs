@@ -366,10 +366,13 @@ try {
   }
   console.log("PASS fallback (native ceremony rejected; Baluard UI stayed out)");
 
-  // ── 5. UV-required assertion refuses with a clean NotAllowedError ──
-  // BL0002: the extension reports presence only; a picker pick is not a
-  // verification gesture, so the daemon fail-closes UV-required ceremonies
-  // (passkey:uv-required) and the page sees a plain NotAllowedError.
+  // ── 5. UV-required assertion: the re-auth gesture completes it ──
+  // BL0036: the daemon honors user_verified only on a fresh master-password
+  // proof. The pick parks the ceremony on the re-auth view in this same
+  // popout; typing the master password verifies (rate-limited canary) and
+  // the retry claims user_verified, so the assertion succeeds end to end.
+  // (The harness unlocked the vault seconds ago, so the stamp is fresh;
+  // a stale stamp would surface as the refusal leg this one replaced.)
   await page.click("#signin-uv");
   let uvPopout = null;
   for (let i = 0; i < 40; i++) {
@@ -392,20 +395,32 @@ try {
     .catch((e) => {
       if (!/closed|detached/i.test(String(e))) throw e;
     });
-  // The pick still exercises the full stack: SW -> bridge -> daemon, where
-  // the UV gate refuses. The RP page must see the mapped DOM error, and the
-  // RP must never receive an assertion to verify.
+  // The pick closes the picker window as the decision lands, and the
+  // re-auth view opens in a fresh popout, so re-find the window instead
+  // of holding the old page handle.
+  let uvReAuth = null;
+  for (let i = 0; i < 40; i++) {
+    uvReAuth = ctx.pages().find((p) => p.url().includes("popup.html#/passkey/") && !p.isClosed());
+    if (uvReAuth && (await uvReAuth.locator(".pk-uv-input").count()) > 0) break;
+    uvReAuth = null;
+    await sleep(300);
+  }
+  if (!uvReAuth) {
+    await dumpPage(page);
+    fail("UV re-auth view never opened");
+  }
+  await uvReAuth.fill(".pk-uv-input", "ext-e2e-pw1");
+  await uvReAuth.click(".pk-footer .btn-primary");
+  // The RP page must see a VERIFIED assertion, and its /verify must accept.
   await waitFor(
     page,
     () => {
       const s = document.getElementById("status").textContent;
-      return s.includes("UV-ERR NotAllowedError: This site requires user verification that Baluard cannot provide")
-        ? s
-        : null;
+      return s.startsWith("UV ") && s.includes('"verified":true') ? s : null;
     },
-    "RP UV refusal surfacing"
+    "RP UV-verified assertion"
   );
-  console.log("PASS uv-refusal (UV-required ceremony fails closed, clean NotAllowedError)");
+  console.log("PASS uv-reauth (master-password gesture completes the UV-required ceremony)");
 
   // ── 6. RP negatives: flipped signature byte + replayed challenge ──
   const tamper = await page.evaluate(async () =>
