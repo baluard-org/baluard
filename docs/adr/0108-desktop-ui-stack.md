@@ -1,7 +1,6 @@
-# ADR 0108: Desktop UI Stack, Webview (Tauri v2) vs Native Rust (Rune)
+# ADR 0108. Desktop UI Stack, Webview (Tauri v2) vs Native Rust (Rune)
 
-Date: 2026-11-14 (recorded since 2026-10; full lineage below)
-Status: accepted (Tauri v2 + SolidJS retained for desktop production; the Rune spike decides the native path)
+> Status: Accepted (2026-11-14; recorded since 2026-10, full lineage below. Tauri v2 + SolidJS retained for desktop production; the Rune spike decides the native path).
 Review: peer-reviewed 2026-11-07, two independent reviews folded in; the monitoring log at the bottom carries every update since
 
 ## Decision

@@ -1,7 +1,6 @@
-# ADR 0107: Side-Channel Message Bus, Standard and Trigger
+# ADR 0107. Side-Channel Message Bus, Standard and Trigger
 
-Date: 2026-11-14
-Status: accepted (standard specified; implementation deferred behind the trigger below)
+> Status: Accepted (2026-11-14; implemented by [ADR 0109](0109-msg-bus-implementation.md), which overrode the activation trigger on 2026-11-14).
 Review: three adversarial design review rounds folded in (2026-11-14); findings zero-trust verified against the tree
 
 ## Context

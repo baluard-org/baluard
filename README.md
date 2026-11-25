@@ -11,10 +11,13 @@ Git-native password manager with padded-bucket encrypted storage, device-identit
 ```
 baluard-core    -> Pure Rust: crypto (AES-256-GCM, Argon2id, HPKE, Ed25519, TOTP), vault format, key lifecycle, sharing, git sync, import/export (incl. the encrypted .bldbak container)
 baluard-runtime -> Shared orchestration runtime: VaultHost, VaultState, auto-sync coordinator, PIN escrow, provider connect, cross-vault copy
-baluard-daemon  -> Background IPC daemon (tokio Unix socket, Protobuf gateway, ~150 actions, thin runtime shell)
-baluard-cli     -> Terminal client: 35 commands - daemon-first with --direct fallback; vault CRUD, search, generator/TOTP/SSH keygen, providers, sharing, contacts, rotation, backups
+baluard-daemon  -> Background IPC daemon (tokio socket, Protobuf gateway, ~245 actions, thin runtime shell)
+baluard-cli     -> Terminal client: 45 commands - daemon-first with --direct fallback; vault CRUD, search, generator/TOTP/SSH keygen, providers, sharing, contacts, rotation, backups
 baluard-nmh     -> Native messaging host (browser extension bridge, stdio-JSON <-> varint-protobuf)
 baluard-uniffi  -> UniFFI bindings consumed by the Kotlin Multiplatform mobile app
+baluard-proto   -> Protobuf schema crate shared by daemon, CLI, NMH, and UniFFI
+baluard-mcp     -> MCP agent server (loopback HTTP + stdio, per-read approval; ADR 0116)
+baluard-portable-launcher -> Windows portable launcher binary
 desktop/        -> Tauri v2 desktop app (SolidJS + Tailwind v4: all cipher types, sharing/family admin, backups, health, merged vault view)
 browser/        -> MV3 browser extension for Chromium and Firefox (paired companion, merged matches, inline autofill)
 mobile/        -> Kotlin Multiplatform / Compose app (Android shipped; iOS pending): multi-vault, sharing/family, biometric, autofill + accessibility fill, backups
@@ -70,7 +73,7 @@ Every command also checks for a new release at most once per 24 hours and prints
 ```bash
 cargo install just      # Build runner
 git clone https://github.com/baluard-org/baluard.git
-cd Baluard
+cd baluard
 just build
 just test
 ```

@@ -1,6 +1,6 @@
 # Design: attachment storage and sync
 
-Status: designed, not implemented. Bundle picked from a six-axis option space; peer review folded in (2026-11-13, two blockers and five risks applied, zero-trust verified against the tree). ADR pending at implementation time.
+Status: Implemented. Bundle picked from a six-axis option space; peer review folded in (2026-11-13, two blockers and five risks applied, zero-trust verified against the tree). Decision recorded in [ADR 0106](../adr/0106-attachment-blobs-off-main.md) and shipped as `refs/notes/baluard-attachments`.
 
 Owner: Esteban
 Scope: core, runtime, daemon, CLI, desktop, mobile

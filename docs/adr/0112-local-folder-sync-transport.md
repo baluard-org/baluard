@@ -1,6 +1,6 @@
 # ADR 0112. Local Folder Sync Transport (Dropbox, Drive, iCloud Drive, Syncthing)
 
-> Status: Proposed (2026-11-18).
+> Status: Accepted (2026-11-18; implemented). Ships in `crates/baluard-core/src/sync/folder.rs`, baluard-runtime providers, the CLI, desktop sync settings, and mobile.
 
 ## Context
 

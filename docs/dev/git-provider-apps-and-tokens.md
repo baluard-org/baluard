@@ -18,7 +18,7 @@ All three providers follow the same model:
 | PAT fallback | Every provider supports a Personal Access Token path for headless, CI, air-gapped, or self-hosted instances. Surfaced under "Advanced options" in the desktop UI. |
 | Advanced Options override | Power users can supply their own client_id and/or instance URL to run fully independently of Baluard's infrastructure. Defaults are embedded; overrides are per-connection. |
 
-The embedded default `client_id` for each provider is a placeholder until the project app is registered. GitHub ships a real client_id today (`Ov23liuGmBAmBRWm3Ni`); verify it is org-owned (see §3.1) or re-register.
+The embedded default `client_id` for each provider is a placeholder until the project app is registered. GitHub ships a real client_id today (`Ov23liTCidT2TQDLP4No`); verify it is org-owned (see §3.1) or re-register.
 
 ---
 
@@ -73,7 +73,7 @@ This matrix drove every app-type decision. Researched 2026-06-15.
 
 ### 3.4 Existing client_id audit
 
-The current hardcoded `Ov23liuGmBAmBRWm3Ni` predates this decision. Action required: verify which namespace owns it. If personal-account-owned, re-register under the project org and update the const. The consent screen seen by third-party users depends on this.
+The current hardcoded `Ov23liTCidT2TQDLP4No` predates this decision. Action required: verify which namespace owns it. If personal-account-owned, re-register under the project org and update the const. The consent screen seen by third-party users depends on this.
 
 ---
 
@@ -262,7 +262,7 @@ One active instance per provider is supported in v1. Switching instances (e.g. g
 
 ## 9. Open items for the maintainer
 
-1. **Audit `Ov23liuGmBAmBRWm3Ni`**: confirm it is org-owned. If personal, re-register under the project org and update `GITHUB_CLIENT_ID`.
+1. **Audit `Ov23liTCidT2TQDLP4No`**: confirm it is org-owned. If personal, re-register under the project org and update `GITHUB_CLIENT_ID`.
 2. **Register the GitLab app** — DONE 2026-11-27. Registered on the personal account (device-flow toggle on, Confidential unchecked, scope `api` only, redirect `http://127.0.0.1/callback` — mandatory field, inert for device flow). Application ID delivered as `BALUARD_GITLAB_CLIENT_ID` in `~/.secrets` and baked into release builds via `option_env!` (`Provider::default_client_id`). Group migration later = same org audit as GitHub item 1.
 3. **Register the Codeberg app** — DONE 2026-11-27. Public client, redirect `http://127.0.0.1/callback` (port-free: Forgejo strips the port for public loopback clients, see item 6). Client ID delivered as `BALUARD_CODEBERG_CLIENT_ID`, baked via `option_env!`. The `BALUARD_GITLAB_CLIENT_SECRET` / `BALUARD_CODEBERG_CLIENT_SECRET` env vars are NOT consumed: both flows are public clients that send no secret, and no secret may ship in the binary.
 4. **Verify the GitLab device-flow toggle** is available for group-owned apps (not just user-owned). Report back if it is group-restricted.

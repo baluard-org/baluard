@@ -1,6 +1,6 @@
 # ADR 0103. Google Play Entitlement Verification Service
 
-> Status: Accepted. A Cloud Run service verifies Play purchase tokens for configured Play builds. This refines the entitlement-check mechanism in ADR 0102 without changing the product, price, gated features, or F-Droid split.
+> Status: Superseded (2026-11-25). The mobile Play build no longer calls a remote verification service; Play Billing evaluates purchases locally on device (ADR 0102). `services/entitlements` remains in the repository as an unused reference implementation.
 
 ## Context
 

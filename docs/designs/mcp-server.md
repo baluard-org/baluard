@@ -1,6 +1,6 @@
 # MCP agent server
 
-> Status: Draft rev 3 (2026-11-22), folded from two agy review passes (session 0dace454). Extends ADR 0083 (agents never hold the vault); ADR 0116 records the decision.
+> Status: Implemented (2026-11-22). Folded from two agy review passes (session 0dace454). Extends ADR 0083 (agents never hold the vault); ADR 0116 records the decision and ships as `crates/baluard-mcp`.
 
 ## Summary
 

@@ -91,9 +91,10 @@ Shipped (core, tested; ceremony + routes 2026-09-29):
   panel), and the CLI disaster path: `baluard vaults recover-kit
   <slug>`.
 
-Deferred: a login-screen recovery UI on desktop and any mobile
-recovery surface. The CLI is the natural fresh-machine tool; revisit
-if demand says otherwise.
+Shipped (0.8.0): the desktop login screen carries the recovery UI
+(`RecoverVaultScreen`, the "Forgot your master password?" path) and mobile
+onboarding restores a kit through `recoverKitForPath`. The CLI disaster path
+`baluard vaults recover-kit <slug>` remains the natural fresh-machine tool.
 
 ## 6. Boundaries and threat model
 

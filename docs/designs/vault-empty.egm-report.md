@@ -1,5 +1,7 @@
 # Implementation Readiness Review — `baluard vault empty`
 
+> Resolution (2026-11-25): the findings below were folded into [vault-empty.md](vault-empty.md) and the feature shipped (ADR 0105). The NOT READY verdict applied to the draft under review, not to the shipped implementation.
+
 Reviewer: Implementation Readiness Goldfish (fresh context, REVIEW mode)
 Target: `docs/designs/vault-empty.md`
 Method: design read against `baluard-core` / `baluard-runtime` / `baluard-daemon` / `baluard-cli` sources; every load-bearing claim traced to code.

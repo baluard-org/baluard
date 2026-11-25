@@ -15,8 +15,9 @@ Compose Multiplatform (Android + iOS) client for Baluard.
 See [`docs/dev/dev-setup-mobile.md`](../docs/dev/dev-setup-mobile.md) for full prerequisites (Android SDK/NDK, OpenJDK 17) and environment setup.
 
 ```bash
-just android-apk          # Build release Android APK
-just android-apk-fast     # Build debug Android APK
+just android-apk          # Build debug Android APK (arm64-v8a default; -Pbaluard.abis=... for more)
+just android-apk-release  # Build release Android APK (fdroid + play flavors)
+just android-apk-fast     # Debug APK skipping the native rebuild (use after a fresh cargo build)
 just android-bindings     # Regenerate UniFFI bindings
 ```
 
@@ -30,7 +31,7 @@ just android-bindings     # Regenerate UniFFI bindings
 - **Sync & Conflict**: Manual sync button with explicit progress phases, pull-on-unlock, push-after-mutation, and inline conflict resolution panel.
 - **Multi-Vault**: Owner-prefixed vault slugs, per-vault clone directories, and home switch bar.
 - **Autofill**: System autofill provider via `BaluardAutofillService` in an isolated `:autofill` process. Inline IME suggestions with dropdown menu fallback, response-level authentication with transparent `AutofillActivity` biometric unlock, save prompt on submission prefilling the create form, and per-vault URI match strategy (Domain/Host/StartsWith/Exact/Regex/Never) with scheme isolation. Domain equivalence support includes bundled Bitwarden global groups and custom user groups. App-to-web autofill matching provides candidate reversal with trust-on-first-use per-app confirmation. Quick-settings tile accessibility fill (`BaluardA11yTileService` + `BaluardAccessibilityService`) covers apps and browsers without standard autofill support.
-- **i18n**: English and Spanish translations.
+- **i18n**: English, Spanish, French, and Portuguese translations (`mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/`).
 
 ## Pending Work
 

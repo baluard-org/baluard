@@ -1,7 +1,6 @@
-# ADR 0109: baluard-msgs Implementation Constants and Activation Record
+# ADR 0109. baluard-msgs Implementation Constants and Activation Record
 
-Date: 2026-11-14
-Status: accepted
+> Status: Accepted (2026-11-14).
 Amends: [ADR 0107](0107-side-channel-message-bus.md)
 
 ## Context

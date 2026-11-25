@@ -1,7 +1,6 @@
-# ADR 0110: The Daemon Serves Vault SSH Keys Over an OpenSSH Agent Socket
+# ADR 0110. The Daemon Serves Vault SSH Keys Over an OpenSSH Agent Socket
 
-Date: 2026-11-15
-Status: accepted
+> Status: Accepted (2026-11-15).
 
 ## Context
 

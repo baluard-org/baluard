@@ -12,7 +12,7 @@ Every design decision has a numbered record in [docs/adr/](adr/). The numbering 
 | 0012-0061 | Frontend architecture, quick unlock, browser bridge, conflict panel, Android autofill, item sharing, collections, roles, and mobile surfaces |
 | 0062-0084 | Quorum and power-pack records, enrollment proofs, updater and Linux distribution, scoped agent credential access, signing keys and certificates |
 | 0085-0100 | The larger design records: sharing, family spaces, power pack, git providers, mobile apps, Android autofill and tile, browser extension, conflict panel, passkeys, YubiKey seal, hardware-backed keys, merged search, encrypted backup, legacy contact |
-| 0101 | Domain appendix: device fleet, lifecycle, terminology, tags |
+| 0101-0116 | Domain appendix; the subscription and entitlement series (0102-0104), vault empty and side channels (0105-0109), desktop UI stack, SSH agent, local folder and P2P sync transports, browser tethering, the dependency advisory backlog, and the MCP agent server |
 
 See [the ADR index](adr/index.md) for the full numbered list.
 
@@ -46,7 +46,9 @@ See [the ADR index](adr/index.md) for the full numbered list.
 | [Translations & Localization](dev/translations.md) | Guide for adding and maintaining desktop and mobile language translations |
 | [WebKitGTK Frontend Constraints](dev/webkitgtk-frontend.md) | Desktop frontend layout rules for the WebKitGTK 2.44 floor: no abspos for critical layout, logical-inset shorthand hazards, the search-bar incident record, and the pinned-engine probe rig |
 | [WebView Compatibility & CSS Floor](dev/webview-compatibility.md) | Engine support floors for WebView2, WKWebView, and WebKitGTK, why Tailwind CSS v4 is safe on all of them, and the guardrails that keep the CSS floor honest |
-| [Linux Repositories](dev/linux-repositories.md) | GPG-verified apt and dnf package repositories: user setup, key fingerprint, direct-download verification |
+| [Linux Repositories](dev/linux-repositories.md) | Signed apt, dnf, and Arch pacman package repositories: user setup, key fingerprints, direct-download verification |
+| [F-Droid Repository](dev/fdroid-repository.md) | The project F-Droid repo: setup, signing, and the per-release flow |
+| [Release Smoke Testing](dev/release-smoke-testing.md) | The VM smoke harnesses (`just e2e-windows`, `just e2e-macos`) and how to run a release through them |
 | [Release Protocol](dev/release-protocol.md) | Shipping runbook for every variant: version bump, signing keys and store credentials, build matrix (Linux/macOS/Windows/extension/Android), the release pipeline, store publishing, update channels |
 | [Google Play](dev/google-play.md) | Play Console runbook: signing and version-code rules, testing tracks, console declarations, listing kit, the subscription model, and the per-release flow |
 | [Git Provider Apps & Tokens](dev/git-provider-apps-and-tokens.md) | App registration credentials and token management for GitHub, GitLab, and Codeberg |
@@ -58,4 +60,4 @@ See [the ADR index](adr/index.md) for the full numbered list.
 | [Brand Guidelines](brand/brand-guidelines.md) | Color palette, design tokens, visual identity rules |
 | [Design Language Tokens](brand/design-language-tokens.json) | Machine-readable design tokens (single source for the CSS pipeline) |
 | [App Icons](brand/app-icons.md) | Regenerate the platform icon set from `assets/baluard-appicon.svg` via the tauri CLI |
-| [Store Kits](../../assets/store/) | Chrome Web Store and Google Play listing graphics |
+| [Store Kits](../assets/store/) | Chrome Web Store and Google Play listing graphics |

@@ -1,6 +1,6 @@
 # ADR 0083. Agents Never Hold the Vault
 
-> Status: Accepted (2026-10-30)
+> Status: Accepted (2026-10-30; amended by [ADR 0116](0116-mcp-agent-server.md), 2026-11-22: MCP ships before beta over daemon HTTP and CLI stdio, and Windows named-pipe IPC is implemented).
 
 ## Context
 

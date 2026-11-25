@@ -1,5 +1,7 @@
 # Baluard entitlement service
 
+> Retired (2026-11-25): the mobile Play build no longer calls this service. Play Billing evaluates purchases locally on device (ADR 0102), and ADR 0103 is superseded. The service stays here as an unused reference implementation; `just test-entitlements` exercises it in isolation.
+
 This Cloud Run service verifies Google Play purchase tokens with `purchases.subscriptionsv2.get`. It handles only subscription entitlement data. Vaults, master passwords, encryption keys, and Git credentials never reach it.
 
 The service uses the Cloud Run attached service account through the metadata server. It has no npm runtime dependencies and needs no service-account JSON key.

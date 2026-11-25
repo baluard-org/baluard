@@ -49,8 +49,8 @@ Never bump the Play version ahead of F-Droid for the same `versionName`: a Play 
 - Subscription product (create it only once the billing build exists on a test track): product ID `baluard_supporter_yearly`, one base plan, 1 year auto-renew at 4.99 USD, plus a 14-day free-trial offer. Google runs the trial clock; the app only checks entitlement.
 - The gated surfaces on the store build are sync, sharing, and TOTP code generation. The F-Droid APK is a separate ungated build (the flavor split carries no Google billing library, which F-Droid policy forbids). Desktop stays free.
 - Add tester emails as license testers so purchases are free during testing.
-- Production Play builds verify purchase tokens through the Cloud Run service in `services/entitlements`. Follow its README for the service-account grant, deployment, and `baluard.entitlementServiceUrl` build setting. Device-only checks remain available for local development; ADR 0103 records the server-verification and offline-cache rules.
-- Invited testers can instead install the signature-verified `app.baluard.mobile.fellowship` companion from `mobile/fellowship`. It unlocks only while installed and provides an offline fallback; Play acknowledgment and Cloud Run purchase verification continue for paid users. ADR 0104 records the trust model.
+- Play builds evaluate purchase tokens locally on device through Google Play Billing (`queryPurchasesAsync`, with no remote verification server). ADR 0103 (the optional Cloud Run verifier in `services/entitlements`) is superseded.
+- Invited testers can instead install the signature-verified `app.baluard.mobile.fellowship` companion from `mobile/fellowship`. It unlocks only while installed and provides an offline fallback; Play acknowledgment continues for paid users. Settings displays the supporter status card only when the Fellowship companion is installed (`EntitlementPhase.Fellowship`). ADR 0104 records the trust model.
 
 ### Fellowship companion distribution
 

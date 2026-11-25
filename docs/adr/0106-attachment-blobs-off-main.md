@@ -1,7 +1,6 @@
-# ADR 0106: Attachment blobs off `main` on a signed side channel
+# ADR 0106. Attachment blobs off `main` on a signed side channel
 
-Date: 2026-11-13
-Status: accepted
+> Status: Accepted (2026-11-13).
 Design: docs/designs/attachment-storage.md (two peer-review rounds folded in; libgit2 and forge capabilities settled empirically)
 
 ## Context

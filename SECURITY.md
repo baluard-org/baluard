@@ -4,7 +4,7 @@ Baluard is a local-first password manager with no server. This file describes ho
 
 ## Supported versions
 
-Security fixes land on the latest release line only. Use the newest 0.1.x release before reporting; older builds will not receive patches.
+Security fixes land on the latest release line only. Use the newest release before reporting; older builds will not receive patches.
 
 ## How to report
 

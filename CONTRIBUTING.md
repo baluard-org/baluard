@@ -7,7 +7,7 @@ Thank you for your interest in contributing!
 ```bash
 cargo install just      # Build runner
 git clone https://github.com/baluard-org/baluard.git
-cd Baluard
+cd baluard
 just                    # List all targets
 just check              # Full CI parity (fmt + clippy + test + build)
 just seed-demo          # Seed demo vaults (baluard-personal + baluard-work, password: baluard99)
@@ -59,8 +59,9 @@ bypass the master-password prompt and the recovery-phrase verification
 step. `BALUARD_DATA_DIR` is redirected into the same `TempDir` so the
 global registry never leaks into the developer's real config.
 
-CLI tests cover init, unlock, list, and add today. `lock` is deferred to
-the daemon-spawn-fixture PR (it is daemon-only by design). PRs adding a
+CLI tests cover init, unlock, list, add, lock, delete, edit, empty, folders,
+get, passkey, sync, tags, and vaults today (one `tests/<command>.rs` file per
+command, plus `tests/e2e/`). PRs adding a
 new CLI command should add at least one happy-path + one error-path test
 in the matching `tests/<command>.rs` file using the helpers in
 `tests/common/mod.rs`.
@@ -78,7 +79,7 @@ vitest `setupFiles` so it exists before any source IIFE runs.
 ### Rust
 - Edition 2024, MSRV 1.85
 - `thiserror` for library errors, `anyhow` for CLI/bin
-- Feature flags: `git-sync`, `org`, `emergency`
+- Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match` + `p2p`; opt-in: `hw-seal`, `fido2`, `ctap-client`, `e2e-hooks`, `test-cheap-kdf`, `org`, `emergency`
 - `zeroize` crate for all sensitive memory (never `write_bytes`)
 - `proptest` for property-based tests
 - Pre-1.0 WIP: no backward compatibility guarantees yet; break formats, flags, and routes freely, updating call sites together. Crypto invariants stay load-bearing.

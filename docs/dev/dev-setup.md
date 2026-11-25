@@ -98,13 +98,13 @@ All commands run from the project root. `just` reads the `justfile`.
 | `just test-release` | Tests in release mode |
 | `just test-verbose` | Tests with `--nocapture` (see println output) |
 | `just test-browser` | Run browser extension vitest tests |
-| `just e2e` | Full smoke test: init -> daemon -> unlock -> add -> get -> delete -> lock |
+| `just e2e` | Full smoke test: init -> daemon -> unlock -> add -> get -> delete -> lock. Rust `--test e2e` suites build and run through `just test-e2e`; the VM release smoke suites are `just e2e-windows` / `just e2e-macos` in [release-smoke-testing.md](release-smoke-testing.md) |
 | `just check` | CI parity: `fmt-check` + `clippy` + `audit` + `test` + `build` |
 | `just fmt` | Format all Rust code |
 | `just fmt-check` | Check formatting without modifying files |
 | `just lint` | Run clippy with `-D warnings` |
 | `just lint-fix` | Run clippy with `--fix` |
-| `just audit` | Run cargo-audit (skipped silently if not installed) |
+| `just audit` | Run cargo-audit (fails the gate when cargo-audit is missing unless `BALUARD_SKIP_AUDIT=1`) |
 | `just install-local` | Build release + copy to `~/.local/bin/` |
 | `just install` | Build release + copy to `/usr/local/bin/` (sudo) |
 | `just install-nmh-manifest <browser> <ext_id>` | Point the OS-native-messaging host manifest at the release NMH binary for `<browser>` (chromium/chrome/firefox) pinned to `<ext_id>` |
@@ -345,7 +345,7 @@ sudo apt install protobuf-compiler  # Linux
 
 ### Desktop build fails on Linux (WebKitGTK)
 
-The desktop crate needs the GTK/WebKit *development* headers (`gtk3-devel`, `webkit2gtk4.1-devel`, `libayatana-appindicator-gtk3-devel` on Fedora) — `just sysdeps` only preflights the core/git deps. If a brew `pkg-config` sits earlier in `PATH`, it shadows the system one and the GTK libs stay invisible; point the build at the system pkgconfig directory:
+The desktop crate needs the GTK/WebKit *development* headers (`gtk3-devel`, `webkit2gtk4.1-devel`, `libayatana-appindicator-gtk3-devel` on Fedora) — `just sysdeps` defaults to `scope="all"`, preflighting the core/git deps plus protoc, WebKitGTK/GTK, the appindicator, libudev, and the FIDO udev rules. If a brew `pkg-config` sits earlier in `PATH`, it shadows the system one and the GTK libs stay invisible; point the build at the system pkgconfig directory:
 
 ```bash
 export PKG_CONFIG_PATH=/usr/lib64/pkgconfig

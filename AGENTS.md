@@ -9,7 +9,7 @@ Absolute primary focuses: Security, privacy, and ease of use for non-technical u
 Platforms: Windows, Linux (deb/rpm), macOS. CLI: bash, zsh, PowerShell. Browser: Chrome + Firefox (MV3). Mobile: Android, iOS.
 
 ## STATUS
-Baluard is public beta 0.1.x, bug fixing releases. **No breaking changes.** Assume users already operate with Baluard.
+Baluard is public beta 0.9.x, bug fixing releases. **No breaking changes.** Assume users already operate with Baluard.
 * **Security can push format breaks, with a migration path.** If a security fix requires breaking a format, route, or storage layout, do it, with a migration path for existing users.
 * **DO NOT break:** Crypto and security invariants (AES-256-GCM, Argon2id, X25519/Ed25519, HPKE, zeroize-on-drop, 0600 socket, token-gating; ChaCha20-Poly1305 exception for the ADR 0114 tether channel — see the Security line).
 
@@ -21,14 +21,17 @@ baluard/
 ├── crates/
 │   ├── baluard-core/        # Core library: crypto, keys, vault, git sync, providers, imports
 │   ├── baluard-runtime/     # Shared vault-session runtime: host, state, autosync, pin, bridge, rate limiting
-│   ├── baluard-daemon/      # Background IPC daemon: Unix domain socket listener and protobuf handler
+│   ├── baluard-daemon/      # Background IPC daemon: socket listener and protobuf handler
 │   ├── baluard-cli/         # CLI client (clap): daemon-first with --direct fallback
 │   ├── baluard-nmh/         # Browser native messaging host: stdio JSON <-> daemon protobuf relay
-│   └── baluard-uniffi/      # UniFFI bindings for Kotlin Multiplatform mobile app
+│   ├── baluard-uniffi/      # UniFFI bindings for Kotlin Multiplatform mobile app
+│   ├── baluard-proto/       # Protobuf schema crate shared by daemon, CLI, NMH, and UniFFI
+│   ├── baluard-mcp/         # MCP agent server (loopback HTTP + stdio, per-read approval; ADR 0116)
+│   └── baluard-portable-launcher/ # Windows portable launcher binary
 ├── desktop/                 # Tauri v2 + SolidJS frontend
 ├── browser/                 # Browser extension (MV3, Chrome + Firefox)
 ├── mobile/                  # Kotlin Multiplatform app (Compose Multiplatform UI)
-├── services/entitlements/   # Cloud Run Google Play entitlement verification
+├── services/entitlements/   # Retired Cloud Run Play entitlement verifier (ADR 0103 superseded; unused reference implementation)
 ├── proto/                   # Protobuf schemas (compiled via prost)
 └── docs/                    # Architecture records (ADRs), developer guides, and security specifications
 ```
@@ -66,7 +69,7 @@ Linux build dependencies: `protoc`, WebKitGTK/GTK dev headers. Run `just sysdeps
 
 ## CODING STANDARDS
 * **Compatibility:** Pre-1.0 WIP (see STATUS). Backwards compatibility is not a goal yet. You can break vault format, IPC routes/payloads, CLI flags, protobuf, and config freely, but update all call sites in the same change.
-* **Rust:** Edition 2024, MSRV 1.85 (desktop app: 1.90). Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match`. Use `thiserror` for library errors, `anyhow` for CLI, and `proptest` for property-based tests.
+* **Rust:** Edition 2024, MSRV 1.85 (desktop app: 1.90). Feature flags: `full` (default) = `git-sync` + `passkey-ceremony` + `uri-match` + `p2p`. Use `thiserror` for library errors, `anyhow` for CLI, and `proptest` for property-based tests.
 * **JS/TS:** ES modules, SolidJS, Vite, Tailwind. Use `crypto.getRandomValues` only (never `Math.random`).
 * **Protobuf:** proto3, `baluard.vault` package. Compiled via prost in daemon and CLI.
 * **Security:** AES-256-GCM only. Argon2id for KDF. X25519/Ed25519 for device keys. HPKE for key wrapping. No secrets in code. Socket permissions 0600. Zeroize on drop for key material, TOTP secrets, and passkey private keys. Recorded exception: ChaCha20-Poly1305 inside Noise (`Noise_NK_25519_ChaChaPoly_BLAKE2s` via snow) for the ADR 0114 tether channel — Noise's native transport cipher; the AES-256-GCM invariant does not apply to that channel.
@@ -119,6 +122,6 @@ Env vars (set automatically by `just desktop-debug`):
 * **Hide the machinery:** The user sees entries, folders, and a sync status dot. Never expose Git terms, crypto terms, epochs, tokens, sockets, or raw error codes in user-facing UI.
 * **Ease of use is the evaluation axis:** A change breaks UX if it removes working functionality, adds friction, or confuses a non-technical user.
 * **Plain language:** Use "entry" instead of "cipher". Hide UUIDs. Collections are "Shared folders" in UI.
-* **No vault server backend:** Desktop and mobile apps work standalone and offline. Git sync is optional. Cloud Run verifies Play subscriptions only and never receives vault data.
+* **No vault server backend:** Desktop and mobile apps work standalone and offline. Git sync is optional. The mobile Play build evaluates purchases locally through Google Play Billing; no entitlement server exists and none ever receives vault data.
 * **The app prints commands, the user runs them:** When a system component is missing (e.g. Secret Service on Linux), display the install command for the user to run. Never execute privileged commands directly or prompt for sudo.
-* **i18n:** All user-facing strings must use `t()` translation keys with parity maintained across `en.json`, `es.json`, and `pt.json`.
+* **i18n:** All user-facing strings must use `t()` translation keys with parity maintained across `en.json`, `es.json`, `fr.json`, and `pt.json`.

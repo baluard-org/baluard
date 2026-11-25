@@ -1,7 +1,6 @@
-# ADR 0105: `baluard vault empty` and the squash history rewrite
+# ADR 0105. `baluard vault empty` and the squash history rewrite
 
-Date: 2026-11-10
-Status: accepted
+> Status: Accepted (2026-11-10).
 Design: docs/designs/vault-empty.md (readiness report: vault-empty.egm-report.md; peer review folded in)
 
 ## Context

@@ -72,4 +72,4 @@ Biometric authentication is mandatory for a cold autofill session. Separate proc
 - `crates/baluard-core/src/types.rs`
 - `crates/baluard-runtime/src/state.rs`
 - `crates/baluard-uniffi/src/lib.rs`
-- `mobile/androidApp/src/androidMain/kotlin/xyz/actitud/baluard/autofill/`
+- `mobile/androidApp/src/androidMain/kotlin/app/baluard/mobile/autofill/`

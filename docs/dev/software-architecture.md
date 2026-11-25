@@ -9,8 +9,8 @@
 
 ```text
 baluard/
-├── proto/                      # Shared Protobuf Schemas (vault.proto, space.proto, auth.proto)
-│                               # Compiled into Rust via prost-build in daemon + CLI
+├── proto/                      # Shared Protobuf Schemas (vault.proto, auth.proto)
+│                               # Compiled into Rust via prost-build in daemon + CLI; schemas also shipped as the baluard-proto crate
 ├── crates/                     # Rust Workspace
 │   ├── baluard-core/             # Core Engine: crypto, keys, vault, padding, git sync, providers, bridge
 │   │   └── src/
@@ -53,11 +53,14 @@ baluard/
 │   ├── baluard-daemon/           # Background IPC Daemon (thin shell over baluard-runtime)
 │   │   └── src/
 │   │       ├── main.rs         # tokio Unix socket listener, auto-lock walker, SIGINT/SIGTERM, 0600 perms
-│   │       ├── handler.rs      # Protobuf routing, ~150 actions across the vault/vaults/collections/members/contacts/space/sync/bridge/provider/passkey families, token-gated, SO_PEERCRED, bridge allowlist
+│   │       ├── handler.rs      # Protobuf routing, ~245 actions across the vault/vaults/collections/members/contacts/space/sync/bridge/provider/passkey families, token-gated, SO_PEERCRED, bridge allowlist
 │   │       ├── socket_path.rs  # Platform socket path resolution
 │   │       └── lib.rs          # Test surface
 │   ├── baluard-nmh/              # Native Messaging Host (browser extension bridge): stdio-JSON <-> varint-protobuf
-│   └── baluard-uniffi/           # UniFFI bindings consumed by Kotlin Multiplatform mobile app
+│   ├── baluard-uniffi/           # UniFFI bindings consumed by Kotlin Multiplatform mobile app
+│   ├── baluard-proto/            # Protobuf schema crate shared by daemon, CLI, NMH, and UniFFI
+│   ├── baluard-mcp/              # MCP agent server (loopback HTTP + stdio, per-read approval; ADR 0116)
+│   └── baluard-portable-launcher/ # Windows portable launcher binary
 ├── desktop/                    # Tauri v2 Desktop App (SolidJS/Tailwind, full CRUD, 8 cipher types)
 │   ├── src-tauri/              # Rust backend: daemon sidecar + baluard-nmh sidecar + tray + proto codegen
 │   ├── src/                    # SolidJS webview: login, vault, cipher CRUD, settings
@@ -65,7 +68,7 @@ baluard/
 │   │   ├── context/            # AuthContext, VaultContext, VaultSwitcherContext, AutoSyncContext, ConflictResolutionContext, themeSignal, toastSignal
 │   │   ├── lib/                # daemon.js, payload.js, cipherSchema.js, filters.js, utils.js, helpers.js, biometry.js, clipboard.js, vaultPrefetch.js, vaultTimeout.js, slug.js, cloneFlow.js, providerConnect.js, disableAutofill.js, eff-words.js, wordlist-{en,es}.js
 │   │   ├── __tests__/          # vitest tests (payload, utils, filters, cipherSchema, cloneFlow, conflictResolution, ConflictResolutionPanel, conflictSwitchClear)
-│   │   └── i18n/locales/       # en.json, es.json, pt.json (all user-facing strings)
+│   │   └── i18n/locales/       # en.json, es.json, fr.json, pt.json (all user-facing strings)
 │   └── package.json            # SolidJS, Tailwind v4, Tauri API v2
 ├── browser/                    # MV3 Browser Extensions (Chromium + Firefox, shared codebase)
 │   ├── shared/                 # 95% of code: SolidJS popup, service worker, content script, nmh wrapper, autofill, pair
@@ -74,7 +77,7 @@ baluard/
 ├── mobile/                     # Kotlin Multiplatform Mobile App (Compose UI + UniFFI integration)
 │   ├── shared/                 # Common Compose UI, ViewModels, repository, and platform implementations
 │   └── androidApp/             # Android host application (single-Activity, BaluardAutofillService, BaluardAccessibilityService, BaluardA11yTileService, AutofillActivity, adaptive icons, R8 rules)
-├── services/entitlements/      # Stateless Cloud Run Google Play subscription verification; no vault data
+├── services/entitlements/      # Unused Cloud Run Play subscription verifier (retired from mobile Play builds)
 └── docs/                       # Numbered ADRs, security analysis, development guides, and brand assets
 ```
 
@@ -148,10 +151,10 @@ For front-end contributors, both the Tauri Desktop UI and the KMP Mobile UI will
 |----------|-----------|--------------|---------|---------------------|
 | **Master Password** | Plaintext user input | Never stored | Derived into Master KEK | Ephemeral in RAM; discarded after KDF |
 | **Master KEK** | Argon2id, 256-bit | Process memory (`zeroize`-protected) | Decrypts escrowed Device Private Key | Purged on vault locking or daemon exit |
-| **Device Private Key** | X25519, 256-bit | Decrypted: `zeroize` buffer. Escrowed: `meta/device-privkey.json` (or OS keyring) | Decrypts Space Group Key from access list | Permanent; wrapped with Master Password in repo |
-| **Space Group Key** | AES-256-GCM | Decrypted: `zeroize` buffer. Wrapped: `meta/access_list.json` | Encrypts entries and lookup index (`index.enc`) | Rotated on member offboarding or manual rekey |
+| **Device Private Key** | X25519, 256-bit | Decrypted: `zeroize` buffer. Escrowed: `meta/device-privkey.json` (or OS keyring) | Unwraps the per-device Root Key keywrap after master-password unlock | Permanent; wrapped with Master Password in repo |
+| **Space Group Key** | AES-256-GCM | Derived: HKDF from the Root Key with epoch binding (`keys/hierarchy.rs`) | Encrypts entries and lookup index (`index.enc` shards) | Bound to an epoch; rotated by Root Key rotation |
 | **Item Keys** | 256-bit | Derived per-cipher via HKDF | Encrypts individual cipher entries | Epoch-bound; re-derived on root key rotation |
-| **Commit Signing Key** | Ed25519 | Private: Escrowed in repo. Public: Git host / Access List | Cryptographically signs Git commits | Permanent; bound to Digital Identity |
+| **Commit Signing Key** | Ed25519 | Private: Escrowed in repo. Public: exchanged at enrollment (`meta/devices.json`, `meta/members/`) | Cryptographically signs Git commits | Permanent; bound to Digital Identity |
 
 ### 4.2 Key Wrapping & Escrow Mechanics
 
@@ -164,25 +167,14 @@ To support bootstrap on new devices without manual peer-to-peer verification:
 3. The encrypted private key is committed to the Git repository as `meta/device-privkey.json` (the OS keyring is the preferred live location; this file is the synced fallback).
 4. On a new device, the user clones the repo via GitHub/GitLab OAuth, types their Master Password, decrypts the escrowed private key, and imports it to the local OS Keychain / Enclave.
 
-#### Access List Wrapping (`meta/access_list.json`)
+#### Root Key Wrapping (`meta/keywrap/<device_id>.json`)
 
-Sharing a Space relies on envelope encryption:
+Access is device-scoped envelope encryption:
 
-1. Every Space possesses a symmetric **Space Group Key** (AES-256-GCM).
-2. The `meta/access_list.json` contains a map of member public keys to their corresponding wrapped copies of the Group Key:
-   ```json
-   {
-     "members": [
-       {
-         "email": "member@example.com",
-         "device_id": "uuid-here",
-         "public_key": "X25519_PUBLIC_HEX",
-         "wrapped_group_key": "HPKE_CIPHERTEXT_HEX"
-       }
-     ]
-   }
-   ```
-3. A member opens a Space by decapsulating their `wrapped_group_key` with their local escrowed Device Private Key.
+1. Every vault holds one 512-bit **Root Key**; Space Group Keys and Item Keys derive from it with epoch binding (`keys/hierarchy.rs`).
+2. On enrollment, each device's public key wraps a copy of the Root Key (RFC 9180 HPKE) into `meta/keywrap/<device_id>.json`.
+3. Member identity and role live in `meta/members/<member_id>.json`, with per-member device bindings under `meta/members/<member_id>/devices/<device_id>.json`.
+4. A member opens a vault by deriving the KEK from the master password, unwrapping their device private key, and decapsulating their Root Key keywrap; Space and Item keys follow by derivation.
 
 ### 4.3 Platform Keyring
 
@@ -197,24 +189,24 @@ Sharing a Space relies on envelope encryption:
 1. **Key Generation**: baluard-core generates the X25519 and Ed25519 keys for the first device.
 2. **Space Group Key**: baluard-core generates a random 256-bit AES key for the Space.
 3. **Escrow wrapping**: Master Password is run through Argon2id to yield KEK; KEK encrypts the private key into `meta/device-privkey.json` (or directly into the OS keyring when the platform supports it).
-4. **Access wrapping**: Space Group Key is wrapped with the first device's public key and written to `meta/access_list.json`.
+4. **Key wrapping**: the Root Key is wrapped with the first device's public key and written to `meta/keywrap/<device_id>.json`.
 5. **Lookup index**: An empty lookup table is created, AES-GCM encrypted with the Space Group Key, and written to `index.enc`.
 6. **Git Initialization**: git2-rs initializes the repository, commits all files (including an initial dummy entry), and pushes to the Git provider using the OAuth PAT stored in the OS Keyring.
 
 #### Member Invitation & Acceptance
 
 1. **Invite**: The Space Admin enters the invitee's email. baluard-core queries the Git provider (GitHub/GitLab) for the invitee's public key.
-2. **Wrapping**: baluard-core encrypts the Space Group Key with the invitee's public key, appends the wrapped payload to `meta/access_list.json`, and pushes.
-3. **Accept**: The invitee logs in via OAuth, clones the Space, inputs their Master Password to fetch their device identity, decapsulates the Space Group Key from `access_list.json`, and unlocks the local database.
+2. **Wrapping**: baluard-core wraps the Root Key for the invitee's device and ships the keywrap through the sync cycle; the member row lands in `meta/members/`.
+3. **Accept**: The invitee logs in via OAuth, clones the vault, inputs their Master Password to fetch their device identity, decapsulates their Root Key keywrap from `meta/keywrap/`, and unlocks the local database.
 
 #### Offboarding Rekey Flow
 
 When a member is removed from a Space:
 
-1. **Group Key Rotation**: baluard-core generates a brand new 256-bit Space Group Key.
-2. **Re-encryption**: baluard-core decrypts all entries under `entries/` using the old Group Key, pads them to their respective uniform buckets (5KB, 30KB, 100KB, 250KB, 2MB), and re-encrypts them using the new Group Key.
-3. **Access List Update**: baluard-core removes the revoked member's public key and entry from `meta/access_list.json`. It re-encrypts the new Group Key for all remaining members using their public keys.
-4. **Index Rebuild**: Re-encrypts the lookup index `index.enc` with the new Group Key.
+1. **Root Key Rotation**: baluard-core commits a `RekeyTransaction` (old epoch -> new epoch) carrying the new Root Key HPKE-wrapped for every remaining device (`keys/rotation.rs`); quorum barrier signatures coordinate the two-phase commit across devices.
+2. **Keywrap Update**: the revoked member's devices are struck from the registry and their `meta/keywrap/<device_id>.json` wraps are deleted; their member row and device bindings are removed from `meta/members/`.
+3. **Epoch Cutover**: new writes use the new epoch; old-epoch entries stay readable during the ROTATING window (dual-read), then old key material is purged on each device. Committed history still carries old-epoch ciphertext, so full scrubbing of a revoked member's read of past history requires the squash history rewrite (ADR 0105).
+4. **Index Rebuild**: the lookup index shards (`index.enc`, `index.enc.s<k>`) are rebuilt and stamped with the new `key_epoch`; ciphers still on the old epoch are excluded from the index until they are re-keyed.
 5. **Git Push**: baluard-core commits the re-encrypted entries and the modified metadata files, then pushes the state to the Git provider. The revoked user's local instance is completely locked out of updates, and their local clone contains outdated, unreadable entries.
 
 ---

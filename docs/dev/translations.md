@@ -30,12 +30,12 @@ The key parity test `desktop/src/__tests__/i18n-parity.test.js` flattens all loc
 
 ### Mobile Architecture
 
-Mobile translations live in `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/`.
-The source of truth map is `EN` in `StringsEn.kt`. Additional languages define parallel maps (`ES` in `StringsEs.kt`, `PT` in `StringsPt.kt`).
+Mobile translations live in `mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/`.
+The source of truth map is `EN` in `StringsEn.kt`. Additional languages define parallel maps (`ES` in `StringsEs.kt`, `FR` in `StringsFr.kt`, `PT` in `StringsPt.kt`).
 The `I18n` singleton in `I18n.kt` tracks the active language as Compose mutable state so UI components recompose on language change.
 The `t(key, vararg args)` function replaces `{0}`, `{1}`, and sequential positional tokens with passed arguments.
 System-level strings for Android services (such as accessibility autofill and quick settings tiles) live in `mobile/androidApp/src/main/res/values-<lang>/strings.xml`.
-The test `mobile/shared/src/commonTest/kotlin/xyz/actitud/baluard/i18n/I18nParityTest.kt` verifies that all dictionary maps contain the exact same keys as `EN`.
+The test `mobile/shared/src/commonTest/kotlin/app/baluard/mobile/i18n/I18nParityTest.kt` verifies that all dictionary maps contain the exact same keys as `EN`.
 
 ## Adding a Language to Desktop
 
@@ -58,15 +58,15 @@ Follow these steps to add a new language to the desktop application:
 
 Follow these steps to add a new language to the mobile application:
 
-1. Create `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/Strings<Lang>.kt`.
+1. Create `mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/Strings<Lang>.kt`.
 2. Define `internal val <LANG>: Map<String, String> = mapOf(...)` matching all keys in `StringsEn.kt`.
 3. Translate all string values. Keep all positional placeholders such as `{0}` and `{1}` intact.
-4. Register the new dictionary in `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/I18n.kt`:
+4. Register the new dictionary in `mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/I18n.kt`:
    - Add `"<lang>" to <LANG>` to the private `DICTS` map.
    - Update documentation comments on `language` code examples.
 5. Create Android system string resources in `mobile/androidApp/src/main/res/values-<lang>/strings.xml`:
    - Translate `accessibility_service_description`, `a11y_service_label`, and `a11y_tile_label`.
-6. Add parity test coverage to `mobile/shared/src/commonTest/kotlin/xyz/actitud/baluard/i18n/I18nParityTest.kt`:
+6. Add parity test coverage to `mobile/shared/src/commonTest/kotlin/app/baluard/mobile/i18n/I18nParityTest.kt`:
    - Add a test verifying `EN.keys - <LANG>.keys` and `<LANG>.keys - EN.keys` are empty.
 7. Run tests with `./gradlew testDebugUnitTest` inside `mobile/`.
 
@@ -89,7 +89,7 @@ Before opening a pull request for a new translation, run the following checks:
 
 - [ ] All keys in `desktop/src/i18n/locales/en.json` exist in `desktop/src/i18n/locales/<lang>.json`.
 - [ ] Desktop test passes: `cd desktop && npm test`.
-- [ ] All keys in `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/i18n/StringsEn.kt` exist in `Strings<Lang>.kt`.
+- [ ] All keys in `mobile/shared/src/commonMain/kotlin/app/baluard/mobile/i18n/StringsEn.kt` exist in `Strings<Lang>.kt`.
 - [ ] Mobile test passes: `cd mobile && ./gradlew testDebugUnitTest`.
 - [ ] Android strings file exists at `mobile/androidApp/src/main/res/values-<lang>/strings.xml`.
 - [ ] Full project check passes: `just check`.

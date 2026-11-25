@@ -169,4 +169,4 @@ Source was preferred over the plan text. Differences: the plan's phase 2 ceremon
 - `crates/baluard-runtime/src/state.rs`
 - `crates/baluard-daemon/src/handler.rs`
 - `crates/baluard-uniffi/src/lib.rs`
-- `mobile/androidApp/src/androidMain/kotlin/xyz/actitud/baluard/passkeys/`
+- `mobile/androidApp/src/androidMain/kotlin/app/baluard/mobile/passkeys/`

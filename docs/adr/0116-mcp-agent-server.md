@@ -1,6 +1,6 @@
 # ADR 0116. MCP Agent Server
 
-> Status: Proposed (2026-11-22). Design doc: [docs/designs/mcp-server.md](../designs/mcp-server.md). Implementation gates on this ADR reaching Accepted.
+> Status: Accepted (2026-11-22; implemented). Design doc: [docs/designs/mcp-server.md](../designs/mcp-server.md). Ships as `crates/baluard-mcp` with the daemon loopback HTTP endpoint, CLI stdio transport, and desktop approval UI. This ADR is the citation used by `.cargo/audit.toml` advisory ignore entries per ADR 0115.
 
 ## Context
 

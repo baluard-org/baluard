@@ -22,7 +22,7 @@ All layers will communicate through a unified serialized gateway using `HandleRe
 
 ## Consequences
 
-The gateway decouples client development from native builds in principle and removes per-route binding churn. Because the payload is untyped JSON inside a string, the schema compiler cannot check route payloads, so payload shape is enforced by the daemon handlers and by client tests. Every action string is part of the trust surface: desktop and bridge clients are restricted to allowlists (ADR 0008, ADR 0024). The Protobuf wire protocol is implemented over Unix sockets. Windows has a named-pipe path reserved but no transport yet (ADR 0008). The route table in `crates/baluard-daemon/src/handler.rs` is the authoritative list; it has grown well beyond the thirty routes recorded when this decision was made.
+The gateway decouples client development from native builds in principle and removes per-route binding churn. Because the payload is untyped JSON inside a string, the schema compiler cannot check route payloads, so payload shape is enforced by the daemon handlers and by client tests. Every action string is part of the trust surface: desktop and bridge clients are restricted to allowlists (ADR 0008, ADR 0024). The Protobuf wire protocol is implemented over Unix sockets, and Windows now serves the same gateway over a named pipe with a per-user DACL (ADR 0008). Protocol types live in the `baluard-proto` crate (ADR 0114). The route table in `crates/baluard-daemon/src/handler.rs` is the authoritative list; it has grown well beyond the thirty routes recorded when this decision was made.
 
 ## References
 

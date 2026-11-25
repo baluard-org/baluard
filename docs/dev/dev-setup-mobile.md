@@ -1,7 +1,7 @@
 # Mobile dev setup (macOS and Linux host build)
 
 Proven end-to-end on macOS 15 (Apple Silicon) and Linux through Rust cdylib compilation and Android APK generation.
-`just android-apk` produces a functional debug APK for all 4 Android ABIs.
+`just android-apk` produces a functional debug APK (arm64-v8a by default; pass `-Pbaluard.abis=arm64-v8a,x86_64,...` for more).
 
 > The earlier "Linux container proved the Rust side" note still holds; this doc
 > replaces the speculative macOS steps with the ones actually run on-host.
@@ -15,9 +15,9 @@ Proven end-to-end on macOS 15 (Apple Silicon) and Linux through Rust cdylib comp
 | JDK | **17** (Temurin) | `brew install --cask temurin@17` | **Gradle 8.10 rejects JDK 26** (the default Homebrew `openjdk`). Kotlin 2.4 / AGP 8.7 run the build on JDK 17. Set `JAVA_HOME` per [Step 6](#step-6--bootstrap-gradlew-and-build-the-apk). |
 | Android cmdline-tools | 14742923 | `brew install --cask android-commandlinetools` | Ships `sdkmanager`. SDK root: `/opt/homebrew/share/android-commandlinetools`. |
 | Android platform-tools | 37.0.1 | `brew install --cask android-platform-tools` | Ships `adb`, `fastboot`. |
-| Android SDK platform | android-35 | via `sdkmanager` (matches `compileSdk = 35`) | |
+| Android SDK platform | android-36 | via `sdkmanager` (matches `compileSdk = 36`) | |
 | Android build-tools | 35.0.0 | via `sdkmanager` | |
-| Android NDK | r27c (`27.2.12479018`) | via `sdkmanager` | No `ndkVersion` pinned in `mobile/androidApp/build.gradle.kts`, so AGP picks a default, pin via `ANDROID_NDK_HOME`. |
+| Android NDK | r27c (`27.2.12479018`) | via `sdkmanager` | Pinned as `ndkVersion = "27.2.12479018"` in `mobile/androidApp/build.gradle.kts`; `ANDROID_NDK_HOME` still helps tooling outside Gradle. |
 | Rust | 1.85+ (MSRV) via **rustup** | see [The Rust toolchain gotcha](#gotcha-1--use-rustup-not-homebrew-rust) | **Do not rely on the Homebrew `rust` formula.** |
 | Android Rust targets | `aarch64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android`, `x86_64-linux-android` | `rustup target add …` | |
 | `cargo-ndk` | 4.x | `cargo install cargo-ndk` | Builds the cdylib per ABI and ships it into `jniLibs/`. |
@@ -38,7 +38,7 @@ This puts `sdkmanager`, `adb`, etc. on `PATH` and sets the SDK root to
 `/opt/homebrew/share/android-commandlinetools`.
 
 Accept licenses and install the SDK + NDK components (versions pinned to the
-Gradle config: `compileSdk = 35`, AGP 8.7.0):
+Gradle config: `compileSdk = 36` (`mobile/androidApp/build.gradle.kts:55` and `mobile/shared/build.gradle.kts:81`), `ndkVersion = "27.2.12479018"`):
 
 ```sh
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
@@ -46,7 +46,7 @@ export ANDROID_SDK_ROOT=$ANDROID_HOME
 yes | sdkmanager --licenses >/dev/null
 sdkmanager --install \
   "platform-tools" \
-  "platforms;android-35" \
+  "platforms;android-36" \
   "build-tools;35.0.0" \
   "ndk;27.2.12479018"
 ```
@@ -279,7 +279,7 @@ cd /tmp/uniffi-bindgen-runner && cargo build --release
   <repo>/crates/baluard-uniffi/src/uniffi.toml
 ```
 
-Bindgen outputs `baluard.kt`, which `regen-bindings.sh` renames to `baluard_uniffi.kt` (the committed binding at `mobile/shared/src/commonMain/kotlin/xyz/actitud/baluard/baluard_uniffi.kt`) to keep package imports stable. Commit it.
+Bindgen outputs `baluard.kt`, which `regen-bindings.sh` renames to `baluard_uniffi.kt` (the committed binding at `mobile/shared/src/commonMain/kotlin/app/baluard/mobile/baluard_uniffi.kt`) to keep package imports stable. Commit it.
 
 > The runner uses `uniffi_bindgen::bindings::KotlinBindingGenerator`, note the
 > re-export at `bindings::`, **not** `bindings::kotlin::` (the `kotlin` submodule is
@@ -500,7 +500,7 @@ painful); create it in Xcode and add the framework link manually.
 brew install --cask android-commandlinetools android-platform-tools
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 yes | sdkmanager --licenses >/dev/null
-sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 cargo install cargo-ndk
 

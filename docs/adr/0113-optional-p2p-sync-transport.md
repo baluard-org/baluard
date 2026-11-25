@@ -1,6 +1,6 @@
 # ADR 0113. Optional P2P Sync Transport Across Desktop, Mobile, and CLI
 
-> Status: Proposed (2026-11-18).
+> Status: Accepted (2026-11-18; implemented). Ships over iroh with `p2p` in the default feature set of baluard-runtime, baluard-daemon, baluard-cli, and baluard-uniffi.
 
 ## Context
 

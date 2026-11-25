@@ -59,5 +59,5 @@ Out of scope: URL-bar scraping beyond the starter table, per-site view-ID tables
 - `docs/adr/0089-mobile-apps.md`
 - `docs/adr/0090-android-autofill.md`
 - `docs/adr/0028-android-autofill-quick-settings-accessibility-architecture.md`
-- `mobile/androidApp/src/androidMain/kotlin/xyz/actitud/baluard/autofill/`
+- `mobile/androidApp/src/androidMain/kotlin/app/baluard/mobile/autofill/`
 - `mobile/androidApp/src/main/res/xml/accessibility_service.xml`

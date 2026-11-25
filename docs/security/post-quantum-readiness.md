@@ -66,11 +66,11 @@ Per both announcements, authentication is the top priority once Q-Day nears. A f
 - **ML-KEM (FIPS 203)**: replaces/augments X25519 in Root-Key wrapping and the recovery escrow.
 - **ML-DSA (FIPS 204)**: replaces/augments Ed25519 for device identity, commit signing, and manifest checkpoints.
 - **SLH-DSA (FIPS 205)**: optional conservative hash-based fallback for the highest-value long-lived keys (signatures are large; see Size Impact).
-- **RFC 9180 HPKE**: first-class migration target. The bespoke ECIES in `hpke_wrap.rs` should be retired in favour of the `hpke` crate that is **already declared** in the manifest (see Rust crate gate below), before layering ML-KEM on top.
+- **RFC 9180 HPKE**: done. `hpke_wrap.rs` seals through the `hpke` crate (see G2); the remaining step is the hybrid ML-KEM layering below.
 
 ### Recommended sequencing (auth-first, matching the announcements)
 1. **Hybrid ML-DSA + Ed25519 device identity.** Sign with both during a transition epoch; verify either. (Note the API/git-object rework this requires in G1.)
-2. **Replace bespoke ECIES with RFC 9180 HPKE** (classical X25519 only) using the already-declared `hpke` crate, a standalone prerequisite that is unblocked today.
+2. **Replace bespoke ECIES with RFC 9180 HPKE** (classical X25519 only) using the `hpke` crate — completed 2026-10-25; the remaining gate is a PQ-hybrid HPKE.
 3. **Hybrid X25519 + ML-KEM-768 HPKE** for per-device Root-Key wrapping.
 4. **Re-escrow the recovery artifact under a hybrid PQ KEM (G3).** This is net-new work: there is currently no path to rotate the recovery X25519 key or re-wrap under a new recovery artifact without re-creating the vault (`crates/baluard-core/src/vault/handle.rs:2334-2379` always re-uses the stored static pubkey).
 5. **Disable classical-only** to stop downgrade attacks. Unlike Cloudflare/HTTPS, Baluard owns both endpoints of its protocols (no federation, no legacy client negotiation), so dropping classical-only is actually feasible here.
@@ -83,7 +83,7 @@ Migration scope is small; **library maturity is the constraint.** Verify before 
 - PQ HPKE support, or compose ML-KEM into the HPKE path manually.
 - Constant-time / side-channel posture for the chosen crate.
 
-Note: a **classical** RFC 9180 `hpke` crate is **already pinned** (`Cargo.toml:25`, `crates/baluard-core/Cargo.toml:18`) but is not currently imported anywhere in the codebase. Step 2 of the sequencing above is therefore unblocked today; the remaining gate is a PQ-hybrid HPKE that does not yet exist in that crate.
+Note: the **classical** RFC 9180 `hpke` crate (`Cargo.toml:25`, `crates/baluard-core/Cargo.toml:18`) is imported and used by `hpke_wrap.rs` since the 2026-10-25 migration. The open item is a PQ-hybrid HPKE, which that crate does not yet provide.
 
 If no audited FIPS-conformant crate exists at implementation time, block G1/G2 on it rather than shipping an unaudited lattice implementation.
 
@@ -124,8 +124,8 @@ These touch cryptography but carry **no** asymmetric/Shor-vulnerable primitive, 
 |---|---|---|
 | CRQC forges device identity | Ed25519 signatures | Full impersonation (G1) |
 | CRQC forges git commits / manifest | Ed25519 commit signing + checkpoints (application-layer via git2 callbacks) | Forged history accepted by fresh devices (G1) |
-| CRQC unwinds per-device Root-Key wrap | Bespoke X25519 ECIES (`hpke_wrap.rs`), not RFC 9180 HPKE | Root Key recoverable from harvested keywrap (G2) |
-| CRQC unwinds recovery escrow | Static X25519 ECIES; recovery pubkey stored in plaintext in `meta/recovery.json` | **Permanent full-vault compromise**: breaking one never-rotating X25519 key unlocks every epoch's Root Key (G3) |
+| CRQC unwinds per-device Root-Key wrap | RFC 9180 HPKE (Base mode, DHKEM(X25519, HKDF-SHA256) + AES-256-GCM via the `hpke` crate); the classical X25519 DH remains the Shor target | Root Key recoverable from harvested keywrap (G2); closed only by the hybrid ML-KEM step |
+| CRQC unwinds recovery escrow | Static X25519 recipient key under RFC 9180 HPKE; recovery pubkey stored in plaintext in `meta/recovery.json` | **Permanent full-vault compromise**: breaking one never-rotating X25519 key unlocks every epoch's Root Key (G3) |
 | CRQC forges passkey assertions | ES256 (P-256) ceremony creds via passkey-rs; imported creds may be Ed25519 | Passkey impersonation (G4, upstream-tracked) |
 | HNDL on bulk vault data | AES-256-GCM at rest | None (128-bit post-Grover) |
 | HNDL on recovery phrase derivation | BIP-39 → 64-byte seed (symmetric) | None on the derivation itself; the X25519 escrow it feeds is exposed (G3) |
@@ -133,9 +133,9 @@ These touch cryptography but carry **no** asymmetric/Shor-vulnerable primitive, 
 
 ## Verification status
 
-**Source-verified on 2026-06-17** against the codebase (initially drafted from `AGENTS.md`; corrected after a peer review caught two factual errors in the key-escrow layer). Confirmed against source:
+**Source-verified on 2026-06-17** against the codebase (initially drafted from `AGENTS.md`; corrected after a peer review caught two factual errors in the key-escrow layer). Re-verified 2026-11-25 after the HPKE migration landed (the 2026-10-25 note above superseded the stale bespoke-ECIES claims that remained in the threat table and this section until now). Confirmed against source:
 
-- `crates/baluard-core/src/crypto/`: AES-256-GCM AEAD, Argon2id KDF, HKDF-SHA256, and the **bespoke X25519 ECIES** key wrap in `hpke_wrap.rs` (which explicitly disclaims RFC 9180, lines 22-25). The declared `hpke = "0.12"` dependency is **not imported** anywhere.
+- `crates/baluard-core/src/crypto/`: AES-256-GCM AEAD, Argon2id KDF, HKDF-SHA256, and the RFC 9180 HPKE key wrap in `hpke_wrap.rs` (`hpke` crate, single-shot Base mode, DHKEM(X25519, HKDF-SHA256) + AES-256-GCM; see G2). The bespoke ECIES this section originally described is retired.
 - `crates/baluard-core/src/keys/`: `RootKey([u8;64])`, `SpaceGroupKey([u8;32])`, `ItemKey([u8;32])`; KEK feeds Session/Sync keys only (`kdf.rs:13-16`); the Root Key is what is wrapped per-device (`rotation.rs:60-73`).
 - `crates/baluard-core/src/crypto/webauthn/`: ES256/P-256 ceremony (`types.rs:1296`); stored `PasskeyData.key_algorithm` permits `"EDDSA"` (Ed25519) on the import path (`types.rs:511-513`).
 - `crates/baluard-core/src/device_manager.rs`: device identity keys minted/verified via Ed25519 (e.g. `:849`); recovery-via-phrase HPKE-unwraps the Root Key with a static X25519 key (`:1250-1292`).
@@ -151,7 +151,7 @@ These touch cryptography but carry **no** asymmetric/Shor-vulnerable primitive, 
 - Threat model: `docs/security/threat-model.md`
 - Passkey plan (ES256 / passkey-rs 0.5.x): `docs/adr/0095-passkey-support.md`
 - Device lifecycle and rotation: `crates/baluard-core/src/device_manager.rs`, `crates/baluard-core/src/keys/rotation.rs`
-- Root-Key wrapping (bespoke ECIES): `crates/baluard-core/src/crypto/hpke_wrap.rs`
+- Root-Key wrapping (RFC 9180 HPKE): `crates/baluard-core/src/crypto/hpke_wrap.rs`
 - Recovery escrow (creation + re-wrap): `crates/baluard-core/src/vault/creation.rs`, `crates/baluard-core/src/vault/handle.rs`
 - Signed commits: `crates/baluard-core/src/sync/commit.rs`
 - Crypto primitives: `crates/baluard-core/src/crypto/`
