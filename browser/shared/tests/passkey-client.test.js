@@ -156,7 +156,7 @@ describe("create flow", () => {
     expect(pushed[0].sessionId).toBe("s-1");
   });
 
-  it("grants user_verified only when the RP required it", async () => {
+  it("reports presence only: never claims user_verified, even when the RP required it", async () => {
     const uvs = [];
     const send = vi.fn(async (action, payload) => {
       if (action === "passkey.list") return daemonOk([]);
@@ -173,7 +173,9 @@ describe("create flow", () => {
     payload.options.authenticatorSelection = { userVerification: "required" };
     await client.handleCreateRequest(sender, payload);
     await client.uiDecide(onlySession(client).id, { kind: "confirmRegister", new_login: { name: "RP Example" } });
-    expect(uvs).toEqual([true]);
+    // A picker pick proves presence; the daemon fail-closes UV-required
+    // ceremonies (passkey:uv-required) instead of trusting this flag.
+    expect(uvs).toEqual([false]);
   });
 
   it("maps the duplicate-credential daemon error to the excluded screen", async () => {
@@ -277,7 +279,29 @@ describe("assertion flow", () => {
     const assertPayload = P(
       send.mock.calls.find(([a]) => a === "passkey.provider_assert")[1]
     );
-    expect(assertPayload.user_verified).toBe(true);
+    expect(assertPayload.user_verified).toBe(false);
+  });
+
+  it("surfaces the uv-required refusal as a plain NotAllowedError", async () => {
+    const send = vi.fn(async (action) => {
+      if (action === "passkey.list") return daemonOk([pkRow("cred-1")]);
+      if (action === "passkey.provider_assert")
+        return Promise.reject(Object.assign(new Error("passkey:uv-required"), { code: "proto" }));
+      throw new Error("unexpected " + action);
+    });
+    const { client, pushed } = makeClient({ sendScript: send });
+    await client.handleGetRequest(sender, {
+      sessionId: "s-9",
+      contextId: "ctx-1",
+      options: { challenge: "Y2g", rpId: "rp.example", userVerification: "required" },
+      requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
+    });
+    await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-1" });
+    expect(pushed[0].data).toEqual({
+      type: "error",
+      name: "NotAllowedError",
+      message: "This site requires user verification that Baluard cannot provide",
+    });
   });
 
   it("filters candidates by allowCredentials and informs when none match", async () => {

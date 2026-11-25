@@ -8,8 +8,9 @@
 //
 // Trust rules (ADR 0095 browser extension):
 //   - origin comes from `sender` tab metadata, never from page payloads;
-//   - `user_verified` is granted ONLY when the user picked/confirmed in our
-//     own UI and the RP required it — the page cannot assert it;
+//   - `user_verified` stays false: the picker pick proves presence, not
+//     verification; the daemon fail-closes ceremonies whose RP demands UV
+//     (passkey:uv-required) instead of trusting this flag;
 //   - key material and counters never cross IPC; the daemon holds the
 //     fresh credential behind the ceremony id until store_registered;
 //   - an unreachable desktop hands the ceremony BACK to the browser
@@ -478,7 +479,7 @@ export function createPasskeyClient(send, opts = {}) {
         request_json: JSON.stringify(session.options),
         origin: session.origin,
         client_data_json_b64: clientData,
-        user_verified: session.requiresUv,
+        user_verified: false,
         vault_slug: decision.vault_slug || "",
       });
       await daemon("passkey.store_registered", {
@@ -496,6 +497,14 @@ export function createPasskeyClient(send, opts = {}) {
       }
       if (pageErrorName(c.message) === "excluded") {
         openModal(session, "excluded");
+        return;
+      }
+      if (String(c.message).includes("passkey:uv-required")) {
+        pushError(
+          session,
+          ErrName.NOT_ALLOWED,
+          "This site requires user verification that Baluard cannot provide",
+        );
         return;
       }
       pushError(session, ErrName.NOT_ALLOWED, "Baluard could not save the passkey");
@@ -559,7 +568,7 @@ export function createPasskeyClient(send, opts = {}) {
     return { accepted: true };
   }
 
-  async function runAssertion(session, row, uv) {
+  async function runAssertion(session, row) {
     try {
       const clientData = buildClientData("webauthn.get", session.options.challenge, session.origin);
       const assertion = await daemon("passkey.provider_assert", {
@@ -567,7 +576,7 @@ export function createPasskeyClient(send, opts = {}) {
         origin: session.origin,
         credential_id: row.credential_id,
         client_data_json_b64: clientData,
-        user_verified: uv,
+        user_verified: false,
         vault_slug: row.vault_slug || "",
       });
       // Counter persistence is advisory: synced passkeys carry counter 0
@@ -586,9 +595,15 @@ export function createPasskeyClient(send, opts = {}) {
       const c = e && e.code ? e : classify(e);
       if (c.code === "locked") {
         session.pendingRow = row;
-        session.pendingUv = uv;
         openModal(session, "locked");
         return false;
+      }
+      if (String(c.message).includes("passkey:uv-required")) {
+        return pushError(
+          session,
+          ErrName.NOT_ALLOWED,
+          "This site requires user verification that Baluard cannot provide",
+        );
       }
       return pushError(session, pageErrorName(c.message), "Baluard could not complete the sign-in");
     }
@@ -646,12 +661,12 @@ export function createPasskeyClient(send, opts = {}) {
       trail("pick: unknown credential");
       return { error: "unknown credential" };
     }
-    trail(`pick: session ok, asserting uv=${session.requiresUv}`);
+    trail("pick: session ok, asserting (presence only)");
     session.decided = "inline";
     // Decide-point persist: a pick in flight must not resurrect as an
     // undecided parked session if the SW dies mid-assertion.
     persistParked();
-    const pushed = await runAssertion(session, row, session.requiresUv);
+    const pushed = await runAssertion(session, row);
     trail(`pick: done pushed=${pushed !== false}`);
     // Report the outcome on a second channel: the runtime-port push can
     // silently die (stale port after an SW restart), and the pick side has
@@ -755,11 +770,10 @@ export function createPasskeyClient(send, opts = {}) {
         }
         if (s.pendingRow) {
           const row = s.pendingRow;
-          const uv = s.pendingUv;
           s.pendingRow = null;
           s.uiKind = undefined;
           closeSessionWindow(s);
-          await runAssertion(s, row, uv);
+          await runAssertion(s, row);
           return { ok: true };
         }
         const rows = rowsForRequest(await listPasskeys(s.rpId), s.options).map(rowView);
@@ -784,7 +798,7 @@ export function createPasskeyClient(send, opts = {}) {
       const row = (s.rows || []).find((r) => r.credential_id === decision.credential_id);
       if (!row) return { error: "unknown credential" };
       closeSessionWindow(s);
-      await runAssertion(s, row, s.requiresUv);
+      await runAssertion(s, row);
       return { ok: true };
     }
     if (kind === "dismiss") {
