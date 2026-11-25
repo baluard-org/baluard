@@ -6,6 +6,13 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.9.1 - 2026-11-25
+
+- Desktop: the "Check for Updates..." menu action now works on every screen, including the lock and login screens. Previously it only responded inside the vault.
+- Desktop: a manual update check that finds nothing new now shows a toast instead of staying silent.
+- Desktop: agent activity cards show timestamps.
+- Android: purchases are verified directly on device with Google Play. The supporter status in Settings now appears only when the Fellowship companion app is installed.
+
 ## 0.9.0 - 2026-11-24
 
 - All apps: sharing settings are regrouped into "Shared Vaults" and "Direct sharing", with contacts and outbox available on mobile too.
