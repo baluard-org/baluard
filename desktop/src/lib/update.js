@@ -32,6 +32,10 @@ export function listenUpdateProgress(cb) {
   return listen("updater://progress", (e) => cb(e.payload));
 }
 
+export function listenMenuCheckUpdates(cb) {
+  return listen("menu:check-updates", () => cb());
+}
+
 export function autoChecksEnabled(store = window.localStorage) {
   return store.getItem(OPT_OUT_KEY) !== "off";
 }

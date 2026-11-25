@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   check: vi.fn(),
   install: vi.fn(),
   listen: vi.fn(async () => () => {}),
+  listenMenu: vi.fn(async () => () => {}),
   toastSuccess: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("../lib/update.js", () => ({
   updaterCheck: mocks.check,
   updaterInstall: mocks.install,
   listenUpdateProgress: mocks.listen,
+  listenMenuCheckUpdates: mocks.listenMenu,
   noteCheckNow: vi.fn(),
   backgroundCheckDue: vi.fn(() => false),
   startupDelayMs: vi.fn(() => 0),
@@ -118,5 +120,21 @@ describe("UpdateContext", () => {
     await u.check({ manual: true });
     expect(u.available()?.version).toBe("0.1.3");
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("menu:check-updates triggers a manual check and toasts when up to date", async () => {
+    let menuHandler;
+    mocks.listenMenu.mockImplementationOnce(async (cb) => {
+      menuHandler = cb;
+      return () => {};
+    });
+    mocks.check.mockResolvedValue(null);
+    await mountWithUpdater();
+
+    expect(menuHandler).toBeTypeOf("function");
+    menuHandler();
+    await vi.waitFor(() => {
+      expect(mocks.toastSuccess).toHaveBeenCalledWith("You're up to date.");
+    });
   });
 });

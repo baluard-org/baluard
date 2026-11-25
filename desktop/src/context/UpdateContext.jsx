@@ -13,6 +13,7 @@ import {
   updaterCheck,
   updaterInstall,
   listenUpdateProgress,
+  listenMenuCheckUpdates,
   noteCheckNow,
   backgroundCheckDue,
   startupDelayMs,
@@ -96,6 +97,7 @@ export function UpdateProvider(props) {
   onSettled(() => {
     let disposed = false;
     let unlisten;
+    let unlistenMenu;
     listenUpdateProgress((p) => {
       if (p && typeof p.downloaded === "number") {
         setProgress({ received: p.downloaded, total: p.total ?? 0 });
@@ -103,12 +105,14 @@ export function UpdateProvider(props) {
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;
-    });
+    }).catch(() => {});
 
-    const handleMenuCheck = () => {
+    listenMenuCheckUpdates(() => {
       void check({ manual: true });
-    };
-    window.addEventListener("baluard:check-updates", handleMenuCheck);
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenMenu = fn;
+    }).catch(() => {});
 
     const first = setTimeout(() => {
       if (backgroundCheckDue()) check({ manual: false });
@@ -128,7 +132,7 @@ export function UpdateProvider(props) {
     return () => {
       disposed = true;
       unlisten?.();
-      window.removeEventListener("baluard:check-updates", handleMenuCheck);
+      unlistenMenu?.();
       clearTimeout(first);
       clearInterval(timer);
     };

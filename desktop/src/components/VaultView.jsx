@@ -122,7 +122,7 @@ export default function VaultView() {
     return () => document.removeEventListener("click", handler);
   });
 
-  // Native macOS menu items: Cmd+, and Check for Updates...
+  // Native macOS menu items: Cmd+, and Sync Vault
   onSettled(() => {
     const unlisteners = [];
     let disposed = false;
@@ -130,14 +130,6 @@ export default function VaultView() {
       if (disposed) return;
       listen("menu:open-settings", () => {
         vault.setShowSettingsModal(true);
-      }).then((fn) => {
-        if (disposed) fn();
-        else unlisteners.push(fn);
-      });
-      listen("menu:check-updates", () => {
-        // Background check only: the banner reports the result, the current
-        // view stays put (no settings modal).
-        window.dispatchEvent(new CustomEvent("baluard:check-updates"));
       }).then((fn) => {
         if (disposed) fn();
         else unlisteners.push(fn);
