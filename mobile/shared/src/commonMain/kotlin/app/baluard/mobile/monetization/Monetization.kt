@@ -189,7 +189,7 @@ class EntitlementGate(private val clock: () -> Long) {
     fun current(): EffectiveEntitlement = effectiveEntitlement(cache.load(), clock())
 
     fun shouldShowSupporterStatus(entitlement: EffectiveEntitlement): Boolean =
-        store.isPaidStore && entitlement.phase == EntitlementPhase.Unlocked
+        entitlement.phase == EntitlementPhase.Fellowship
 
     suspend fun refresh(): EffectiveEntitlement = mutex.withLock {
         // Query first, load after: the persisted cache must reflect a purchase

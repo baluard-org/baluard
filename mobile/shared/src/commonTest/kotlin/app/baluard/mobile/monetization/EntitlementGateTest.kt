@@ -40,24 +40,21 @@ private class CountingCache(initial: CachedEntitlement?) : EntitlementCache {
 class EntitlementGateTest {
 
     @Test
-    fun supporter_status_requires_an_active_purchase_from_a_paid_store() = runTest {
-        val gate = EntitlementGate { NOW }
-        gate.initialize(
+    fun supporter_status_is_hidden_for_purchased_and_free_unlocked_states() = runTest {
+        val paidGate = EntitlementGate { NOW }
+        paidGate.initialize(
             FakeStore(StoreQuery.Purchased(willRenew = true), isPaidStore = true),
             MemoryEntitlementCache(),
         )
-        assertFalse(gate.shouldShowSupporterStatus(gate.current()))
-        gate.refresh()
-        assertTrue(gate.shouldShowSupporterStatus(gate.current()))
-    }
+        assertFalse(paidGate.shouldShowSupporterStatus(paidGate.current()))
+        paidGate.refresh()
+        assertFalse(paidGate.shouldShowSupporterStatus(paidGate.current()))
 
-    @Test
-    fun supporter_status_stays_hidden_for_a_free_unlocked_store() = runTest {
-        val gate = EntitlementGate { NOW }
-        gate.initialize(FakeStore(StoreQuery.Purchased(willRenew = true)), MemoryEntitlementCache())
-        gate.refresh()
-        assertTrue(gate.current().syncUnlocked)
-        assertFalse(gate.shouldShowSupporterStatus(gate.current()))
+        val freeGate = EntitlementGate { NOW }
+        freeGate.initialize(FakeStore(StoreQuery.Purchased(willRenew = true)), MemoryEntitlementCache())
+        freeGate.refresh()
+        assertTrue(freeGate.current().syncUnlocked)
+        assertFalse(freeGate.shouldShowSupporterStatus(freeGate.current()))
     }
 
     @Test
@@ -105,7 +102,7 @@ class EntitlementGateTest {
     }
 
     @Test
-    fun fellowship_unlocks_without_showing_supporter_status() = runTest {
+    fun fellowship_unlocks_and_shows_supporter_status() = runTest {
         val gate = EntitlementGate { NOW }
         gate.initialize(FakeStore(StoreQuery.Fellowship, isPaidStore = true), MemoryEntitlementCache())
         val eff = gate.refresh()
@@ -113,7 +110,7 @@ class EntitlementGateTest {
         assertTrue(eff.syncUnlocked)
         assertTrue(eff.sharingUnlocked)
         assertTrue(eff.totpUnlocked)
-        assertFalse(gate.shouldShowSupporterStatus(eff))
+        assertTrue(gate.shouldShowSupporterStatus(eff))
     }
 
     @Test
