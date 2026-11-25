@@ -152,7 +152,8 @@ pub fn slug_scope_kind(action: &str) -> SlugScope {
         "passkey.provider_register"
         | "passkey.provider_assert"
         | "passkey.store_registered"
-        | "passkey.consume_assertion" => SlugScope::Passkey,
+        | "passkey.consume_assertion"
+        | "passkey.verify" => SlugScope::Passkey,
         _ => SlugScope::None,
     }
 }
@@ -203,12 +204,17 @@ pub async fn route_bridge_request<D: BridgeDispatcher>(
     // 2. Rate-cap secret reads and assertion minting. `vault.get` returns
     //    plaintext credentials and `passkey.provider_assert` mints WebAuthn
     //    signatures on demand; both are useful to a compromised browser
-    //    context, so both are capped to bound the damage.
+    //    context, so both are capped to bound the damage. `passkey.verify`
+    //    turns the bridge into a master-password oracle, so it rides the
+    //    same cap: guess-spam burns and revokes the pairing.
     //    `bridge.match` returns metadata only (no passwords), so it is NOT
     //    capped — the toolbar badge legitimately calls it on every tab
     //    activate/update, and capping it would auto-revoke the pairing
     //    under normal browsing.
-    let is_capped = matches!(req.action.as_str(), "vault.get" | "passkey.provider_assert");
+    let is_capped = matches!(
+        req.action.as_str(),
+        "vault.get" | "passkey.provider_assert" | "passkey.verify"
+    );
     if is_capped {
         let over_cap = !host.bridge().write().await.charge_read(&pairing_id);
         if over_cap {
@@ -1271,6 +1277,14 @@ mod policy_tests {
     }
 
     #[test]
+    fn passkey_verify_rides_the_passkey_slug_scope() {
+        assert!(matches!(
+            slug_scope_kind("passkey.verify"),
+            SlugScope::Passkey
+        ));
+    }
+
+    #[test]
     fn provider_register_args_unpack_flat_payload() {
         let p = serde_json::json!({
             "request_json": "{\"rp\":{}}",
@@ -1700,6 +1714,10 @@ mod mobile_dispatcher_tests {
             if matches!(
                 *action,
                 "bridge.match" | "bridge.config" | "bridge.request_unlock" | "passkey.list"
+                    // BL0036: the re-auth proof exists only at the browser
+                    // bridge trust boundary; mobile's UV grant is the
+                    // system credential manager, never a password stamp.
+                    | "passkey.verify"
             ) {
                 continue;
             }

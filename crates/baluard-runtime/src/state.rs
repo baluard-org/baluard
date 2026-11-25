@@ -79,6 +79,10 @@ fn mask_conflict(
     }
 }
 
+/// Window in which a daemon-observed master-password proof legitimizes a
+/// bridge `user_verified: true` claim. A ceremony window, not a session.
+pub const UV_VERIFICATION_TTL_SECONDS: u64 = 300;
+
 /// Shared vault state accessible from all connection handlers.
 pub struct VaultState {
     /// Path to the vault directory on disk.
@@ -110,6 +114,12 @@ pub struct VaultState {
     /// D80: peer-bound agent grants; invalidated through the same lock
     /// generation so explicit/auto lock needs no extra grant scan.
     agent_grants: crate::agents::AgentGrants,
+    /// Epoch seconds of the last daemon-observed master-password proof
+    /// (password unlock or the passkey.verify route); 0 = never. The
+    /// bridge gate honors a `user_verified: true` claim only within
+    /// UV_VERIFICATION_TTL_SECONDS of this stamp. Cleared by lock(); the
+    /// quick-unlock paths (PIN, biometric, KEK) deliberately never stamp.
+    uv_verified_at: AtomicU64,
     /// P1c: Generation at which the current token was minted (0 = none).
     session_token_generation: AtomicU64,
     /// Last activity timestamp (seconds since epoch). Updated on every IPC request.
@@ -257,6 +267,7 @@ impl VaultState {
             session_token_created: AtomicU64::new(0),
             session_token_ttl_exempt: AtomicBool::new(false),
             session_generation: AtomicU64::new(0),
+            uv_verified_at: AtomicU64::new(0),
             session_token_generation: AtomicU64::new(0),
             last_activity: AtomicU64::new(0),
             cover_timer: RwLock::new(None),
@@ -273,6 +284,18 @@ impl VaultState {
             p2p: crate::p2p::P2pManager::new(),
             autosync_allowed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
+    }
+
+    /// A lock() racing the password proof must not leave a fresh stamp on
+    /// a sealed vault, so the stamp only lands while the generation is
+    /// unchanged across the Argon2 verify.
+    pub async fn verify_master_password_for_uv(&self, password: &str) -> Result<(), String> {
+        let lock_gen = self.session_generation.load(Ordering::Relaxed);
+        self.verify_master_password(password).await?;
+        if self.session_generation.load(Ordering::Relaxed) == lock_gen {
+            self.stamp_uv_verification();
+        }
+        Ok(())
     }
 
     /// D80: current lock generation for agent-grant minting.
@@ -602,6 +625,7 @@ impl VaultState {
         self: &Arc<Self>,
         master_password: &str,
     ) -> Result<(), baluard_core::error::BaluardError> {
+        let lock_gen = self.session_generation.load(Ordering::Relaxed);
         // Quick check: already unlocked?
         {
             let guard = self.inner.read().await;
@@ -625,6 +649,9 @@ impl VaultState {
                                 )
                             }
                         })?;
+                    if self.session_generation.load(Ordering::Relaxed) == lock_gen {
+                        self.stamp_uv_verification();
+                    }
                     if self.get_session_token().await.is_none() {
                         return self.finish_unlock_already_open().await;
                     }
@@ -651,7 +678,11 @@ impl VaultState {
             ))
         })??;
 
-        self.finish_unlock(new_handle).await
+        self.finish_unlock(new_handle).await?;
+        if self.session_generation.load(Ordering::Relaxed) == lock_gen {
+            self.stamp_uv_verification();
+        }
+        Ok(())
     }
 
     /// Session-only unlock landing: swap in the handle and mint the
@@ -1081,6 +1112,7 @@ impl VaultState {
         // future code path forgets the explicit clear below (defense in
         // depth for the lock chokepoint cascade).
         self.session_generation.fetch_add(1, Ordering::Relaxed);
+        self.uv_verified_at.store(0, Ordering::Relaxed);
         // Stop cover timer + auto-sync first
         self.stop_cover_timer().await;
         self.autosync.deactivate().await;
@@ -8899,6 +8931,43 @@ impl VaultState {
         .map_err(|e| format!("verify task: {e}"))?
     }
 
+    /// Record a daemon-observed master-password proof (epoch seconds).
+    /// Called from the password unlock path and the passkey.verify route;
+    /// quick-unlock paths (PIN, biometric, KEK) deliberately never call it.
+    pub fn stamp_uv_verification(&self) {
+        self.uv_verified_at.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+    }
+
+    /// True while a stamped master-password proof is inside the TTL.
+    pub fn uv_verification_fresh(&self) -> bool {
+        let stamped = self.uv_verified_at.load(Ordering::Relaxed);
+        if stamped == 0 {
+            return false;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(stamped) < UV_VERIFICATION_TTL_SECONDS
+    }
+
+    /// Bridge gate: a browser client's `user_verified: true` is honored
+    /// only on a fresh daemon-observed proof; refusal carries the same
+    /// marker an unverified ceremony produces so the client keeps one
+    /// recovery path (re-verify, then retry with the claim set).
+    pub async fn uv_bridge_claim_allowed(&self, uv: bool) -> Result<(), String> {
+        if !uv || self.uv_verification_fresh() {
+            return Ok(());
+        }
+        Err("passkey:uv-required".to_string())
+    }
+
     /// Disable the hardware seal: downgrade to v1. Needs the chip once
     /// (resolved from the seal file's recorded backend).
     pub async fn hw_disable(&self) -> Result<String, String> {
@@ -11082,6 +11151,59 @@ mod avatar_ext_tests {
         for bad in ["x/../../../target", "..", "", "PNG", "a/b"] {
             assert!(!super::avatar_ext_allowed(bad), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod uv_verification_tests {
+    use super::VaultState;
+    use std::sync::atomic::Ordering;
+
+    fn new_state() -> (tempfile::TempDir, VaultState) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = VaultState::new(dir.path().to_path_buf());
+        (dir, state)
+    }
+
+    /// A user-verification claim with no observed proof fails closed.
+    #[tokio::test]
+    async fn uv_claim_refused_without_a_stamp() {
+        let (_dir, state) = new_state();
+        assert!(!state.uv_verification_fresh());
+        let err = state.uv_bridge_claim_allowed(true).await.unwrap_err();
+        assert!(err.contains("passkey:uv-required"), "got: {err}");
+        assert!(state.uv_bridge_claim_allowed(false).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fresh_stamp_honors_the_claim() {
+        let (_dir, state) = new_state();
+        state.stamp_uv_verification();
+        assert!(state.uv_verification_fresh());
+        assert!(state.uv_bridge_claim_allowed(true).await.is_ok());
+    }
+
+    /// The TTL edge is exclusive: a stamp exactly TTL old is stale.
+    #[tokio::test]
+    async fn stamp_at_or_past_the_ttl_refuses() {
+        let (_dir, state) = new_state();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        state
+            .uv_verified_at
+            .store(now - super::UV_VERIFICATION_TTL_SECONDS, Ordering::Relaxed);
+        assert!(!state.uv_verification_fresh());
+        assert!(state.uv_bridge_claim_allowed(true).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn lock_clears_the_stamp() {
+        let (_dir, state) = new_state();
+        state.stamp_uv_verification();
+        let _ = state.lock().await;
+        assert!(!state.uv_verification_fresh());
     }
 }
 

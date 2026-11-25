@@ -8,7 +8,7 @@ Baluard has no server, so the Bitwarden and 1Password model where the extension 
 
 ## Decision
 
-MV3 extensions talk to `baluard-daemon` through a new native messaging host, `baluard-nmh`. The extension is a paired companion. It never unlocks, never holds the master password, and never holds the vault session token. It rides the desktop's unlock state through a scoped bridge token.
+MV3 extensions talk to `baluard-daemon` through a new native messaging host, `baluard-nmh`. The extension is a paired companion. It never unlocks and never holds the vault session token. It rides the desktop's unlock state through a scoped bridge token. (Revised 2026-11-25, BL0036: the extension transits a user-typed master password once, at the UV re-auth popout, to the daemon's rate-limited `passkey.verify` proof — it never stores it; JS strings cannot be zeroized, so the daemon owns zeroization.)
 
 **Components**
 

@@ -7547,3 +7547,100 @@ async fn policy_get_reports_the_saved_switches() {
     assert_eq!(parsed["enabled"], serde_json::json!(true));
     assert_eq!(parsed["auto_approve"], serde_json::json!(false));
 }
+
+// ── Daemon-enforced UV verification (passkey.verify + the bridge gate) ──
+
+async fn uv_host(state: Arc<VaultState>, label: &str) -> Arc<VaultHost> {
+    let host = Arc::new(VaultHost::new());
+    host.insert(label.to_string(), state.clone()).await;
+    host.switch(label).await.expect("host switch");
+    host
+}
+
+fn gateway_req(action: &str, payload: serde_json::Value, token: &str) -> GatewayRequest {
+    GatewayRequest {
+        action: action.to_string(),
+        payload: payload.to_string(),
+        session_token: token.to_string(),
+        slug: String::new(),
+        ipc_version: 1,
+    }
+}
+
+/// A failed verify must leave an existing stamp untouched: the unlock
+/// proof stays the freshest observed fact.
+#[tokio::test]
+async fn passkey_verify_wrong_password_refuses_and_keeps_the_stamp() {
+    let (_dir, state) = open_unlocked("uv-wrong-password").await;
+    let host = uv_host(state.clone(), "uv-wrong-password").await;
+    let token = state.get_session_token().await.expect("session token");
+    let resp = route_host_request(
+        gateway_req(
+            "passkey.verify",
+            serde_json::json!({ "master_password": "definitely-not-it" }),
+            &token,
+        ),
+        &host,
+    )
+    .await;
+    assert!(!resp.success, "wrong password must refuse");
+    assert!(
+        resp.error_message.contains("master password incorrect"),
+        "got: {}",
+        resp.error_message
+    );
+    assert!(
+        state.uv_verification_fresh(),
+        "unlock stamp must survive a failed verify"
+    );
+}
+
+#[tokio::test]
+async fn passkey_verify_correct_password_succeeds() {
+    let (_dir, state) = open_unlocked("uv-correct-password").await;
+    let host = uv_host(state.clone(), "uv-correct-password").await;
+    let token = state.get_session_token().await.expect("session token");
+    let resp = route_host_request(
+        gateway_req(
+            "passkey.verify",
+            serde_json::json!({ "master_password": MASTER }),
+            &token,
+        ),
+        &host,
+    )
+    .await;
+    assert!(resp.success, "err: {}", resp.error_message);
+    assert!(
+        state.uv_verification_fresh(),
+        "a verified re-auth keeps the stamp fresh"
+    );
+}
+
+/// Gate happy path: with the unlock stamp fresh, a `user_verified: true`
+/// claim passes the gate and reaches ceremony logic (which fails on the
+/// missing credential, never on uv-required).
+#[tokio::test]
+async fn provider_uv_claim_with_fresh_stamp_passes_the_gate() {
+    let (_dir, state) = open_unlocked("uv-gate-happy").await;
+    let host = uv_host(state.clone(), "uv-gate-happy").await;
+    let token = state.get_session_token().await.expect("session token");
+    let resp = route_host_request(
+        gateway_req(
+            "passkey.provider_assert",
+            serde_json::json!({
+                "request_json": "{\"rp\":{}}",
+                "origin": "https://rp.example",
+                "credential_id": "no-such-credential",
+                "user_verified": true,
+            }),
+            &token,
+        ),
+        &host,
+    )
+    .await;
+    assert!(
+        !resp.error_message.contains("passkey:uv-required"),
+        "gate must pass on a fresh stamp, got: {}",
+        resp.error_message
+    );
+}

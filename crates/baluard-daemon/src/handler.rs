@@ -6301,39 +6301,98 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             Ok(json) => ok_resp(json, token_str),
             Err(e) => err_response(e),
         },
+        "passkey.verify" => {
+            if !state.is_unlocked().await {
+                req.payload.zeroize();
+                return err_response("Vault is locked. Unlock first.".to_string());
+            }
+            let pw = serde_json::from_str::<serde_json::Value>(&req.payload)
+                .ok()
+                .and_then(|v| {
+                    v.get("master_password")
+                        .and_then(|p| p.as_str().map(str::to_string))
+                })
+                .unwrap_or_default();
+            let vault_key = state.vault_path.to_string_lossy().into_owned();
+            let permit = match crate::rate_limit::global().claim_attempt(&vault_key) {
+                crate::rate_limit::ClaimResult::Allowed(p) => p,
+                crate::rate_limit::ClaimResult::Backoff(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Too many failed attempts. Wait {}s before retrying.",
+                        d.as_secs()
+                    ));
+                }
+                crate::rate_limit::ClaimResult::LockedOut(d) => {
+                    req.payload.zeroize();
+                    return err_response(format!(
+                        "Vault locked due to too many failed attempts. Wait {}s.",
+                        d.as_secs()
+                    ));
+                }
+            };
+            let result = match state.verify_master_password_for_uv(&pw).await {
+                Ok(()) => {
+                    permit.commit_success();
+                    Ok("{}".to_string())
+                }
+                Err(e) => {
+                    if e == "master password incorrect" {
+                        permit.commit_failure();
+                    } else {
+                        permit.commit_neutral();
+                    }
+                    Err(e)
+                }
+            };
+            req.payload.zeroize();
+            match result {
+                Ok(json) => ok_resp(json, token_str),
+                Err(e) => err_response(e),
+            }
+        }
+
         "passkey.provider_register" => match provider_register_args(&req.payload) {
             Ok((request_json, origin, cdj, cdh, uv)) => {
-                match state
-                    .passkey_provider_register(
-                        &request_json,
-                        &origin,
-                        cdj.as_deref(),
-                        cdh.as_deref(),
-                        uv,
-                    )
-                    .await
-                {
-                    Ok(json) => ok_resp(json, token_str),
-                    Err(e) => err_response(e),
+                if let Err(gate) = state.uv_bridge_claim_allowed(uv).await {
+                    err_response(gate)
+                } else {
+                    match state
+                        .passkey_provider_register(
+                            &request_json,
+                            &origin,
+                            cdj.as_deref(),
+                            cdh.as_deref(),
+                            uv,
+                        )
+                        .await
+                    {
+                        Ok(json) => ok_resp(json, token_str),
+                        Err(e) => err_response(e),
+                    }
                 }
             }
             Err(e) => err_response(e),
         },
         "passkey.provider_assert" => match provider_assert_args(&req.payload) {
             Ok((request_json, origin, cred, cdj, cdh, uv)) => {
-                match state
-                    .passkey_provider_assert(
-                        &request_json,
-                        &origin,
-                        &cred,
-                        cdj.as_deref(),
-                        cdh.as_deref(),
-                        uv,
-                    )
-                    .await
-                {
-                    Ok(json) => ok_resp(json, token_str),
-                    Err(e) => err_response(e),
+                if let Err(gate) = state.uv_bridge_claim_allowed(uv).await {
+                    err_response(gate)
+                } else {
+                    match state
+                        .passkey_provider_assert(
+                            &request_json,
+                            &origin,
+                            &cred,
+                            cdj.as_deref(),
+                            cdh.as_deref(),
+                            uv,
+                        )
+                        .await
+                    {
+                        Ok(json) => ok_resp(json, token_str),
+                        Err(e) => err_response(e),
+                    }
                 }
             }
             Err(e) => err_response(e),

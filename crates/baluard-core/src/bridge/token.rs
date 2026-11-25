@@ -64,6 +64,7 @@ pub const BRIDGE_ALLOWED_ACTIONS: &[&str] = &[
     "passkey.provider_assert",   // sign an assertion for ONE pinned credential
     "passkey.store_registered",  // file the pending credential into a Login
     "passkey.consume_assertion", // persist the pinned ceremony's counter
+    "passkey.verify", // re-auth: rate-limited master-password proof stamping the UV window
 ];
 
 /// Membership test against the allowlist. Used by both the daemon (authoritative)
