@@ -27,9 +27,6 @@ uuid = { workspace = true }
 # (no system OpenSSL on-device; desktop builds keep using the host lib).
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
-[build-dependencies]
-uniffi = { workspace = true, features = ["build"] }
-
 [dev-dependencies]
 uniffi_bindgen = "0.28"
 tokio = { workspace = true, features = ["macros", "rt"] }
