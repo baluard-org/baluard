@@ -282,14 +282,14 @@ describe("assertion flow", () => {
     expect(assertPayload.user_verified).toBe(false);
   });
 
-  it("surfaces the uv-required refusal as a plain NotAllowedError", async () => {
+  it("uv-required ceremony opens the re-auth view instead of dead-ending", async () => {
     const send = vi.fn(async (action) => {
       if (action === "passkey.list") return daemonOk([pkRow("cred-1")]);
       if (action === "passkey.provider_assert")
         return Promise.reject(Object.assign(new Error("passkey:uv-required"), { code: "proto" }));
       throw new Error("unexpected " + action);
     });
-    const { client, pushed } = makeClient({ sendScript: send });
+    const { client, pushed, popovers } = makeClient({ sendScript: send });
     await client.handleGetRequest(sender, {
       sessionId: "s-9",
       contextId: "ctx-1",
@@ -297,11 +297,103 @@ describe("assertion flow", () => {
       requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
     });
     await client.uiDecide(onlySession(client).id, { kind: "pickAssertion", credential_id: "cred-1" });
-    expect(pushed[0].data).toEqual({
-      type: "error",
-      name: "NotAllowedError",
-      message: "This site requires user verification that Baluard cannot provide",
+    // Nothing reaches the page yet: the ceremony is parked on re-auth.
+    expect(pushed).toHaveLength(0);
+    expect(popovers[popovers.length - 1]).toBe("uv");
+    expect(client.uiState(onlySession(client).id).kind).toBe("uv");
+    // Dismissing the re-auth view declines the ceremony cleanly.
+    await client.uiDecide(onlySession(client).id, { kind: "dismiss" });
+    expect(pushed[0].data).toEqual({ type: "error", name: "NotAllowedError", message: "declined in Baluard" });
+  });
+
+  it("uv re-auth: a wrong password surfaces in the view and parks the ceremony", async () => {
+    const send = vi.fn(async (action) => {
+      if (action === "passkey.list") return daemonOk([pkRow("cred-1")]);
+      if (action === "passkey.provider_assert")
+        return Promise.reject(Object.assign(new Error("passkey:uv-required"), { code: "proto" }));
+      if (action === "passkey.verify")
+        return Promise.reject(Object.assign(new Error("master password incorrect"), { code: "proto" }));
+      throw new Error("unexpected " + action);
     });
+    const { client, pushed, popovers } = makeClient({ sendScript: send });
+    await client.handleGetRequest(sender, {
+      sessionId: "s-10",
+      contextId: "ctx-1",
+      options: { challenge: "Y2g", rpId: "rp.example", userVerification: "required" },
+      requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
+    });
+    const sid = onlySession(client).id;
+    await client.uiDecide(sid, { kind: "pickAssertion", credential_id: "cred-1" });
+    const r = await client.uiDecide(sid, { kind: "uvSubmit", master_password: "wrong" });
+    expect(r.ok).toBe(true);
+    expect(r.state.kind).toBe("uv");
+    expect(r.state.uvError).toContain("incorrect");
+    expect(pushed).toHaveLength(0);
+    expect(popovers[popovers.length - 1]).toBe("uv");
+  });
+
+  it("uv re-auth: a verified retry claims user_verified and completes the ceremony", async () => {
+    const calls = [];
+    const send = vi.fn(async (action, payload) => {
+      calls.push([action, P(payload)]);
+      if (action === "passkey.list") return daemonOk([pkRow("cred-1")]);
+      if (action === "passkey.provider_assert") {
+        if (calls.filter(([a]) => a === "passkey.provider_assert").length === 1)
+          return Promise.reject(Object.assign(new Error("passkey:uv-required"), { code: "proto" }));
+        return daemonOk({ ceremony_id: "c-a", assertion_response: { rawId: "cred-1" }, new_counter: 0 });
+      }
+      if (action === "passkey.consume_assertion") return daemonOk({ recorded: 0 });
+      if (action === "passkey.verify") return daemonOk({ verified: true });
+      throw new Error("unexpected " + action);
+    });
+    const { client, pushed } = makeClient({ sendScript: send });
+    await client.handleGetRequest(sender, {
+      sessionId: "s-11",
+      contextId: "ctx-1",
+      options: { challenge: "Y2g", rpId: "rp.example", userVerification: "required" },
+      requested: { origin: "https://rp.example", sameOriginWithAncestors: true },
+    });
+    const sid = onlySession(client).id;
+    await client.uiDecide(sid, { kind: "pickAssertion", credential_id: "cred-1" });
+    const r = await client.uiDecide(sid, { kind: "uvSubmit", master_password: "correct-horse" });
+    expect(r.ok).toBe(true);
+    expect(calls.filter(([a]) => a === "passkey.verify")).toHaveLength(1);
+    const asserts = calls.filter(([a]) => a === "passkey.provider_assert");
+    expect(asserts).toHaveLength(2);
+    expect(asserts[0][1].user_verified).toBe(false);
+    expect(asserts[1][1].user_verified).toBe(true);
+    expect(pushed[0].data.type).toBe("success");
+    expect(client.uiState(sid).gone).toBe(true);
+  });
+
+  it("uv re-auth for registration retries provider_register with the claim set", async () => {
+    const calls = [];
+    const send = vi.fn(async (action, payload) => {
+      calls.push([action, P(payload)]);
+      if (action === "passkey.list") return daemonOk([]);
+      if (action === "bridge.match") return daemonOk({ matches: [] });
+      if (action === "passkey.provider_register") {
+        if (calls.filter(([a]) => a === "passkey.provider_register").length === 1)
+          return Promise.reject(Object.assign(new Error("passkey:uv-required"), { code: "proto" }));
+        return daemonOk({ ceremony_id: "c-reg", attestation_response: { rawId: "abc" } });
+      }
+      if (action === "passkey.store_registered") return daemonOk({});
+      if (action === "passkey.verify") return daemonOk({ verified: true });
+      throw new Error("unexpected " + action);
+    });
+    const { client, pushed } = makeClient({ sendScript: send });
+    const payload = createPayload({ sessionId: "s-12" });
+    payload.options.authenticatorSelection = { userVerification: "required" };
+    await client.handleCreateRequest(sender, payload);
+    const sid = onlySession(client).id;
+    await client.uiDecide(sid, { kind: "confirmRegister", new_login: { name: "RP Example" } });
+    expect(client.uiState(sid).kind).toBe("uv");
+    await client.uiDecide(sid, { kind: "uvSubmit", master_password: "correct-horse" });
+    const regs = calls.filter(([a]) => a === "passkey.provider_register");
+    expect(regs).toHaveLength(2);
+    expect(regs[0][1].user_verified).toBe(false);
+    expect(regs[1][1].user_verified).toBe(true);
+    expect(pushed[0].data.type).toBe("success");
   });
 
   it("filters candidates by allowCredentials and informs when none match", async () => {

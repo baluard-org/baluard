@@ -269,6 +269,24 @@ export function createPasskeyClient(send, opts = {}) {
     }
   }
 
+  // UV-required parks the ceremony on a re-auth popout: the daemon honors
+  // user_verified only on a fresh master-password proof (passkey.verify),
+  // so the retry may claim it. One retry, then a clean refusal — a second
+  // uv-required after a verified attempt cannot be recovered client-side.
+  function openUvReAuth(session, pending) {
+    if (session.uvRetried) {
+      return pushError(
+        session,
+        ErrName.NOT_ALLOWED,
+        "This site requires user verification that Baluard cannot provide",
+      );
+    }
+    session.pendingUv = pending;
+    session.uvError = undefined;
+    openModal(session, "uv");
+    return false;
+  }
+
   // Normalizes daemon send() failures into {code, message} for the flows
   // below (send rejects with Error + code already set for NMH-level ones).
   function classify(e) {
@@ -465,7 +483,7 @@ export function createPasskeyClient(send, opts = {}) {
     return { accepted: true };
   }
 
-  async function runRegistration(session, decision) {
+  async function runRegistration(session, decision, opts = {}) {
     const target = decision.cipher_id
       ? { cipher_id: decision.cipher_id }
       : { new_login: decision.new_login || { name: (session.options.rp && session.options.rp.name) || session.rpId } };
@@ -479,7 +497,7 @@ export function createPasskeyClient(send, opts = {}) {
         request_json: JSON.stringify(session.options),
         origin: session.origin,
         client_data_json_b64: clientData,
-        user_verified: false,
+        user_verified: opts.verified === true,
         vault_slug: decision.vault_slug || "",
       });
       await daemon("passkey.store_registered", {
@@ -500,11 +518,7 @@ export function createPasskeyClient(send, opts = {}) {
         return;
       }
       if (String(c.message).includes("passkey:uv-required")) {
-        pushError(
-          session,
-          ErrName.NOT_ALLOWED,
-          "This site requires user verification that Baluard cannot provide",
-        );
+        openUvReAuth(session, { kind: "register", decision });
         return;
       }
       pushError(session, ErrName.NOT_ALLOWED, "Baluard could not save the passkey");
@@ -568,7 +582,7 @@ export function createPasskeyClient(send, opts = {}) {
     return { accepted: true };
   }
 
-  async function runAssertion(session, row) {
+  async function runAssertion(session, row, opts = {}) {
     try {
       const clientData = buildClientData("webauthn.get", session.options.challenge, session.origin);
       const assertion = await daemon("passkey.provider_assert", {
@@ -576,7 +590,7 @@ export function createPasskeyClient(send, opts = {}) {
         origin: session.origin,
         credential_id: row.credential_id,
         client_data_json_b64: clientData,
-        user_verified: false,
+        user_verified: opts.verified === true,
         vault_slug: row.vault_slug || "",
       });
       // Counter persistence is advisory: synced passkeys carry counter 0
@@ -599,11 +613,7 @@ export function createPasskeyClient(send, opts = {}) {
         return false;
       }
       if (String(c.message).includes("passkey:uv-required")) {
-        return pushError(
-          session,
-          ErrName.NOT_ALLOWED,
-          "This site requires user verification that Baluard cannot provide",
-        );
+        return openUvReAuth(session, { kind: "assert", row });
       }
       return pushError(session, pageErrorName(c.message), "Baluard could not complete the sign-in");
     }
@@ -696,6 +706,7 @@ export function createPasskeyClient(send, opts = {}) {
       userName: s.mode === "create" ? (s.options.user && s.options.user.name) || "" : "",
       rows: s.rows || [],
       siteRows: s.siteRows || [],
+      uvError: s.uvError || null,
     };
   }
 
@@ -798,7 +809,41 @@ export function createPasskeyClient(send, opts = {}) {
       const row = (s.rows || []).find((r) => r.credential_id === decision.credential_id);
       if (!row) return { error: "unknown credential" };
       closeSessionWindow(s);
-      await runAssertion(s, row);
+      // A UV-requiring ceremony parked through the re-auth leg keeps its
+      // verified claim across a locked detour.
+      await runAssertion(s, row, { verified: s.uvRetried === true });
+      return { ok: true };
+    }
+    if (kind === "uvSubmit") {
+      // The daemon verifies the proof (rate-limited KEK-canary check) and
+      // stamps the session; only then may the retry claim user_verified.
+      // The slug binds the proof to the ceremony's vault, not the active
+      // pointer, so multi-vault sign-ins stamp the right vault.
+      const pending = s.pendingUv;
+      const pw = decision && decision.master_password;
+      if (!pw) return { error: "missing master_password" };
+      if (!pending) return { error: "no pending ceremony" };
+      const slug =
+        pending.kind === "register" ? pending.decision && pending.decision.vault_slug : pending.row && pending.row.vault_slug;
+      try {
+        await daemon("passkey.verify", { master_password: pw, vault_slug: slug || "" });
+      } catch (e) {
+        const c = e && e.code ? e : classify(e);
+        s.uvError = c.message.includes("master password incorrect")
+          ? "Master password incorrect. Try again."
+          : c.message;
+        return { ok: true, state: uiState(sessionId) };
+      }
+      s.pendingUv = null;
+      s.uvError = undefined;
+      s.uvRetried = true;
+      s.uiKind = undefined;
+      closeSessionWindow(s);
+      if (pending.kind === "register") {
+        await runRegistration(s, pending.decision, { verified: true });
+        return { ok: true };
+      }
+      await runAssertion(s, pending.row, { verified: true });
       return { ok: true };
     }
     if (kind === "dismiss") {

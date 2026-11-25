@@ -109,6 +109,10 @@ const STRINGS = {
     passkeyLockedDesc: "Open the Baluard app and unlock your vault, then try again.",
     passkeyRetry: "Retry",
     passkeyCancel: "Use another method",
+    passkeyUvTitle: "Verify it's you",
+    passkeyUvDesc: "This site requests user verification. Type your master password to confirm this sign-in.",
+    passkeyUvPlaceholder: "Master password",
+    passkeyUvVerify: "Verify",
     passkeyDone: "You can return to the site.",
     // Settings
     passkeysTitle: "Offer passkeys",
@@ -200,6 +204,10 @@ const STRINGS = {
     passkeyLockedDesc: "Abre la app de Baluard y desbloquea tu bóveda; después inténtalo de nuevo.",
     passkeyRetry: "Reintentar",
     passkeyCancel: "Usar otro método",
+    passkeyUvTitle: "Verifica que eres tú",
+    passkeyUvDesc: "Este sitio solicita verificación de usuario. Escribe tu contraseña maestra para confirmar este inicio de sesión.",
+    passkeyUvPlaceholder: "Contraseña maestra",
+    passkeyUvVerify: "Verificar",
     passkeyDone: "Puedes volver al sitio.",
     // Ajustes
     passkeysTitle: "Ofrecer claves de acceso",
@@ -1294,6 +1302,7 @@ function PasskeyPopout(props) {
   const t = (k) => (STRINGS[detectLocale()] || STRINGS.en)[k] || k;
   const [view, setView] = createSignal(null); // uiState payload or {gone}
   const [busy, setBusy] = createSignal(false);
+  const [uvPw, setUvPw] = createSignal("");
 
   async function pull() {
     const r = await chrome.runtime
@@ -1525,6 +1534,54 @@ function PasskeyPopout(props) {
               {t("passkeyRetry")}
             </button>
             <button class="btn-ghost" disabled={busy()} onClick={() => decide({ kind: "cancel" })}>
+              {t("passkeyCancel")}
+            </button>
+          </div>
+        </Show>
+        <Show when={show("uv")}>
+          <div class="pk-hero">
+            <div class="pk-title">{t("passkeyUvTitle")}</div>
+            <div class="pk-desc">{t("passkeyUvDesc")}</div>
+            <div class="pk-site-row">
+              <span class="pk-site-pill">
+                <GlobeIcon />
+                {v().rpId}
+              </span>
+            </div>
+          </div>
+          <input
+            type="password"
+            class="pk-uv-input"
+            autoComplete="off"
+            spellcheck={false}
+            placeholder={t("passkeyUvPlaceholder")}
+            disabled={busy()}
+            value={uvPw()}
+            onInput={(e) => setUvPw(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !busy() && uvPw()) {
+                const pw = uvPw();
+                setUvPw("");
+                decide({ kind: "uvSubmit", master_password: pw });
+              }
+            }}
+          />
+          <Show when={v().uvError}>
+            <div class="pk-uv-error" role="alert">{v().uvError}</div>
+          </Show>
+          <div class="pk-footer">
+            <button
+              class="btn-primary"
+              disabled={busy() || !uvPw()}
+              onClick={() => {
+                const pw = uvPw();
+                setUvPw("");
+                decide({ kind: "uvSubmit", master_password: pw });
+              }}
+            >
+              {t("passkeyUvVerify")}
+            </button>
+            <button class="btn-ghost" disabled={busy()} onClick={() => decide({ kind: "dismiss" })}>
               {t("passkeyCancel")}
             </button>
           </div>
