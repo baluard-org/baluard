@@ -1326,13 +1326,8 @@ mod custom_remote_tests {
                 .contains("refusing to send the provider token"),
             "{err}"
         );
-        let unbound = CredentialConfig::in_memory(
-            Some("tok1".into()),
-            Some("alex".into()),
-            None,
-            None,
-            None,
-        );
+        let unbound =
+            CredentialConfig::in_memory(Some("tok1".into()), Some("alex".into()), None, None, None);
         assert!(
             credentials_attempt(&unbound, "file:///tmp/vault.git", None, types, &ssh, &up).is_ok()
         );
