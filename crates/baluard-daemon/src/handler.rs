@@ -7111,8 +7111,20 @@ fn sync_push(
     let status = engine.status(&repo).map_err(|e| format!("{e}"))?;
     let mut committed = false;
     if status.is_dirty() {
+        let head_before = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id());
         engine.commit_all(&repo, "").map_err(|e| format!("{e}"))?;
-        committed = true;
+        let head_after = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id());
+        // commit_all with an empty admitted set returns HEAD unchanged:
+        // report "nothing to commit" instead of a phantom commit.
+        committed = head_before != head_after;
     }
     engine
         .push(&repo, "origin")

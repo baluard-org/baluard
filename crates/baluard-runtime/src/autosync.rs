@@ -615,6 +615,11 @@ impl AutoSyncHandle {
                 log::debug!("[autosync] sync_now skipped: conflict paused (NeedsDecision)");
                 return (PullReport::Paused, None);
             }
+            // A cycle in flight owns the state machine; clobbering Syncing
+            // with Dirty would let the in-flight outcome stomp this nudge.
+            if g.state == AutoSyncState::Syncing {
+                return (PullReport::Busy, None);
+            }
             // Ride the mutation path: the cycle sweeps queued edits AND
             // any dirty paths admission can carry.
             g.pending = g.pending.saturating_add(1);
@@ -1164,8 +1169,11 @@ impl AutoSyncHandle {
                 log::warn!("[autosync] sync cycle failed: {e}");
                 // Reset the FSM: leaving Syncing here killed the background
                 // pull cadence forever (the loop only pulls from Idle or
-                // Offline). Idle retries at pull cadence; queued edits keep
-                // a Dirty retry instead.
+                // Offline). Mirror the downgrade arm: pending was zeroed at
+                // cycle start, so the pre-cycle queued count is what stays
+                // queued and keeps a Dirty retry (Idle would strand the
+                // edits until the next mutation).
+                g.pending = queued;
                 g.state = if g.pending > 0 {
                     AutoSyncState::Dirty
                 } else {
@@ -1182,6 +1190,7 @@ impl AutoSyncHandle {
                     ))),
                 );
                 log::warn!("[autosync] sync task failed: {e}");
+                g.pending = queued;
                 g.state = if g.pending > 0 {
                     AutoSyncState::Dirty
                 } else {
@@ -1797,15 +1806,19 @@ mod tests {
 
         h.on_background().await;
 
-        // fire_sync ran (and failed on no remote); state settled off Dirty,
-        // pending cleared. The debounce timer is no longer armed.
+        // fire_sync ran (and failed on no remote): the queued edit is kept
+        // pending for a Dirty retry and last_error records the failure. The
+        // 5s-wait path would leave the debounce armed and last_error unset.
         let s = h.status().await;
-        assert_ne!(
-            s.state,
-            AutoSyncState::Dirty,
-            "on_background must flush the Dirty debounce, not leave it pending"
+        assert!(
+            h.last_error().await.is_some(),
+            "on_background must flush the Dirty debounce now (the cycle must have run and failed), not wait the 5s timer"
         );
-        assert_eq!(s.pending, 0, "flush must clear pending");
+        assert_eq!(
+            s.pending, 1,
+            "the failed cycle must keep the queued edit pending for retry"
+        );
+        assert_eq!(s.state, AutoSyncState::Dirty);
 
         h.deactivate().await;
     }
@@ -2119,9 +2132,10 @@ mod tests {
         let clone_path = cloned.workdir().unwrap().to_path_buf();
 
         // Break the remote: the cycle's pull leg fails with a non-network
-        // git error. The error arms must reset the FSM (Idle at empty
-        // queue) — leaving Syncing killed the background pull cadence
-        // forever, the loop only pulls from Idle or Offline.
+        // git error. The error arms must reset the FSM and keep the queued
+        // edit pending as a Dirty retry — leaving Syncing killed the
+        // background pull cadence forever, and going Idle would strand
+        // the edit until the next mutation.
         cloned
             .remote_set_url("origin", "file:///nonexistent-baluard-remote")
             .unwrap();
@@ -2132,10 +2146,15 @@ mod tests {
         h.on_mutation(id_b.clone()).await;
         h.on_background().await;
 
-        let s = h.status().await.state;
-        assert!(
-            matches!(s, AutoSyncState::Idle | AutoSyncState::Offline),
-            "a failed cycle must reset the FSM, not strand Syncing (got {s:?})"
+        let s = h.status().await;
+        assert_eq!(
+            s.pending, 1,
+            "a failed cycle must keep the queued edit pending for retry"
+        );
+        assert_eq!(
+            s.state,
+            AutoSyncState::Dirty,
+            "a failed cycle must reset the FSM to a Dirty retry, not strand Syncing"
         );
 
         h.deactivate().await;
