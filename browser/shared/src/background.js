@@ -577,31 +577,14 @@ export async function ensureOffscreen() {
 // Debounced: a burst of tab updates (slow-loading page firing many progress
 // events) collapses to one lookup.
 
-// Badge decision for one tab. A login count wins; otherwise a passkey-enabled
-// browser shows "PK" on URLs the passkey scripts actually cover — ADR 0095
-// requires a visible sign that WebAuthn requests are being answered by the
-// extension, because silent interception is the fingerprinting risk. Pure so
-// the unit tests pin the precedence and scope.
-export function passkeyBadge(matchCount, passkeysEnabled, eligible = true) {
+// Badge decision for one tab: a count of matching logins, nothing otherwise.
+// The ADR 0095 always-on interception marker ("PK") was dropped 2026-11-26:
+// on vaults without matching items it read as an error state, so the badge
+// only claims a site when the vault can actually fill it. Pure so the unit
+// tests pin the count behavior.
+export function passkeyBadge(matchCount) {
   if (matchCount > 0) return { text: String(matchCount), color: "#0a7" };
-  if (passkeysEnabled && eligible) return { text: "PK", color: "#b3e55c" };
   return { text: "", color: "" };
-}
-
-// Do the passkey content scripts run on this URL? Mirrors the
-// syncPasskeyScripts match patterns (https everywhere, http only loopback).
-export function passkeyScopeCovers(url) {
-  if (typeof url !== "string") return false;
-  if (url.startsWith("https://")) return true;
-  if (url.startsWith("http://")) {
-    try {
-      const host = new URL(url).hostname;
-      return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
-    } catch {
-      return false;
-    }
-  }
-  return false;
 }
 
 const badgeTimers = new Map();
@@ -619,44 +602,25 @@ function updateBadgeForTab(tabId, url) {
     tabId,
     setTimeout(() => {
       badgeTimers.delete(tabId);
-      let pkOn = false;
-      // Settings are read BEFORE the daemon round-trip: a dead daemon kills
-      // match counts, not interception, so the ADR 0095 indicator must
-      // survive it.
-      readSettings()
-        .then((s) => {
-          pkOn =
-            s.enablePasskeys === true && passkeyScriptsRegistered && passkeyScopeCovers(url);
-          return send("bridge.match", { url });
-        })
+      send("bridge.match", { url })
         .then((msg) => {
           // The internal send resolves the whole NMH message ({ok, payload});
           // only .payload is the JSON string (found by e2e: parsing the message
           // object threw, so the badge silently never rendered).
           const raw = typeof msg === "string" ? msg : (msg && msg.payload) || "{}";
           const n = (JSON.parse(raw || "{}").matches || []).length;
-          const { text, color } = passkeyBadge(n, pkOn);
+          const { text, color } = passkeyBadge(n);
           chrome.action.setBadgeText({ tabId, text });
           if (color) chrome.action.setBadgeBackgroundColor({ tabId, color });
         })
         .catch((e) => {
           console.warn("[baluard-badge] match failed:", e?.message);
-          const { text, color } = passkeyBadge(0, pkOn);
+          const { text, color } = passkeyBadge(0);
           chrome.action.setBadgeText({ tabId, text });
           if (color) chrome.action.setBadgeBackgroundColor({ tabId, color });
         });
     }, 250),
   );
-}
-
-// Refresh every window's active tab: the passkey toggle and the script
-// registration transitions can happen while a tab sits idle, and tab events
-// alone would leave a stale badge until the next navigation.
-function refreshBadgeEverywhere() {
-  chrome.tabs?.query?.({ active: true }, (tabs) => {
-    if (chrome.runtime.lastError) return;
-    for (const t of tabs || []) updateBadgeForTab(t.id, t.url);
-  });
 }
 
 chrome.tabs?.onActivated?.addListener((info) => {
@@ -744,20 +708,11 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
   if (area === "local" && changes[SETTINGS_KEY]) {
     syncInlineScript();
     syncPasskeyScripts();
-    const { oldValue, newValue } = changes[SETTINGS_KEY];
-    // Absent keys mean the defaults, not off (the popup and the SW read
-    // through DEFAULT_SETTINGS): compare resolved values so the toggle-off
-    // of a default-on install still refreshes badges.
-    if (
-      (oldValue?.enablePasskeys ?? DEFAULT_SETTINGS.enablePasskeys) !==
-      (newValue?.enablePasskeys ?? DEFAULT_SETTINGS.enablePasskeys)
-    ) {
-      refreshBadgeEverywhere();
-    }
+    const { newValue } = changes[SETTINGS_KEY];
     // Default-manager flips only: unchanged settings never re-clear the
     // browser's own privacy override.
     if (
-      (oldValue?.defaultPasswordManager ?? DEFAULT_SETTINGS.defaultPasswordManager) !==
+      (changes[SETTINGS_KEY].oldValue?.defaultPasswordManager ?? DEFAULT_SETTINGS.defaultPasswordManager) !==
       (newValue?.defaultPasswordManager ?? DEFAULT_SETTINGS.defaultPasswordManager)
     ) {
       applyDefaultPasswordManager(newValue);
@@ -867,13 +822,11 @@ async function handlePasskeyUi(msg) {
 let passkeySyncChain = Promise.resolve();
 let passkeyScriptsRegistered = false;
 
-// Ground truth for the toolbar indicator: the badge may claim interception
-// only while the content scripts are actually registered, so transient
-// registration failures cannot leave a "PK" over an unwrapped browser.
+// Ground truth for the popup diagnostics: the flag records whether the
+// content scripts are actually registered, so transient registration
+// failures surface in diagnostics instead of failing silently.
 function setPasskeyScriptsRegistered(v) {
-  if (passkeyScriptsRegistered === v) return;
   passkeyScriptsRegistered = v;
-  refreshBadgeEverywhere();
 }
 
 function syncPasskeyScripts() {

@@ -17,9 +17,8 @@ export const DEFAULT_SETTINGS = {
   copyTotp: true,
   clipboardClearSeconds: 60,
   // WebAuthn interception (passkeys). Default ON (1Password/Bitwarden
-  // parity): the PK badge and page overlay make interception visible, and
-  // the feature needs the desktop app's provider ceremonies (ADR 0095
-  // browser section). Installs from before the default flip keep their
+  // parity): the feature needs the desktop app's provider ceremonies (ADR
+  // 0095 browser section). Installs from before the default flip keep their
   // stored value; only absent keys inherit the default.
   enablePasskeys: true,
   // "Make Baluard the default password manager" (1Password General-toggle
