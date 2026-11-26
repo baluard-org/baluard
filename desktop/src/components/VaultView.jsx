@@ -723,7 +723,7 @@ export default function VaultView() {
                   <CipherDetail
                     cipher={viewCipher()}
                     onEdit={(cipherData) => { setNewCipher(cipherData); vault.setActivePane("edit"); }}
-                    onClose={() => vault.setActivePane("welcome")}
+                    onClose={() => { setViewCipher(null); vault.setActivePane("welcome"); }}
                     setViewCipher={setViewCipher}
                     setActivePane={vault.setActivePane}
                     selectedCategory={vault.selectedCategory()}
@@ -751,7 +751,7 @@ export default function VaultView() {
                     setNewCipher({ ...EMPTY_CIPHER });
                   }
                 }}
-                onCancel={() => vault.setActivePane("welcome")}
+                onCancel={() => { setViewCipher(null); vault.setActivePane("welcome"); }}
               />
             </Match>
             <Match when={vault.activePane() === "edit"}>
