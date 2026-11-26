@@ -6,6 +6,11 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.9.3 - 2026-11-26
+
+- All apps: the sync warning no longer sticks forever when an app-internal change, like a settings update, left modifications behind without queuing a sync. The next sync now carries those changes, and a device already stuck in that state clears the warning on its own after this update.
+- All apps: "Sync now" also commits your local changes and retries after a failure instead of forgetting them, and it stays paused while a sync conflict waits for your decision.
+
 ## 0.9.2 - 2026-11-26
 
 - Browser: passkey sign-ins on sites that require extra identity verification now work: the extension asks for your master password in a small popout, verifies it, and retries the sign-in. Previously these sign-ins always failed with an error.
