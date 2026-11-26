@@ -155,7 +155,14 @@ internal fun predictiveBackDestination(nav: Nav, origin: Nav?): Nav? = when (nav
 }
 
 /** An in-flight predictive back gesture: leaving [from], landing at [destination]. */
-private data class PredictiveBackState(val from: Nav, val destination: Nav, val fromLeftEdge: Boolean)
+private data class PredictiveBackState(
+    val from: Nav,
+    val destination: Nav,
+    val fromLeftEdge: Boolean,
+    // Committed gestures keep the front screen's transform through the
+    // AnimatedContent exit fade; only the underlay hides.
+    val committed: Boolean = false,
+)
 
 /** Top-level navigation stages. */
 private sealed interface RootStage {
@@ -454,8 +461,14 @@ fun App(
                     showOpen -> flowVm.back()
                 }
                 if (predictiveBack != null) {
-                    predictiveBack = null
-                    scope.launch { predictiveProgress.snapTo(0f) }
+                    // Keep the transform on the exiting screen and settle it
+                    // out over the exit fade (200ms) instead of snapping the
+                    // front screen back to full size for a frame.
+                    predictiveBack = checkNotNull(predictiveBack).copy(committed = true)
+                    scope.launch {
+                        predictiveProgress.animateTo(0f, tween(200))
+                        predictiveBack = null
+                    }
                 }
             },
         )
@@ -470,6 +483,11 @@ fun App(
                 pendingCleanup = null
                 cleanupCollapsed = false
                 cleanupVaultId = null
+                // An interrupted gesture (lock, vault switch) never reaches
+                // onBack or onCancelled; drop the preview or it survives
+                // re-unlock.
+                predictiveBack = null
+                predictiveProgress.snapTo(0f)
                 return@LaunchedEffect
             }
             val v = auth.vault() ?: return@LaunchedEffect
@@ -991,8 +1009,9 @@ fun App(
                         }
                         Box(Modifier.fillMaxSize()) {
                             // Destination preview sits under the front screen; both render
-                            // only while a back gesture is in flight.
-                            predictiveBack?.let { pb ->
+                            // only while a back gesture is in flight (the committed state
+                            // keeps only the front transform, no underlay).
+                            predictiveBack?.takeIf { !it.committed }?.let { pb ->
                                 Box(Modifier.fillMaxSize()) { navScreen(pb.destination) }
                             }
                             AnimatedContent(
