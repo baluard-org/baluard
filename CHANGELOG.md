@@ -6,6 +6,14 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.9.4 - 2026-11-26
+
+- Desktop: two new opt-in settings under General: "Launch Baluard at system login" and "Start hidden in the tray". Both are off by default, and launching at login still asks for your master password.
+- Android: swiping back previews the screen you are returning to, and the current screen shrinks toward your thumb as you swipe.
+- Desktop: vault entries now show small icons in the list when an item has attachments, passkeys, or one-time codes.
+- Browser: the PK badge is gone. Pages with passkey matches still show a badge with the count.
+- Desktop: closing an entry no longer leaves its row highlighted in the list.
+
 ## 0.9.3 - 2026-11-26
 
 - All apps: the sync warning no longer sticks forever when an app-internal change, like a settings update, left modifications behind without queuing a sync. The next sync now carries those changes, and a device already stuck in that state clears the warning on its own after this update.
