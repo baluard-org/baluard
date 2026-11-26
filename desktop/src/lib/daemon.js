@@ -68,6 +68,10 @@ async function getDesktopPrefs() {
   return invoke("get_desktop_prefs");
 }
 
+async function setStartHidden(enabled) {
+  return invoke("set_start_hidden", { enabled });
+}
+
 // Toggle run-in-background (keep running in the tray when the window closes).
 // Persists; takes effect on the next close.
 async function setRunInBackground(enabled) {
@@ -98,4 +102,4 @@ async function getPendingAgentSummary() {
   return data && data.count > 0 && data.first ? data : null;
 }
 
-export { daemon, showWindow, getDesktopPrefs, setRunInBackground, setCloseToTray, getRenderState, setCompatibleRendering, getPendingAgentSummary };
+export { daemon, showWindow, getDesktopPrefs, setRunInBackground, setCloseToTray, setStartHidden, getRenderState, setCompatibleRendering, getPendingAgentSummary };

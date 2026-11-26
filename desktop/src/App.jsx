@@ -150,18 +150,28 @@ export default function App() {
           // risk clobbering an existing install with the create flow.
         }
       } finally {
-        // Show window once initialization and initial state checks finish.
-        await showWindow();
+        // Start hidden in the tray (launch-at-login included): skip the
+        // reveal; the tray icon restores the window. A failed prefs read
+        // must default to showing, never to a permanently invisible app.
+        let startHidden = false;
+        let runInBackgroundPref = true;
+        try {
+          const prefs = await getDesktopPrefs();
+          startHidden = prefs.start_hidden === true;
+          runInBackgroundPref = prefs.run_in_background !== false;
+        } catch {}
+        if (!startHidden) {
+          await showWindow();
+        }
         // One-time hint, non-Mac only: closing the window hides to the tray
         // rather than quitting, which reads as a dead app on Linux/Windows
         // otherwise (macOS users expect the dock + Cmd+Q convention). Only
         // meaningful when run-in-background is on — off, closing quits.
         try {
           const isMac = navigator.userAgent.includes("Mac");
-          const prefs = await getDesktopPrefs();
           if (
             !isMac &&
-            prefs.run_in_background !== false &&
+            runInBackgroundPref &&
             !localStorage.getItem("baluard.trayHint.v1")
           ) {
             localStorage.setItem("baluard.trayHint.v1", "1");

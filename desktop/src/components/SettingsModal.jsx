@@ -4,7 +4,8 @@ import { useVault } from "../context/VaultContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { theme, setTheme } from "../context/themeSignal.js";
 import { useI18n } from "../i18n/index.jsx";
-import { daemon, getDesktopPrefs, setRunInBackground, setCloseToTray, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
+import { daemon, getDesktopPrefs, setRunInBackground, setCloseToTray, setStartHidden, getRenderState, setCompatibleRendering } from "../lib/daemon.js";
+import { isEnabled as autostartEnabled, enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
 import ConfirmModal from "./ConfirmModal.jsx";
 import { sanitizeError, generatePassphrase } from "../lib/utils.js";
 import { copyToClipboard } from "../lib/clipboard.js";
@@ -238,6 +239,8 @@ export default function SettingsModal() {
   // Not setCloseToTray: that name is the Tauri command imported above; a
   // same-name signal once shadowed it and the toggle silently stopped persisting.
   const [closeToTray, setCloseToTraySignal] = createSignal(false);
+  const [startHidden, setStartHiddenSignal] = createSignal(false);
+  const [launchAtLogin, setLaunchAtLoginSignal] = createSignal(false);
 
   // Linux compatible rendering (WebKitGTK workaround). Setting cycles
   // automatic → on → off → automatic; `active` mirrors what the backend
@@ -517,6 +520,13 @@ export default function SettingsModal() {
         const prefs = await getDesktopPrefs();
         setRunInBackgroundSignal(prefs.run_in_background !== false);
         setCloseToTraySignal(!!prefs.close_to_tray);
+        setStartHiddenSignal(!!prefs.start_hidden);
+      } catch {}
+
+      // OS autostart registration is the source of truth for launch-at-login
+      // (registry key / LaunchAgent / XDG .desktop file), not a pref file.
+      try {
+        setLaunchAtLoginSignal(await autostartEnabled());
       } catch {}
 
       // Linux compatible rendering state (also Tauri layer). One call fills
@@ -648,6 +658,40 @@ export default function SettingsModal() {
       toastSuccess(t(next ? "settings.closeToTrayEnabled" : "settings.closeToTrayDisabled"));
     } catch (e) {
       setCloseToTraySignal(!next);
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  // OS-level launch-at-login: enable/disable writes the platform entry
+  // (Windows registry Run key, macOS LaunchAgent, Linux XDG autostart
+  // file); isEnabled reads it back, so the OS entry is the truth.
+  async function toggleLaunchAtLogin() {
+    const next = !launchAtLogin();
+    setLaunchAtLoginSignal(next);
+    try {
+      if (next) {
+        await autostartEnable();
+      } else {
+        await autostartDisable();
+      }
+      setLaunchAtLoginSignal(await autostartEnabled());
+      toastSuccess(t(next ? "settings.launchAtLoginEnabled" : "settings.launchAtLoginDisabled"));
+    } catch (e) {
+      setLaunchAtLoginSignal(!next);
+      toastError(sanitizeError(e, t));
+    }
+  }
+
+  // Start with the window hidden in the tray (launch-at-login included).
+  // Persists in desktop prefs; applies on the next launch.
+  async function toggleStartHidden() {
+    const next = !startHidden();
+    setStartHiddenSignal(next);
+    try {
+      await setStartHidden(next);
+      toastSuccess(t(next ? "settings.startHiddenEnabled" : "settings.startHiddenDisabled"));
+    } catch (e) {
+      setStartHiddenSignal(!next);
       toastError(sanitizeError(e, t));
     }
   }
@@ -1311,6 +1355,36 @@ export default function SettingsModal() {
                       </button>
                     </div>
                   </Show>
+                </div>
+
+                {/* Launch at login (OS autostart) + start hidden in tray */}
+                <div class="space-y-3 pt-4 border-t border-[var(--color-border)]">
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.launchAtLoginLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.launchAtLoginDesc")}</span>
+                    </div>
+                    <button
+                      data-testid="launch-at-login-toggle"
+                      onClick={toggleLaunchAtLogin}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${launchAtLogin() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {launchAtLogin() ? t("settings.enabled") : t("settings.disabled")}
+                    </button>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <div class="flex flex-col flex-1 pr-4">
+                      <span class="text-xs font-bold text-[var(--color-text)]">{t("settings.startHiddenLabel")}</span>
+                      <span class="text-[10px] text-[var(--color-muted)] mt-0.5">{t("settings.startHiddenDesc")}</span>
+                    </div>
+                    <button
+                      data-testid="start-hidden-toggle"
+                      onClick={toggleStartHidden}
+                      class={`px-4 py-2 rounded-xl border text-xs font-bold transition-all cursor-pointer ${startHidden() ? "btn-active-green" : "bg-transparent text-[var(--color-muted)] border-[var(--color-border)] hover:text-[var(--color-text)]"}`}
+                    >
+                      {startHidden() ? t("settings.enabled") : t("settings.disabled")}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Linux compatible rendering (WebKitGTK blank-window fix).

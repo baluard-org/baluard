@@ -38,6 +38,7 @@ tauri-plugin-biometry = "=0.2.8"
 tauri-plugin-notification = "=2.3.3"
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-autostart = "2"
 # Test-only: embedded WebDriver server for the e2e smoke build (release-smoke-testing.md).
 # Never enabled in shipped artifacts; the smoke feature is opt-in via the build script.
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }

@@ -34,6 +34,7 @@
     "shell:allow-kill",
     "biometry:default",
     "dialog:default",
-    "notification:default"
+    "notification:default",
+    "autostart:default"
   ]
 }

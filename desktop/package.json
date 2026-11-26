@@ -17,6 +17,7 @@
     "@solid-primitives/transition-group": "2.0.0",
     "@solidjs/web": "2.0.3",
     "@tauri-apps/api": "2.12.5",
+    "@tauri-apps/plugin-autostart": "2.7.0",
     "@tauri-apps/plugin-dialog": "2.8.4",
     "@tauri-apps/plugin-opener": "2.7.3",
     "dompurify": "^3.4.17",

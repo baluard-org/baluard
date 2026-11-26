@@ -1425,6 +1425,11 @@ struct DesktopPrefs {
     /// affordance.
     #[serde(default)]
     close_to_tray: bool,
+    /// Start with the window hidden (tray-only launch). Applies to every
+    /// launch, system-login autostart included; the tray restores the
+    /// window. Default off.
+    #[serde(default)]
+    start_hidden: bool,
     /// Linux compatible-rendering preference. `None` = automatic (decided
     /// at each launch from GPU detection + crash recovery). `Some(true)`
     /// forces the WebKitGTK workaround on, `Some(false)` forces it off.
@@ -1442,6 +1447,7 @@ impl Default for DesktopPrefs {
         Self {
             run_in_background: true,
             close_to_tray: false,
+            start_hidden: false,
             compatible_rendering: None,
         }
     }
@@ -1535,6 +1541,16 @@ mod desktop_prefs_tests {
         assert!(prefs.run_in_background);
         assert_eq!(prefs.compatible_rendering, None);
     }
+
+    #[test]
+    fn start_hidden_defaults_off_and_parses_on() {
+        assert!(!DesktopPrefs::default().start_hidden);
+        let empty: DesktopPrefs = serde_json::from_str("{}").unwrap();
+        assert!(!empty.start_hidden, "missing key must stay opt-in");
+        let on: DesktopPrefs = serde_json::from_str("{\"start_hidden\": true}").unwrap();
+        assert!(on.start_hidden);
+        assert!(on.run_in_background, "unrelated defaults must survive");
+    }
 }
 
 /// Persist desktop prefs. Best-effort: logs on failure but does not abort —
@@ -1587,6 +1603,19 @@ async fn set_close_to_tray(enabled: bool) -> Result<(), String> {
         .await
         .unwrap_or_default();
     prefs.close_to_tray = enabled;
+    let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
+    Ok(())
+}
+
+/// Toggle start-hidden (tray-only launch). Persists; applies on the next
+/// launch, system-login autostart included. The OS autostart registration
+/// itself is managed by the autostart plugin, not this pref.
+#[tauri::command]
+async fn set_start_hidden(enabled: bool) -> Result<(), String> {
+    let mut prefs = tauri::async_runtime::spawn_blocking(load_desktop_prefs)
+        .await
+        .unwrap_or_default();
+    prefs.start_hidden = enabled;
     let _ = tauri::async_runtime::spawn_blocking(move || save_desktop_prefs(&prefs)).await;
     Ok(())
 }
@@ -1739,6 +1768,13 @@ pub fn run() {
             eprintln!("[desktop] compatible rendering enabled (WEBKIT_DISABLE_DMABUF_RENDERER=1)");
         }
         render::write_marker();
+        // A start-hidden run presents nothing until the tray Show, so it can
+        // die without ever clearing the marker; that must not read as a
+        // rendering crash on the next launch (the decision above already
+        // consumed the previous run's marker).
+        if load_desktop_prefs().start_hidden {
+            render::clear_marker();
+        }
     }
 
     #[tauri::command]
@@ -1780,6 +1816,10 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_biometry::init())
@@ -2234,6 +2274,7 @@ pub fn run() {
             get_desktop_prefs,
             set_run_in_background,
             set_close_to_tray,
+            set_start_hidden,
             get_render_state,
             set_compatible_rendering
         ])

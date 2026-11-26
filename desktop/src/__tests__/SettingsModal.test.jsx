@@ -19,9 +19,10 @@ vi.mock("../i18n/index.jsx", () => ({
 const daemonMock = vi.fn();
 const desktopBridgeMocks = vi.hoisted(() => ({
   showWindow: vi.fn(() => Promise.resolve()),
-  getDesktopPrefs: vi.fn(() => Promise.resolve({ run_in_background: true, close_to_tray: false })),
+  getDesktopPrefs: vi.fn(() => Promise.resolve({ run_in_background: true, close_to_tray: false, start_hidden: false })),
   setRunInBackground: vi.fn(() => Promise.resolve()),
   setCloseToTray: vi.fn(() => Promise.resolve()),
+  setStartHidden: vi.fn(() => Promise.resolve()),
   getRenderState: vi.fn(() => Promise.resolve({ linux: false })),
   setCompatibleRendering: vi.fn(() => Promise.resolve()),
 }));
@@ -31,8 +32,20 @@ vi.mock("../lib/daemon.js", () => ({
   getDesktopPrefs: desktopBridgeMocks.getDesktopPrefs,
   setRunInBackground: desktopBridgeMocks.setRunInBackground,
   setCloseToTray: desktopBridgeMocks.setCloseToTray,
+  setStartHidden: desktopBridgeMocks.setStartHidden,
   getRenderState: desktopBridgeMocks.getRenderState,
   setCompatibleRendering: desktopBridgeMocks.setCompatibleRendering,
+}));
+
+const autostartMocks = vi.hoisted(() => ({
+  isEnabled: vi.fn(() => Promise.resolve(false)),
+  enable: vi.fn(() => Promise.resolve()),
+  disable: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("@tauri-apps/plugin-autostart", () => ({
+  isEnabled: autostartMocks.isEnabled,
+  enable: autostartMocks.enable,
+  disable: autostartMocks.disable,
 }));
 
 vi.mock("../lib/biometry.js", () => ({ biometryAvailable: vi.fn().mockResolvedValue(false) }));
@@ -208,6 +221,60 @@ describe("SettingsModal", () => {
     flush();
     // The data tab reveals the import/export headings.
     expect(getByText("settings.importTitle", { exact: false })).toBeTruthy();
+  });
+
+  describe("launch at login + start hidden", () => {
+    beforeEach(() => {
+      autostartMocks.isEnabled.mockResolvedValue(false);
+      autostartMocks.enable.mockClear();
+      autostartMocks.disable.mockClear();
+      desktopBridgeMocks.setStartHidden.mockClear();
+    });
+
+    it("renders both toggles off by default", async () => {
+      const { getByTestId } = render(() => <SettingsModal />);
+      await waitFor(() => expect(getByTestId("launch-at-login-toggle")).toBeTruthy());
+      expect(getByTestId("launch-at-login-toggle").textContent).toBe("settings.disabled");
+      expect(getByTestId("start-hidden-toggle").textContent).toBe("settings.disabled");
+    });
+
+    it("launch-at-login toggle calls the OS autostart enable and flips on", async () => {
+      const { getByTestId } = render(() => <SettingsModal />);
+      await waitFor(() => expect(getByTestId("launch-at-login-toggle")).toBeTruthy());
+      fireEvent.click(getByTestId("launch-at-login-toggle"));
+      await waitFor(() => expect(autostartMocks.enable).toHaveBeenCalledTimes(1));
+      flush();
+      expect(getByTestId("launch-at-login-toggle").textContent).toBe("settings.enabled");
+    });
+
+    it("launch-at-login toggle calls disable when currently enabled", async () => {
+      autostartMocks.isEnabled.mockResolvedValue(true);
+      const { getByTestId } = render(() => <SettingsModal />);
+      await waitFor(() =>
+        expect(getByTestId("launch-at-login-toggle").textContent).toBe("settings.enabled"),
+      );
+      fireEvent.click(getByTestId("launch-at-login-toggle"));
+      await waitFor(() => expect(autostartMocks.disable).toHaveBeenCalledTimes(1));
+    });
+
+    it("start-hidden toggle persists the pref and flips on", async () => {
+      const { getByTestId } = render(() => <SettingsModal />);
+      await waitFor(() => expect(getByTestId("start-hidden-toggle")).toBeTruthy());
+      fireEvent.click(getByTestId("start-hidden-toggle"));
+      await waitFor(() => expect(desktopBridgeMocks.setStartHidden).toHaveBeenCalledWith(true));
+      flush();
+      expect(getByTestId("start-hidden-toggle").textContent).toBe("settings.enabled");
+    });
+
+    it("launch-at-login failure rolls the toggle back", async () => {
+      autostartMocks.enable.mockRejectedValueOnce(new Error("denied"));
+      const { getByTestId } = render(() => <SettingsModal />);
+      await waitFor(() => expect(getByTestId("launch-at-login-toggle")).toBeTruthy());
+      fireEvent.click(getByTestId("launch-at-login-toggle"));
+      await waitFor(() => expect(autostartMocks.enable).toHaveBeenCalledTimes(1));
+      flush();
+      expect(getByTestId("launch-at-login-toggle").textContent).toBe("settings.disabled");
+    });
   });
 });
 
