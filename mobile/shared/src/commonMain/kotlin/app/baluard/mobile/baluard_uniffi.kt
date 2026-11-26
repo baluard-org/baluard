@@ -1575,6 +1575,8 @@ internal interface UniffiLib : Library {
     `keyType`: RustBuffer.ByValue,
   ): Long
 
+  fun uniffi_baluard_uniffi_fn_method_mobilevault_sync_now(`ptr`: Pointer): Long
+
   fun uniffi_baluard_uniffi_fn_method_mobilevault_sync_offline_tick(`ptr`: Pointer): Long
 
   fun uniffi_baluard_uniffi_fn_method_mobilevault_sync_on_background(`ptr`: Pointer): Long
@@ -2327,6 +2329,8 @@ internal interface UniffiLib : Library {
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key(): Short
 
+  fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_now(): Short
+
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick(): Short
 
   fun uniffi_baluard_uniffi_checksum_method_mobilevault_sync_on_background(): Short
@@ -2921,6 +2925,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_ssh_generate_key() != 42401.toShort()) {
+    throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+  }
+  if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_now() != 23599.toShort()) {
     throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
   }
   if (lib.uniffi_baluard_uniffi_checksum_method_mobilevault_sync_offline_tick() != 35820.toShort()) {
@@ -5379,6 +5386,14 @@ public interface MobileVaultInterface {
    * strings only, matching the desktop generator (RSA removed, L7).
    */
   suspend fun `sshGenerateKey`(`keyType`: kotlin.String): kotlin.String
+
+  /**
+   * Manual full reconcile (the sync button): commit admitted dirty
+   * paths, pull, push. Unlike the pull-only probe it converges local
+   * pending content — the frozen-dot wedge — and honors the conflict
+   * pause. Same outcome shape as `sync_pull_now`.
+   */
+  suspend fun `syncNow`(): SyncPullOutcome
 
   /**
    * Host-scheduled 30s probe while Offline + foregrounded (the one piece of
@@ -9733,6 +9748,35 @@ open class MobileVault :
       { FfiConverterString.lift(it) },
       // Error FFI converter
       BaluardException.ErrorHandler,
+    )
+
+  /**
+   * Manual full reconcile (the sync button): commit admitted dirty
+   * paths, pull, push. Unlike the pull-only probe it converges local
+   * pending content — the frozen-dot wedge — and honors the conflict
+   * pause. Same outcome shape as `sync_pull_now`.
+   */
+  @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+  override suspend fun `syncNow`(): SyncPullOutcome =
+    uniffiRustCallAsync(
+      callWithPointer { thisPtr ->
+        UniffiLib.INSTANCE.uniffi_baluard_uniffi_fn_method_mobilevault_sync_now(
+          thisPtr,
+        )
+      },
+      {
+        future,
+        callback,
+        continuation,
+        ->
+        UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_poll_rust_buffer(future, callback, continuation)
+      },
+      { future, continuation -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+      { future -> UniffiLib.INSTANCE.ffi_baluard_uniffi_rust_future_free_rust_buffer(future) },
+      // lift function
+      { FfiConverterTypeSyncPullOutcome.lift(it) },
+      // Error FFI converter
+      UniffiNullRustCallStatusErrorHandler,
     )
 
   /**

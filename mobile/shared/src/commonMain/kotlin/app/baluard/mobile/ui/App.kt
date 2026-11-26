@@ -350,7 +350,7 @@ fun App(
                 showSyncUpgrade = true
             } else scope.launch {
                 runSyncCycle(
-                    doPull = { sync.pullNow(vault) },
+                    doPull = { sync.syncNow(vault) },
                     afterPull = {
                         runCatching {
                             conflictVm.refresh(vault)

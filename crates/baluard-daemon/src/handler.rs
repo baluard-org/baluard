@@ -5341,6 +5341,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
             if let Err(e) = state.autosync.ensure_line_synced().await {
                 return err_response(e);
             }
+            // A paused conflict owns the index/worktree; a raw push now
+            // would race the resolution.
+            if state.autosync.is_paused().await {
+                return err_response("Sync paused: resolve the conflict first.".to_string());
+            }
             // C3: hold the autosync cycle lock so this manual cycle cannot
             // overlap a debounce push, background pull, or paused merge.
             let cycle_guard = state.autosync.cycle_lock_owned().await;
@@ -5369,6 +5374,11 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
         }
         "sync.pull" => {
             refresh_connected_tokens_if_needed().await;
+            // A paused conflict owns the index/worktree; a raw pull now
+            // would race the resolution.
+            if state.autosync.is_paused().await {
+                return err_response("Sync paused: resolve the conflict first.".to_string());
+            }
             // C3: hold the autosync cycle lock so this manual cycle cannot
             // overlap a debounce push, background pull, or paused merge.
             let cycle_guard = state.autosync.cycle_lock_owned().await;
@@ -5402,6 +5412,31 @@ async fn route_request(mut req: GatewayRequest, state: &SharedVaultState) -> Gat
                 Ok(Err(e)) => err_response(format!("Task join: {e}")),
                 Err(_) => err_response("sync.pull timed out".to_string()),
             }
+        }
+        "sync.now" => {
+            refresh_connected_tokens_if_needed().await;
+            // Manual full reconcile through the coordinator: commit
+            // admitted dirty paths, pull, push. Unlike the raw sync.pull/
+            // sync.push routes it honors the NeedsDecision pause (a
+            // mid-merge repo must not race the conflict resolution) and
+            // updates the coordinator state, so the polled sync indicator
+            // reflects the manual cycle.
+            if !state.is_unlocked().await {
+                return err_response("Vault is locked. Unlock first.".to_string());
+            }
+            let device_id = state.device_id().await;
+            let (report, detail) = state.autosync.sync_now_detailed(device_id).await;
+            if report == baluard_runtime::autosync::PullReport::Error {
+                return err_response(detail.unwrap_or_else(|| "sync failed".to_string()));
+            }
+            #[cfg(feature = "p2p")]
+            {
+                let pubkeys = baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(
+                    &state.vault_path,
+                );
+                state.p2p.update_roster_pubkeys(&pubkeys).await;
+            }
+            ok_resp(report.tag().to_string(), token_str)
         }
         "sync.revoke" => {
             refresh_connected_tokens_if_needed().await;

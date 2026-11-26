@@ -145,6 +145,69 @@ impl PullReport {
 /// paths through the runtime seam, so the toast carries this sentence.
 const SKIPPED_DETAIL: &str = "Pull skipped: uncommitted local changes are blocking the vault sync.";
 
+/// Shared post-pull state transition for every pull-only surface (unlock,
+/// focus, background loop, manual pull). One seam so a FSM change lands on
+/// all of them: the frozen-dot wedge lived in exactly the divergence
+/// between two inline copies of this logic. Returns (fresh, detail) —
+/// fresh = the pull applied remote state (success bookkeeping).
+fn apply_pull_outcome(g: &mut Inner, r: PullReport, facts: PullFacts) -> (bool, Option<String>) {
+    match r {
+        PullReport::Pulled | PullReport::UpToDate | PullReport::KeptLocal => {
+            g.access_denied_streak = 0;
+            g.last_sync = Some(now_secs());
+            g.last_error = None;
+            if matches!(r, PullReport::Pulled | PullReport::KeptLocal) {
+                g.pull_seq = g.pull_seq.saturating_add(1);
+            }
+            // Unpushed commits (enrollment, offline commit, KeptLocal)
+            // must transition to Dirty so the next slice runs a full
+            // commit -> pull -> push cycle. Same for sweepable dirty
+            // paths with an empty mutation queue: an internal writer
+            // that skipped the nudge (migration, device-name sync)
+            // leaves tracked meta paths modified with the remote quiet,
+            // and nothing else ever escalates to the sweeping cycle —
+            // the frozen-dot wedge. The full cycle converges either way:
+            // admission commits what the role allows and restores what
+            // it refuses; the empty-commit guard keeps a converged
+            // nothing from shipping as a padded commit.
+            if g.state != AutoSyncState::Syncing && g.state != AutoSyncState::NeedsDecision {
+                if g.pending > 0 || facts.needs_push || facts.dirty {
+                    g.state = AutoSyncState::Dirty;
+                    if facts.dirty && g.pending == 0 && !facts.needs_push {
+                        g.sweeps = g.sweeps.saturating_add(1);
+                    }
+                } else {
+                    g.state = AutoSyncState::Idle;
+                }
+            }
+            (true, None)
+        }
+        PullReport::Offline => {
+            g.state = AutoSyncState::Offline;
+            (false, None)
+        }
+        PullReport::AccessDenied => {
+            // The remote refuses this device's credentials. Keep the
+            // state machine calm (Offline-like cadence) and let the
+            // streak feed the removal-notice surface.
+            g.access_denied_streak = g.access_denied_streak.saturating_add(1);
+            g.state = AutoSyncState::Offline;
+            AutoSyncHandle::record_failure(g, "remote refused access", None);
+            (false, None)
+        }
+        PullReport::Skipped => {
+            if g.state != AutoSyncState::Syncing && g.state != AutoSyncState::NeedsDecision {
+                g.state = AutoSyncState::Dirty;
+            }
+            log::debug!("[autosync] pull skipped: dirty worktree; scheduling sync cycle");
+            (false, Some(SKIPPED_DETAIL.to_string()))
+        }
+        // Busy / Idle / Error / Paused: no transition — a cycle is in
+        // flight, the guard fired, or the failure was recorded upstream.
+        _ => (false, None),
+    }
+}
+
 /// Snapshot of coordinator status, returned by the `sync.autosync_status` route.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoSyncStatus {
@@ -163,6 +226,12 @@ pub struct AutoSyncStatus {
     /// Monotonic counter bumped whenever a background pull applies remote changes.
     #[serde(default)]
     pub pull_seq: u64,
+    /// Monotonic counter of coordinator sweeps: Dirty escalations armed by
+    /// sweepable dirty paths with an empty mutation queue (out-of-band
+    /// writes a nudge never saw). Diagnostics visibility for the wedge
+    /// class where a full cycle never ran.
+    #[serde(default)]
+    pub sweeps: u64,
 }
 
 /// Internal mutable state behind the handle lock.
@@ -179,6 +248,7 @@ struct Inner {
     pending: u32,
     conflicts_resolved: u32,
     pull_seq: u64,
+    sweeps: u64,
     /// Consecutive access-denied pulls (see [`PullReport::AccessDenied`]).
     access_denied_streak: u32,
     /// Last failed cycle: scrubbed reason + unix seconds. Cleared by any
@@ -297,6 +367,7 @@ impl AutoSyncHandle {
                 pending: 0,
                 conflicts_resolved: 0,
                 pull_seq: 0,
+                sweeps: 0,
                 access_denied_streak: 0,
                 last_error: None,
                 stamp_persist_ms: None,
@@ -328,6 +399,7 @@ impl AutoSyncHandle {
             conflicts_resolved: g.conflicts_resolved,
             access_denied_streak: g.access_denied_streak,
             pull_seq: g.pull_seq,
+            sweeps: g.sweeps,
         }
     }
 
@@ -525,6 +597,40 @@ impl AutoSyncHandle {
     /// user why a sync failed instead of a bare tag.
     pub async fn pull_now_detailed(&self, device_id: String) -> (PullReport, Option<String>) {
         self.pull_only_detailed(device_id).await
+    }
+
+    /// Manual full reconcile — the user-visible sync button: commit
+    /// admitted dirty paths, pull, push (the invariant order). Pull-only
+    /// here could never honor the button's promise: an out-of-band dirty
+    /// file (a writer that skipped the nudge) would stay pending forever
+    /// while the button reported success. Guards the NeedsDecision pause
+    /// like every repo-touching path; returns the outcome for the toast.
+    pub async fn sync_now_detailed(&self, device_id: String) -> (PullReport, Option<String>) {
+        {
+            let mut g = self.inner.lock().await;
+            if !g.active {
+                return (PullReport::Idle, None);
+            }
+            if g.state == AutoSyncState::NeedsDecision {
+                log::debug!("[autosync] sync_now skipped: conflict paused (NeedsDecision)");
+                return (PullReport::Paused, None);
+            }
+            // Ride the mutation path: the cycle sweeps queued edits AND
+            // any dirty paths admission can carry.
+            g.pending = g.pending.saturating_add(1);
+            g.state = AutoSyncState::Dirty;
+        }
+        let generation = {
+            let g = self.inner.lock().await;
+            g.generation
+        };
+        let report = self.fire_sync(device_id, generation, SYNC_OP_TIMEOUT).await;
+        let g = self.inner.lock().await;
+        let detail = match &g.last_error {
+            Some((msg, _)) if report == PullReport::Error => Some(msg.clone()),
+            _ => None,
+        };
+        (report, detail)
     }
 
     /// **`offline_tick`** — host-scheduled 30s connectivity probe while the
@@ -739,7 +845,6 @@ impl AutoSyncHandle {
             Ok(g) => g,
             Err(_) => return (PullReport::Busy, None),
         };
-        let mut fresh = false;
         let outcome = tokio::time::timeout(
             SYNC_OP_TIMEOUT,
             tokio::task::spawn_blocking(move || {
@@ -757,73 +862,31 @@ impl AutoSyncHandle {
         if !g.active || g.generation != generation {
             return (PullReport::Idle, None);
         }
-        let report: PullReport;
         // Scrubbed human-readable cause for the FFI surface; the bare tag
         // alone once left the mobile toast guessing (2026-11-13 incident).
-        let mut detail: Option<String> = None;
-        match outcome {
-            Ok(Ok(Ok((r, needs_push)))) => {
-                report = r;
-                if matches!(
-                    r,
-                    PullReport::Pulled | PullReport::UpToDate | PullReport::KeptLocal
-                ) {
-                    fresh = true;
-                    g.access_denied_streak = 0;
-                    g.last_sync = Some(now_secs());
-                    g.last_error = None;
-                    if matches!(r, PullReport::Pulled | PullReport::KeptLocal) {
-                        g.pull_seq = g.pull_seq.saturating_add(1);
-                    }
-                    // Don't clobber Syncing/NeedsDecision; go Dirty whenever
-                    // local commits sit unpushed (enrollment/offline) or KeptLocal
-                    // awaits push.
-                    if g.state != AutoSyncState::Syncing && g.state != AutoSyncState::NeedsDecision
-                    {
-                        if g.pending > 0 || needs_push {
-                            g.state = AutoSyncState::Dirty;
-                        } else if g.state == AutoSyncState::Offline {
-                            g.state = AutoSyncState::Idle;
-                        }
-                    }
-                } else if r == PullReport::Offline {
-                    g.state = AutoSyncState::Offline;
-                } else if r == PullReport::AccessDenied {
-                    // The remote refuses this device's credentials. Keep the
-                    // state machine calm (Offline-like cadence) and let the
-                    // streak feed the removal-notice surface.
-                    g.access_denied_streak = g.access_denied_streak.saturating_add(1);
-                    g.state = AutoSyncState::Offline;
-                    Self::record_failure(&mut g, "remote refused access", detail.as_deref());
-                } else if r == PullReport::Skipped {
-                    detail = Some(SKIPPED_DETAIL.to_string());
-                    if g.state != AutoSyncState::Syncing && g.state != AutoSyncState::NeedsDecision
-                    {
-                        g.state = AutoSyncState::Dirty;
-                    }
-                    log::debug!("[autosync] pull_only skipped: dirty or ineligible worktree");
-                }
+        let (report, detail, fresh) = match outcome {
+            Ok(Ok(Ok((r, facts)))) => {
+                let (fresh, detail) = apply_pull_outcome(&mut g, r, facts);
+                (r, detail, fresh)
             }
             Ok(Ok(Err(ref e))) => {
-                report = PullReport::Error;
-                detail = Some(baluard_core::sync::credentials::scrub_git_error(e));
+                let detail = Some(baluard_core::sync::credentials::scrub_git_error(e));
                 Self::record_failure(&mut g, "pull failed", detail.as_deref());
-                log::warn!("[autosync] pull failed: {e}")
+                (PullReport::Error, detail, false)
             }
             Ok(Err(ref e)) => {
-                report = PullReport::Error;
-                detail = Some(baluard_core::sync::credentials::scrub_git_error(&format!(
+                let detail = Some(baluard_core::sync::credentials::scrub_git_error(&format!(
                     "sync task failed: {e}"
                 )));
                 Self::record_failure(&mut g, "pull failed", detail.as_deref());
-                log::warn!("[autosync] pull task failed: {e}")
+                (PullReport::Error, detail, false)
             }
             Err(_) => {
                 // SYNC_OP_TIMEOUT: the pull is still running; the next
                 // tick retries once the cycle lock frees.
-                report = PullReport::Busy;
+                (PullReport::Busy, None, false)
             }
-        }
+        };
         drop(g);
         if fresh {
             self.record_success().await;
@@ -834,6 +897,15 @@ impl AutoSyncHandle {
     /// Detail-free wrapper for callers that only classify the outcome.
     pub async fn pull_only(&self, device_id: String) -> PullReport {
         self.pull_only_detailed(device_id).await.0
+    }
+
+    /// True while a conflict is paused for field-level resolution. The raw
+    /// sync routes (desktop Push/Pull buttons, CLI) bypass the coordinator
+    /// and must check this before touching the repo — the index/worktree
+    /// are mid-merge and a pull or push now would race the resolution.
+    pub async fn is_paused(&self) -> bool {
+        let g = self.inner.lock().await;
+        g.active && g.state == AutoSyncState::NeedsDecision
     }
 
     /// Focus-triggered pull. Silently skips if the last sync was within
@@ -904,7 +976,13 @@ impl AutoSyncHandle {
     /// desktop-scale default); the background-flush path ([`Self::on_background`])
     /// passes a shorter budget ([`BG_FLUSH_TIMEOUT`]) so a mobile OS
     /// background-task kill doesn't leak the pool thread against a 60s wall.
-    async fn fire_sync(&self, device_id: String, generation: u64, timeout: std::time::Duration) {
+    /// Returns the outcome as a pull report so manual sync can toast it.
+    async fn fire_sync(
+        &self,
+        device_id: String,
+        generation: u64,
+        timeout: std::time::Duration,
+    ) -> PullReport {
         // A pending line rewrite downgrades this cycle to pull-only:
         // pushing would republish the stale worktree blob copies the
         // compaction removed, so the push waits for the guided
@@ -916,7 +994,7 @@ impl AutoSyncHandle {
         let (devkey_seal, enroll_vk) = {
             let mut g = self.inner.lock().await;
             if !g.active || g.generation != generation {
-                return;
+                return PullReport::Idle;
             }
             rewrite_pending = g
                 .line_rewrite_pending
@@ -952,7 +1030,7 @@ impl AutoSyncHandle {
                 if g.active && g.generation == generation {
                     g.state = AutoSyncState::Dirty;
                 }
-                return;
+                return PullReport::Busy;
             }
         };
 
@@ -1005,7 +1083,7 @@ impl AutoSyncHandle {
 
         let mut g = self.inner.lock().await;
         if !g.active || g.generation != generation {
-            return;
+            return PullReport::Idle;
         }
         // Timeout / join failure keeps the conservative flag value.
         let (downgraded, fresh_pending, adopted) = match &outcome {
@@ -1037,8 +1115,9 @@ impl AutoSyncHandle {
                 std::time::Instant::now() + std::time::Duration::from_secs(PUSH_DEBOUNCE_SECS),
             );
             drop(g);
-            return;
+            return PullReport::Skipped;
         }
+        let report;
         match outcome {
             Ok(Ok((Ok(SyncOutcome::Synced { conflicts }), _, _, _))) => {
                 synced = true;
@@ -1054,6 +1133,7 @@ impl AutoSyncHandle {
                 if g.pending == 0 {
                     g.state = AutoSyncState::Idle;
                 }
+                report = PullReport::UpToDate;
                 // P5b: the cycle wrote cipher files through the engine,
                 // bypassing VaultHandle's index-rebuild hooks. Invalidate the
                 // local-only index (keyless) so the next list rebuilds.
@@ -1061,6 +1141,7 @@ impl AutoSyncHandle {
             }
             Ok(Ok((Ok(SyncOutcome::Offline), _, _, _))) => {
                 g.state = AutoSyncState::Offline;
+                report = PullReport::Offline;
             }
             Ok(Ok((Ok(SyncOutcome::NeedsDecision { pending }), _, _, _))) => {
                 // Phase 2b: hold the paused conflicts and surface to the UI.
@@ -1070,6 +1151,7 @@ impl AutoSyncHandle {
                 // did not complete).
                 g.pending_conflicts = pending;
                 g.state = AutoSyncState::NeedsDecision;
+                report = PullReport::Paused;
             }
             Ok(Ok((Err(ref e), _, _, _))) => {
                 Self::record_failure(
@@ -1079,7 +1161,17 @@ impl AutoSyncHandle {
                         &e.to_string(),
                     )),
                 );
-                log::warn!("[autosync] sync cycle failed: {e}")
+                log::warn!("[autosync] sync cycle failed: {e}");
+                // Reset the FSM: leaving Syncing here killed the background
+                // pull cadence forever (the loop only pulls from Idle or
+                // Offline). Idle retries at pull cadence; queued edits keep
+                // a Dirty retry instead.
+                g.state = if g.pending > 0 {
+                    AutoSyncState::Dirty
+                } else {
+                    AutoSyncState::Idle
+                };
+                report = PullReport::Error;
             }
             Ok(Err(ref e)) => {
                 Self::record_failure(
@@ -1089,7 +1181,13 @@ impl AutoSyncHandle {
                         "{e}"
                     ))),
                 );
-                log::warn!("[autosync] sync task failed: {e}")
+                log::warn!("[autosync] sync task failed: {e}");
+                g.state = if g.pending > 0 {
+                    AutoSyncState::Dirty
+                } else {
+                    AutoSyncState::Idle
+                };
+                report = PullReport::Error;
             }
             _ => {
                 // SYNC_OP_TIMEOUT: do not go offline unless run_sync_cycle
@@ -1101,12 +1199,14 @@ impl AutoSyncHandle {
                 if g.pending == 0 {
                     g.state = AutoSyncState::Idle;
                 }
+                report = PullReport::Error;
             }
         }
         drop(g);
         if synced {
             self.record_success().await;
         }
+        report
     }
 
     /// Long-running background loop: periodic pull + offline retry.
@@ -1175,6 +1275,27 @@ impl AutoSyncHandle {
                 }
             }
 
+            // Offline retry carrying an unpushed local commit must run the
+            // FULL cycle instead of a pull: pull-only resolves a remote
+            // conflict keep-local without asking, silently dropping the
+            // remote edit made during the outage. The full cycle pauses
+            // for a decision. Runs BEFORE the cycle lock: fire_sync takes
+            // the lock itself.
+            {
+                let g = self.inner.lock().await;
+                if !g.active || g.generation != generation {
+                    return;
+                }
+                if g.state == AutoSyncState::Offline
+                    && repo_needs_push(&self.vault_path, &device_id)
+                {
+                    drop(g);
+                    self.fire_sync(device_id.clone(), generation, SYNC_OP_TIMEOUT)
+                        .await;
+                    continue;
+                }
+            }
+
             // C3 fix: acquire the cycle lock so the background pull can't run
             // concurrently with a debounce-triggered cycle on the same repo.
             // Owned guard (B7-05): a timeout must not free the lock while
@@ -1210,47 +1331,22 @@ impl AutoSyncHandle {
                 return;
             }
             match outcome {
-                Ok(Ok(Ok((r, needs_push)))) => {
-                    if matches!(
-                        r,
-                        PullReport::Pulled | PullReport::UpToDate | PullReport::KeptLocal
-                    ) {
-                        fresh = true;
-                        g.access_denied_streak = 0;
-                        g.last_sync = Some(now_secs());
-                        if matches!(r, PullReport::Pulled | PullReport::KeptLocal) {
-                            g.pull_seq = g.pull_seq.saturating_add(1);
-                        }
-                        // Unpushed commits (enrollment, offline commit, KeptLocal)
-                        // must transition to Dirty so the next slice runs a full
-                        // commit -> pull -> push cycle.
-                        if g.state != AutoSyncState::Syncing
-                            && g.state != AutoSyncState::NeedsDecision
-                        {
-                            if g.pending > 0 || needs_push {
-                                g.state = AutoSyncState::Dirty;
-                            } else {
-                                g.state = AutoSyncState::Idle;
-                            }
-                        }
-                    } else if r == PullReport::Offline {
-                        g.state = AutoSyncState::Offline;
-                    } else if r == PullReport::AccessDenied {
-                        g.access_denied_streak = g.access_denied_streak.saturating_add(1);
-                        g.state = AutoSyncState::Offline;
-                    } else if r == PullReport::Skipped {
-                        if g.state != AutoSyncState::Syncing
-                            && g.state != AutoSyncState::NeedsDecision
-                        {
-                            g.state = AutoSyncState::Dirty;
-                        }
-                        log::debug!(
-                            "[autosync] background pull skipped: dirty worktree; scheduling sync cycle"
-                        );
-                    }
+                Ok(Ok(Ok((r, facts)))) => {
+                    let (f, _) = apply_pull_outcome(&mut g, r, facts);
+                    fresh = f;
                 }
-                Ok(Ok(Err(ref e))) => log::warn!("[autosync] background pull failed: {e}"),
-                Ok(Err(ref e)) => log::warn!("[autosync] background pull task failed: {e}"),
+                Ok(Ok(Err(ref e))) => {
+                    let detail = baluard_core::sync::credentials::scrub_git_error(e);
+                    Self::record_failure(&mut g, "pull failed", Some(&detail));
+                    log::warn!("[autosync] background pull failed: {e}")
+                }
+                Ok(Err(ref e)) => {
+                    let detail = baluard_core::sync::credentials::scrub_git_error(&format!(
+                        "pull task failed: {e}"
+                    ));
+                    Self::record_failure(&mut g, "pull failed", Some(&detail));
+                    log::warn!("[autosync] background pull task failed: {e}")
+                }
                 Err(_) => {}
             }
             drop(g);
@@ -1381,6 +1477,19 @@ pub(crate) fn run_pull_only(
     run_pull_only_with_pending(vault_path, device_id, devkey_seal, enroll_vk).map(|(r, _)| r)
 }
 
+/// Facts a pull computes about the repo beyond the report tag, so the
+/// coordinator's post-pull transition sees the full picture.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct PullFacts {
+    /// Unpushed local commits (ahead of origin).
+    needs_push: bool,
+    /// Sweepable dirty paths exist: tracked meta/content files modified
+    /// out-of-band (a writer that skipped the nudge — migration,
+    /// device-name sync). Excludes device-local secret files, conflicted
+    /// mid-merge entries, and bookkeeping.
+    dirty: bool,
+}
+
 #[cfg(feature = "git-sync")]
 fn repo_needs_push(vault_path: &Path, _device_id: &str) -> bool {
     use baluard_core::sync::engine::SyncEngine;
@@ -1413,7 +1522,7 @@ fn run_pull_only_with_pending(
     device_id: &str,
     devkey_seal: Option<&[u8; 32]>,
     enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
-) -> Result<(PullReport, bool), String> {
+) -> Result<(PullReport, PullFacts), String> {
     use baluard_core::sync::engine::{
         PullResult, SyncEngine, is_access_denied_error, is_network_error,
     };
@@ -1427,8 +1536,12 @@ fn run_pull_only_with_pending(
         // Access-denied FIRST: a provider strike surfaces as an HTTP
         // status inside a Network-class error, so the network arm would
         // shadow it if it came first (review F1).
-        Err(ref e) if is_access_denied_error(e) => return Ok((PullReport::AccessDenied, false)),
-        Err(ref e) if is_network_error(e) => return Ok((PullReport::Offline, false)),
+        Err(ref e) if is_access_denied_error(e) => {
+            return Ok((PullReport::AccessDenied, PullFacts::default()));
+        }
+        Err(ref e) if is_network_error(e) => {
+            return Ok((PullReport::Offline, PullFacts::default()));
+        }
         Err(e) => return Err(format_sync_err(&e)),
     };
     match engine.pull(&repo, "origin") {
@@ -1446,7 +1559,15 @@ fn run_pull_only_with_pending(
             // next cycle retries instead of pushing a corrupt tree.
             engine
                 .resolve_conflict_keep_local(&repo, local_oid, remote_oid, &files)
-                .map(|_| (PullReport::KeptLocal, true))
+                .map(|_| {
+                    (
+                        PullReport::KeptLocal,
+                        PullFacts {
+                            needs_push: true,
+                            dirty: false,
+                        },
+                    )
+                })
                 .map_err(|e| format!("conflict resolution failed: {e}"))
         }
         // P5b: the pull wrote cipher files through the engine, bypassing
@@ -1457,15 +1578,19 @@ fn run_pull_only_with_pending(
         Ok(PullResult::FastForward) | Ok(PullResult::Merged) => {
             SyncEngine::invalidate_local_index(vault_path);
             let needs_push = repo_needs_push(vault_path, device_id);
-            Ok((PullReport::Pulled, needs_push))
+            let dirty = sweepable_dirty(&engine, &repo);
+            Ok((PullReport::Pulled, PullFacts { needs_push, dirty }))
         }
         Ok(PullResult::AlreadyUpToDate) => {
             let needs_push = repo_needs_push(vault_path, device_id);
-            Ok((PullReport::UpToDate, needs_push))
+            let dirty = sweepable_dirty(&engine, &repo);
+            Ok((PullReport::UpToDate, PullFacts { needs_push, dirty }))
         }
         // Access-denied before network: same shadowing rule as above.
-        Err(ref e) if is_access_denied_error(e) => Ok((PullReport::AccessDenied, false)),
-        Err(ref e) if is_network_error(e) => Ok((PullReport::Offline, false)),
+        Err(ref e) if is_access_denied_error(e) => {
+            Ok((PullReport::AccessDenied, PullFacts::default()))
+        }
+        Err(ref e) if is_network_error(e) => Ok((PullReport::Offline, PullFacts::default())),
         // A dirty-worktree refusal is transient: transitioning to Dirty lets
         // the coordinator sweep and push on the next sync cycle.
         Err(ref e)
@@ -1476,7 +1601,13 @@ fn run_pull_only_with_pending(
                 )
             ) =>
         {
-            Ok((PullReport::Skipped, true))
+            Ok((
+                PullReport::Skipped,
+                PullFacts {
+                    needs_push: true,
+                    dirty: true,
+                },
+            ))
         }
         // Another engine holds meta/sync.lock (join-poll, background
         // fetch, a manual sync): no state change, the tick retries.
@@ -1486,7 +1617,7 @@ fn run_pull_only_with_pending(
                 baluard_core::error::BaluardError::Sync(baluard_core::error::SyncError::Busy)
             ) =>
         {
-            Ok((PullReport::Busy, false))
+            Ok((PullReport::Busy, PullFacts::default()))
         }
         Err(e) => Err(format_sync_err(&e)),
     }
@@ -1508,8 +1639,21 @@ fn run_pull_only_with_pending(
     _device_name: &str,
     _devkey_seal: Option<&[u8; 32]>,
     _enroll_vk: Option<baluard_core::sync::engine::EnrollVerifyKey>,
-) -> Result<(PullReport, bool), String> {
-    Ok((PullReport::Pulled, false))
+) -> Result<(PullReport, PullFacts), String> {
+    Ok((PullReport::Pulled, PullFacts::default()))
+}
+
+/// Does the repo carry sweepable dirty paths? Cheap: the engine already
+/// opened the repo; a missing/closed repo reads as not dirty.
+#[cfg(feature = "git-sync")]
+fn sweepable_dirty(
+    engine: &baluard_core::sync::engine::SyncEngine,
+    repo: &git2::Repository,
+) -> bool {
+    engine
+        .sweepable_dirty_paths(repo)
+        .map(|p| !p.is_empty())
+        .unwrap_or(false)
 }
 
 fn now_secs() -> u64 {
@@ -1876,6 +2020,124 @@ mod tests {
             AutoSyncState::Dirty,
             "Skipped (DirtyWorktree) must mark Dirty so background_loop heals via sync cycle"
         );
+        h.deactivate().await;
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[tokio::test]
+    async fn pull_now_arms_a_sweep_for_out_of_band_dirty_paths() {
+        let (_remote_dir, _origin_dir, _clone_dir, id_b, _engine_a, _repo_a, _engine_b, cloned) =
+            make_sync_pair();
+        let clone_path = cloned.workdir().unwrap().to_path_buf();
+
+        // An internal writer rewrote a tracked-meta path without nudging
+        // (migration/device-name class): the mutation queue is empty and
+        // the remote is quiet. This was the frozen-dot wedge: the pull
+        // went UpToDate and the FSM settled to Idle forever.
+        std::fs::create_dir_all(clone_path.join("meta")).unwrap();
+        std::fs::write(clone_path.join("meta/settings.enc"), b"rewritten").unwrap();
+
+        let h = AutoSyncHandle::new(&clone_path);
+        h.activate(id_b.clone(), None, None).await;
+        let report = h.pull_now(id_b).await;
+        assert_eq!(report, PullReport::UpToDate);
+        assert_eq!(
+            h.status().await.state,
+            AutoSyncState::Dirty,
+            "sweepable dirty paths with an empty queue must arm the sweeping cycle"
+        );
+        h.deactivate().await;
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[tokio::test]
+    async fn a_sweep_that_admits_nothing_commits_nothing() {
+        let (_remote_dir, _origin_dir, _clone_dir, _id_b, _engine_a, _repo_a, engine_b, cloned) =
+            make_sync_pair();
+        let clone_path = cloned.workdir().unwrap().to_path_buf();
+
+        // Simulate a remote-supplied .gitignore that dropped the device-
+        // local ignore lines: the secret file shows up untracked but must
+        // stay out of the sweepable set (staging it would push the
+        // device's private key to the remote).
+        std::fs::remove_file(clone_path.join(".gitignore")).unwrap();
+        std::fs::write(clone_path.join("meta/device-privkey.json"), b"{}").unwrap();
+        let sweepable = engine_b.sweepable_dirty_paths(&cloned).unwrap();
+        assert!(
+            !sweepable.iter().any(|p| p.contains("device-privkey")),
+            "device-local secret files must never enter the sweepable set"
+        );
+
+        // A path admission always refuses (deny-by-default meta catch-all):
+        // the sweep must restore it, not sign an empty commit the device
+        // can never push away.
+        std::fs::create_dir_all(clone_path.join("unknown")).unwrap();
+        std::fs::write(clone_path.join("unknown/x.enc"), b"stray").unwrap();
+
+        let before = cloned.head().unwrap().peel_to_commit().unwrap().id();
+        engine_b.commit_all(&cloned, "vault update").unwrap();
+        let after = cloned.head().unwrap().peel_to_commit().unwrap().id();
+        assert_eq!(
+            before, after,
+            "an empty admitted set must not create an empty commit"
+        );
+        let rest = engine_b.sweepable_dirty_paths(&cloned).unwrap();
+        assert!(
+            rest.is_empty(),
+            "the sweep must converge every sweepable path (left: {rest:?})"
+        );
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[tokio::test]
+    async fn sync_now_reports_paused_and_touches_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h = AutoSyncHandle::new(tmp.path());
+        h.activate("test-device".to_string(), None, None).await;
+        h.force_state_for_test(AutoSyncState::NeedsDecision).await;
+
+        let (report, _) = h.sync_now_detailed("test-device".to_string()).await;
+        assert_eq!(
+            report,
+            PullReport::Paused,
+            "the manual full cycle must honor the pause"
+        );
+        assert_eq!(
+            h.status().await.state,
+            AutoSyncState::NeedsDecision,
+            "sync_now must not clobber the paused state or race the resolution"
+        );
+
+        h.deactivate().await;
+    }
+
+    #[cfg(feature = "git-sync")]
+    #[tokio::test]
+    async fn a_failed_cycle_does_not_strand_syncing() {
+        let (_remote_dir, _origin_dir, _clone_dir, id_b, _engine_a, _repo_a, _engine_b, cloned) =
+            make_sync_pair();
+        let clone_path = cloned.workdir().unwrap().to_path_buf();
+
+        // Break the remote: the cycle's pull leg fails with a non-network
+        // git error. The error arms must reset the FSM (Idle at empty
+        // queue) — leaving Syncing killed the background pull cadence
+        // forever, the loop only pulls from Idle or Offline.
+        cloned
+            .remote_set_url("origin", "file:///nonexistent-baluard-remote")
+            .unwrap();
+        std::fs::write(clone_path.join("b.enc"), b"local").unwrap();
+
+        let h = AutoSyncHandle::new(&clone_path);
+        h.activate(id_b.clone(), None, None).await;
+        h.on_mutation(id_b.clone()).await;
+        h.on_background().await;
+
+        let s = h.status().await.state;
+        assert!(
+            matches!(s, AutoSyncState::Idle | AutoSyncState::Offline),
+            "a failed cycle must reset the FSM, not strand Syncing (got {s:?})"
+        );
+
         h.deactivate().await;
     }
 }

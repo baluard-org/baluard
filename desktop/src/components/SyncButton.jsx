@@ -20,9 +20,10 @@ export default function SyncButton() {
     // would freeze the dot at "Changes pending" forever.
     window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "start" }));
     try {
-      await daemon("sync.pull");
+      // Full reconcile through the coordinator: commit admitted dirty
+      // paths, pull, push — one guarded cycle instead of raw pull+push.
+      await daemon("sync.now");
       window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
-      await daemon("sync.push");
       toastSuccess(t("sync.statusActive"));
       window.dispatchEvent(new CustomEvent("baluard:manual-sync", { detail: "success" }));
     } catch (e) {

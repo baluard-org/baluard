@@ -466,13 +466,15 @@ impl SyncEngine {
     }
 
     /// Stage admitted changes and commit with static message (D9).
-    /// Returns the new commit OID.
+    /// Returns the new commit OID, or HEAD unchanged when the admitted
+    /// set is empty (a sweep that admitted nothing must not push an
+    /// empty commit — that would strand the device ahead forever).
     pub fn commit_all(
         &self,
         repo: &Repository,
         message_override: &str,
     ) -> Result<Oid, BaluardError> {
-        self.commit_all_inner(repo, message_override, true)
+        self.commit_all_inner(repo, message_override, true, false)
     }
 
     /// Test-only hostile-author path: stage everything, skipping the
@@ -484,7 +486,7 @@ impl SyncEngine {
         repo: &Repository,
         message_override: &str,
     ) -> Result<Oid, BaluardError> {
-        self.commit_all_inner(repo, message_override, false)
+        self.commit_all_inner(repo, message_override, false, false)
     }
 
     fn commit_all_inner(
@@ -492,6 +494,7 @@ impl SyncEngine {
         repo: &Repository,
         _message_override: &str,
         admit_all: bool,
+        allow_empty: bool,
     ) -> Result<Oid, BaluardError> {
         // Bump this device's last_seen_epoch on `meta/devices.json` BEFORE
         // staging. devices.json is git-tracked, so rewriting it after the tree
@@ -530,6 +533,20 @@ impl SyncEngine {
         let tree_id = index
             .write_tree()
             .map_err(|e| SyncError::Git(format!("write_tree: {e}")))?;
+        // A sweep that admitted nothing must not sign and push an empty
+        // commit: the device would sit ahead of a content-identical tip
+        // forever (cover_commit passes allow_empty for the padding case;
+        // the unfiltered test-only path skips the guard too — a rogue
+        // simulation must always produce the commit the walk refuses).
+        if !allow_empty && admit_all {
+            if let Ok(head) = repo.head() {
+                if let Ok(head_commit) = head.peel_to_commit() {
+                    if head_commit.tree_id() == tree_id {
+                        return Ok(head_commit.id());
+                    }
+                }
+            }
+        }
         let tree = repo
             .find_tree(tree_id)
             .map_err(|e| SyncError::Git(format!("find_tree: {e}")))?;
@@ -1110,7 +1127,7 @@ impl SyncEngine {
     /// Uses the same static message and signing as real commits.
     pub fn cover_commit(&self, repo: &Repository) -> Result<Oid, BaluardError> {
         // Same tree as current HEAD, creates an empty commit
-        self.commit_all(repo, "")
+        self.commit_all_inner(repo, "", true, true)
     }
 
     /// Apply random jitter delay before a network operation.
@@ -1217,6 +1234,33 @@ impl SyncEngine {
                     name
                 });
             }
+        }
+        Ok(paths)
+    }
+
+    /// Dirty paths a full-cycle sweep may converge: everything
+    /// `dirty_paths` reports minus what `stage_admitted` structurally
+    /// skips (this clone's device-local secret files, conflicted
+    /// mid-merge entries). A coordinator sweep over this set either
+    /// commits or restores each path, so the tree converges instead of
+    /// re-arming the sweep forever.
+    pub fn sweepable_dirty_paths(&self, repo: &Repository) -> Result<Vec<String>, BaluardError> {
+        let mut paths = Vec::new();
+        for path in self.dirty_paths(repo)? {
+            if Self::DEVICE_LOCAL_PATHS.contains(&path.as_str()) {
+                continue;
+            }
+            let status = match repo.status_file(std::path::Path::new(&path)) {
+                Ok(s) => s,
+                // Sanitized/unresolvable names (non-UTF-8, truncated) can
+                // never converge: stage_admitted skips them. Excluded here
+                // so the sweep does not re-arm forever.
+                Err(_) => continue,
+            };
+            if status.contains(git2::Status::CONFLICTED) {
+                continue;
+            }
+            paths.push(path);
         }
         Ok(paths)
     }
@@ -12762,9 +12806,12 @@ mod tests {
         let repo_a = engine_a.init_repo().unwrap();
         let (_remote, clone_dir, clone_engine, cloned) = make_clone(dir.path(), &engine_a, &repo_a);
 
-        // Origin gains an EMPTY commit (same tree): the autosync-tick shape.
+        // Origin gains an EMPTY commit (same tree): the cover-traffic
+        // shape. cover_commit is the intentional empty-commit path; the
+        // regular commit_all no longer ships empty trees (empty-admitted
+        // sweeps must not pad the lineage with no-op commits).
         std::fs::write(dir.path().join("a.enc"), b"\xAA").unwrap();
-        let empty = engine_a.commit_all(&repo_a, "tick").unwrap();
+        let empty = engine_a.cover_commit(&repo_a).unwrap();
         engine_a.push(&repo_a, "origin").unwrap();
         let empty_tree = repo_a.find_commit(empty).unwrap().tree_id();
         assert_eq!(

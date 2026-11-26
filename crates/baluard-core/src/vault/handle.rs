@@ -20841,7 +20841,7 @@ mod tests {
             joiner_seal.as_deref(),
         );
         engine_j_signed
-            .commit_all(&repo_j, "edit after removal")
+            .commit_all_unfiltered(&repo_j, "edit after removal")
             .unwrap();
         repo_o
             .remote("joiner", joiner_path.to_str().unwrap())
@@ -21292,7 +21292,7 @@ mod tests {
         // pull, and the LOCAL refusal log records this client's
         // detection (detect + notify, S1b-1).
         engine_j_signed
-            .commit_all(&repo_j, "edit after removal")
+            .commit_all_unfiltered(&repo_j, "edit after removal")
             .unwrap();
         assert!(engine_o.pull(&repo_o, "joiner").is_err());
         let refusals = handle.refusal_log(50);

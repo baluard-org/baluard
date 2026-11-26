@@ -44,7 +44,7 @@ class SyncCoordinator(
 
     /**
      * Wi-Fi-only gate (plan §3.5, advisory): the host skips AUTOMATIC sync
-     * triggers on metered networks. Explicit user gestures (`pullNow`) and
+     * triggers on metered networks. Explicit user gestures (`syncNow`) and
      * the mandatory background flush always run.
      */
     private fun blockedByNetwork(): Boolean =
@@ -80,12 +80,13 @@ class SyncCoordinator(
         vault.syncOnBackground()
     }
 
-    /** User pull-to-refresh / "Sync now". Returns the pull outcome (tag plus
+    /** User "Sync now" — a full reconcile: commit admitted dirty paths,
+     * pull, push (the runtime's sync_now). Returns the outcome (tag plus
      * scrubbed detail), or null when the transport call threw ("locked" =
      * subscription gate). */
-    suspend fun pullNow(vault: MobileVaultInterface): SyncPullOutcome? {
+    suspend fun syncNow(vault: MobileVaultInterface): SyncPullOutcome? {
         if (gated()) return SyncPullOutcome(tag = "locked", detail = null)
-        return runCatching { vault.syncPullNow() }.getOrNull()
+        return runCatching { vault.`syncNow`() }.getOrNull()
     }
 
     /**

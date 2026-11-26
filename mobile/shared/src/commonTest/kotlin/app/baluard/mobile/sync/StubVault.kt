@@ -141,6 +141,10 @@ open class StubVault(
         calls += "syncPullNow"
         return SyncPullOutcome(tag = "pulled", detail = null)
     }
+    override suspend fun `syncNow`(): SyncPullOutcome {
+        calls += "syncNow"
+        return SyncPullOutcome(tag = "up_to_date", detail = null)
+    }
     override suspend fun syncOfflineTick() { calls += "syncOfflineTick" }
     override suspend fun archiveCipher(id: String) { calls += "archiveCipher" }
     override suspend fun unarchiveCipher(id: String) { calls += "unarchiveCipher" }

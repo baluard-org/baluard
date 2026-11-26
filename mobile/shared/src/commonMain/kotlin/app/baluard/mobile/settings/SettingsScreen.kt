@@ -330,7 +330,7 @@ val entitlement by Entitlements.state.collectAsState()
                         } else if (syncPhase == SyncPhase.Idle) {
                             scope.launch {
                                 runSyncCycle(
-                                    doPull = { coordinator.pullNow(vault) },
+                                    doPull = { coordinator.syncNow(vault) },
                                     afterPull = { runCatching { viewModel.refresh(vault, coordinator) } },
                                     setPhase = { syncPhase = it },
                                     onResult = { _, tag, detail -> syncOutcomeToast(tag, detail) { t(it) } },

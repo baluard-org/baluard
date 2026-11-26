@@ -50,7 +50,7 @@ class SyncCoordinatorTest {
         assertFalse(sync.onMutation(vault))
         sync.onForeground(vault)
         sync.onBackground(vault)
-        sync.pullNow(vault)
+        sync.syncNow(vault)
         sync.offlineTick(vault)
         assertEquals(emptyList(), vault.calls)
     }
@@ -63,12 +63,12 @@ class SyncCoordinatorTest {
         assertTrue(sync.onMutation(vault))
         sync.onForeground(vault)
         sync.onBackground(vault)
-        sync.pullNow(vault)
+        sync.syncNow(vault)
         sync.offlineTick(vault)
         assertEquals(
             listOf(
                 "syncOnUnlock", "syncOnMutation", "syncOnForeground",
-                "syncOnBackground", "syncPullNow", "syncOfflineTick",
+                "syncOnBackground", "syncNow", "syncOfflineTick",
             ),
             vault.calls,
         )
@@ -99,9 +99,9 @@ class SyncCoordinatorTest {
         sync.onForeground(vault)
         sync.offlineTick(vault)
         // Explicit gesture + mandatory flush are NOT gated by Wi-Fi-only.
-        sync.pullNow(vault)
+        sync.syncNow(vault)
         sync.onBackground(vault)
-        assertEquals(listOf("syncPullNow", "syncOnBackground"), vault.calls)
+        assertEquals(listOf("syncNow", "syncOnBackground"), vault.calls)
     }
 
     @Test

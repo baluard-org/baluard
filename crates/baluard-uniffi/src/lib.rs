@@ -1266,6 +1266,26 @@ impl MobileVault {
         }
     }
 
+    /// Manual full reconcile (the sync button): commit admitted dirty
+    /// paths, pull, push. Unlike the pull-only probe it converges local
+    /// pending content — the frozen-dot wedge — and honors the conflict
+    /// pause. Same outcome shape as `sync_pull_now`.
+    pub async fn sync_now(&self) -> SyncPullOutcome {
+        let dn = self.device_id().await;
+        let (report, detail) = self.state.autosync.sync_now_detailed(dn).await;
+        #[cfg(feature = "p2p")]
+        {
+            let pubkeys = baluard_core::sync::engine::SyncEngine::load_active_roster_pubkeys(
+                &self.state.vault_path,
+            );
+            self.state.p2p.update_roster_pubkeys(&pubkeys).await;
+        }
+        SyncPullOutcome {
+            tag: report.tag().to_string(),
+            detail,
+        }
+    }
+
     /// Activate the autosync coordinator when the vault has a remote. The
     /// KEK unlock landing skips the unlock-time sync tail because the
     /// memory-capped autofill process shares it, so the main app calls this

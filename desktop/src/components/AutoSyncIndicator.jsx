@@ -147,9 +147,10 @@ export default function AutoSyncIndicator() {
     lastManualSync = Date.now();
     syncPhase("start");
     try {
-      await daemon("sync.pull");
+      // Full reconcile through the coordinator (commit admitted dirty
+      // paths, pull, push), guarded against a paused conflict.
+      await daemon("sync.now");
       window.dispatchEvent(new CustomEvent("baluard:vault-synced"));
-      await daemon("sync.push");
       syncPhase("success");
     } catch {
       syncPhase("failure");

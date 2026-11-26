@@ -21,19 +21,19 @@ describe("SyncButton", () => {
     cleanup();
   });
 
-  it("runs pull then push and confirms", async () => {
-    daemonMock.mockResolvedValue("{}");
+  it("runs the guarded full reconcile and confirms", async () => {
+    daemonMock.mockResolvedValue("\"up_to_date\"");
     const { container } = render(() => <SyncButton />);
     fireEvent.click(container.querySelector("[data-testid='sync-now']"));
     await waitFor(() => expect(toastSuccessMock).toHaveBeenCalled(), { timeout: 3000 });
     const actions = daemonMock.mock.calls.map((c) => c[0]);
-    expect(actions).toEqual(["sync.pull", "sync.push"]);
+    expect(actions).toEqual(["sync.now"]);
   });
 
   it("is disabled while a sync is in flight", async () => {
-    let resolvePull;
+    let resolveSync;
     daemonMock.mockImplementation((action) => {
-      if (action === "sync.pull") return new Promise((r) => { resolvePull = r; });
+      if (action === "sync.now") return new Promise((r) => { resolveSync = r; });
       return Promise.resolve("{}");
     });
     const { container } = render(() => <SyncButton />);
@@ -41,8 +41,8 @@ describe("SyncButton", () => {
     fireEvent.click(btn);
     await waitFor(() => expect(btn.disabled).toBe(true));
     fireEvent.click(btn);
-    expect(daemonMock.mock.calls.filter((c) => c[0] === "sync.pull")).toHaveLength(1);
-    resolvePull("{}");
+    expect(daemonMock.mock.calls.filter((c) => c[0] === "sync.now")).toHaveLength(1);
+    resolveSync("{}");
     await waitFor(() => expect(btn.disabled).toBe(false));
   });
 
