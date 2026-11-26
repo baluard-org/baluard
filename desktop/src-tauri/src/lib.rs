@@ -737,8 +737,9 @@ fn show_window(window: tauri::WebviewWindow) {
     // The webview loaded and rendered: the previous run did NOT die before
     // presenting. Clear the Linux watchdog marker here — logout/shutdown
     // SIGTERMs never reach RunEvent::Exit and must not read as crashes.
+    // A start-hidden run writes the marker here instead (first present).
     #[cfg(target_os = "linux")]
-    render::clear_marker();
+    render::on_window_presented();
 }
 
 /// Full quit from the frontend keyboard shortcut; Linux and Windows have no
@@ -1650,6 +1651,8 @@ mod render {
     pub static ACTIVE: AtomicBool = AtomicBool::new(false);
     /// The crash-recovery heuristic triggered THIS session (implies ACTIVE).
     pub static RECOVERY: AtomicBool = AtomicBool::new(false);
+    /// This run started with the window hidden (start_hidden pref).
+    pub static HIDDEN_START: AtomicBool = AtomicBool::new(false);
 
     fn marker_path() -> std::path::PathBuf {
         baluard_core::paths::data_dir().join("render-watchdog.flag")
@@ -1707,6 +1710,20 @@ mod render {
 
     pub fn clear_marker() {
         let _ = std::fs::remove_file(marker_path());
+    }
+
+    /// First window presentation of a run. A start-hidden run presents
+    /// nothing at launch, so its crash marker is written HERE, not at
+    /// launch: a hidden run killed before its first Show must not read as
+    /// a rendering crash, while a blank-window crash after the first Show
+    /// still leaves the marker for the next launch. Normal runs keep the
+    /// launch-write, present-clears order.
+    pub fn on_window_presented() {
+        if HIDDEN_START.load(Ordering::Relaxed) {
+            write_marker();
+        } else {
+            clear_marker();
+        }
     }
 }
 
@@ -1767,13 +1784,14 @@ pub fn run() {
         if render::init() {
             eprintln!("[desktop] compatible rendering enabled (WEBKIT_DISABLE_DMABUF_RENDERER=1)");
         }
-        render::write_marker();
-        // A start-hidden run presents nothing until the tray Show, so it can
-        // die without ever clearing the marker; that must not read as a
-        // rendering crash on the next launch (the decision above already
-        // consumed the previous run's marker).
-        if load_desktop_prefs().start_hidden {
-            render::clear_marker();
+        // init() already consumed the previous run's marker above. A
+        // start-hidden run writes its marker on the first window
+        // presentation instead (render::on_window_presented), so a hidden
+        // run killed before its first Show never reads as a crash.
+        let hidden = load_desktop_prefs().start_hidden;
+        render::HIDDEN_START.store(hidden, std::sync::atomic::Ordering::Relaxed);
+        if !hidden {
+            render::write_marker();
         }
     }
 

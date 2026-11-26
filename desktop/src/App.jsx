@@ -160,6 +160,14 @@ export default function App() {
           startHidden = prefs.start_hidden === true;
           runInBackgroundPref = prefs.run_in_background !== false;
         } catch {}
+        // Fail visible: a hidden window with no tray icon strands the user
+        // (GNOME without an SNI host renders no tray at all), so there the
+        // pref yields. Same invariant as the close-path stranding guard.
+        if (startHidden) {
+          try {
+            if (await invoke("tray_host_offline")) startHidden = false;
+          } catch {}
+        }
         if (!startHidden) {
           await showWindow();
         }

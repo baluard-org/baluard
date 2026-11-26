@@ -67,6 +67,9 @@ fn pixmap_for_theme(dark: bool, light_glyph: &ksni::Icon, dark_glyph: &ksni::Ico
 }
 
 fn show_main_window(app: &AppHandle) {
+    // Tray Show is a presentation: for a start-hidden run this is where the
+    // crash marker first gets written (see render::on_window_presented).
+    crate::render::on_window_presented();
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.set_focus();
