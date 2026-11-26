@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -12,6 +13,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -110,7 +113,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /** Unlocked-subtree navigation (flat back stack, no nav library yet). */
-private sealed interface Nav {
+internal sealed interface Nav {
     data object List : Nav
     data class Detail(val cipherId: String) : Nav
     data class Edit(val cipherId: String?) : Nav
@@ -137,6 +140,22 @@ private fun navDepth(nav: Nav): Int = when (nav) {
     Nav.People, Nav.Collections, Nav.Groups, Nav.Space, Nav.Activity, Nav.Contacts, Nav.Outboxes, Nav.GitBackup, Nav.Diagnostics -> 2
     is Nav.Edit -> 2
 }
+
+/**
+ * Where a back gesture from [nav] lands; null at the list root (the system
+ * shows back-to-home there, so there is nothing in-app to preview). Mirrors
+ * the commit handler in [BaluardApp]; kept pure so the predictive preview
+ * and the commit can never disagree.
+ */
+internal fun predictiveBackDestination(nav: Nav, origin: Nav?): Nav? = when (nav) {
+    Nav.List -> null
+    is Nav.Detail, is Nav.Edit -> origin ?: Nav.List
+    Nav.People, Nav.Collections, Nav.Groups, Nav.Space, Nav.Activity, Nav.Contacts, Nav.Outboxes, Nav.GitBackup, Nav.Diagnostics -> Nav.Settings
+    else -> Nav.List
+}
+
+/** An in-flight predictive back gesture: leaving [from], landing at [destination]. */
+private data class PredictiveBackState(val from: Nav, val destination: Nav, val fromLeftEdge: Boolean)
 
 /** Top-level navigation stages. */
 private sealed interface RootStage {
@@ -371,11 +390,50 @@ fun App(
                 ?: path.substringAfterLast('/')
         }
 
+        // Predictive back gesture state: while the user swipes, [navScreen]
+        // renders the destination under the shrinking front screen.
+        var predictiveBack by remember { mutableStateOf<PredictiveBackState?>(null) }
+        val predictiveProgress = remember { Animatable(0f) }
+        val predictiveBackOverlayModifier: (Nav) -> Modifier = { n ->
+            val pb = predictiveBack
+            if (pb != null && n == pb.from) {
+                Modifier.graphicsLayer {
+                    val prog = predictiveProgress.value.coerceIn(0f, 1f)
+                    val dir = if (pb.fromLeftEdge) -1f else 1f
+                    scaleX = 1f - 0.1f * prog
+                    scaleY = 1f - 0.1f * prog
+                    translationX = dir * prog * 24.dp.toPx()
+                    shape = RoundedCornerShape(24.dp * prog)
+                    clip = true
+                    shadowElevation = 12.dp.toPx() * prog
+                }
+            } else {
+                Modifier
+            }
+        }
+
+
         // System back: pop in-app navigation when a screen sits above its
         // parent; at the roots (vault list, unlock, provider picker) let the
         // system do its default (exit/minimize).
-        BackPressHandler(
+        PredictiveBackHandler(
             enabled = (unlocked && nav != Nav.List) || (showOpen && flowVm.canGoBack()),
+            onProgress = { event ->
+                val dest = predictiveBackDestination(nav, detailOrigin)
+                if (dest != null) {
+                    val pb = predictiveBack
+                    if (pb == null || pb.from != nav) {
+                        predictiveBack = PredictiveBackState(nav, dest, event.fromLeftEdge)
+                    }
+                    scope.launch { predictiveProgress.snapTo(event.progress) }
+                }
+            },
+            onCancelled = {
+                scope.launch {
+                    predictiveProgress.animateTo(0f, tween(120))
+                    predictiveBack = null
+                }
+            },
             onBack = {
                 when {
                     unlocked && (nav is Nav.Detail || nav is Nav.Edit) -> {
@@ -394,6 +452,10 @@ fun App(
                     }
                     unlocked && nav != Nav.List -> nav = Nav.List
                     showOpen -> flowVm.back()
+                }
+                if (predictiveBack != null) {
+                    predictiveBack = null
+                    scope.launch { predictiveProgress.snapTo(0f) }
                 }
             },
         )
@@ -672,29 +734,7 @@ fun App(
             ) { rootStage ->
                 when (rootStage) {
                     RootStage.Unlocked -> auth.vault()?.let { vault ->
-                        AnimatedContent(
-                            targetState = nav,
-                            transitionSpec = {
-                                val forward = navDepth(targetState) >= navDepth(initialState)
-                                if (forward) {
-                                    (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() } +
-                                     fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
-                                        .togetherWith(
-                                            slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { -(it * 0.08f).toInt() } +
-                                            fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
-                                        )
-                                } else {
-                                    (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.12f).toInt() } +
-                                     fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
-                                        .togetherWith(
-                                            slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { (it * 0.08f).toInt() } +
-                                            fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
-                                        )
-                                }
-                            },
-                            label = "NavTransition",
-                            modifier = Modifier.fillMaxSize(),
-                        ) { n ->
+                        val navScreen: @Composable (Nav) -> Unit = { n ->
                             when (n) {
                                 Nav.List -> VaultHomeScreen(
                                     vault = vault,
@@ -947,6 +987,38 @@ fun App(
                                     clientEnv = clientEnv,
                                     onBack = { nav = Nav.Settings },
                                 )
+                            }
+                        }
+                        Box(Modifier.fillMaxSize()) {
+                            // Destination preview sits under the front screen; both render
+                            // only while a back gesture is in flight.
+                            predictiveBack?.let { pb ->
+                                Box(Modifier.fillMaxSize()) { navScreen(pb.destination) }
+                            }
+                            AnimatedContent(
+                                targetState = nav,
+                                transitionSpec = {
+                                    val forward = navDepth(targetState) >= navDepth(initialState)
+                                    if (forward) {
+                                        (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { (it * 0.12f).toInt() } +
+                                         fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                                            .togetherWith(
+                                                slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { -(it * 0.08f).toInt() } +
+                                                fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                            )
+                                    } else {
+                                        (slideInHorizontally(animationSpec = tween(240, easing = FastOutSlowInEasing)) { -(it * 0.12f).toInt() } +
+                                         fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)))
+                                            .togetherWith(
+                                                slideOutHorizontally(animationSpec = tween(200, easing = FastOutLinearInEasing)) { (it * 0.08f).toInt() } +
+                                                fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing))
+                                            )
+                                    }
+                                },
+                                label = "NavTransition",
+                                modifier = Modifier.fillMaxSize(),
+                            ) { n ->
+                                Box(Modifier.fillMaxSize().then(predictiveBackOverlayModifier(n))) { navScreen(n) }
                             }
                         }
                     }
