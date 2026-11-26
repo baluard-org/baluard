@@ -313,7 +313,10 @@
     "movedToast": "Entry moved",
     "reorderUri": "Drag to reorder",
     "serveViaAgentLabel": "Serve via SSH agent",
-    "serveViaAgentDesc": "Let the local SSH agent use this key for terminal and git signing. The master switch in Settings must also be on."
+    "serveViaAgentDesc": "Let the local SSH agent use this key for terminal and git signing. The master switch in Settings must also be on.",
+    "hasAttachments": "Has attachments",
+    "hasPasskey": "Has passkey",
+    "hasTotp": "Has one-time codes"
   },
   "settings": {
     "faviconLabel": "Show website icons",

@@ -313,7 +313,10 @@
     "movedToast": "Élément déplacé",
     "reorderUri": "Glisser pour réordonner",
     "serveViaAgentLabel": "Servir via l'agent SSH",
-    "serveViaAgentDesc": "Permet à l'agent SSH local d'utiliser cette clé pour les signatures de terminal et de git. L'interrupteur principal dans Réglages doit aussi être activé."
+    "serveViaAgentDesc": "Permet à l'agent SSH local d'utiliser cette clé pour les signatures de terminal et de git. L'interrupteur principal dans Réglages doit aussi être activé.",
+    "hasAttachments": "A des pièces jointes",
+    "hasPasskey": "A une clé d'accès",
+    "hasTotp": "A des codes à usage unique"
   },
   "autosync": {
     "upToDate": "Toutes les modifications sont synchronisées",

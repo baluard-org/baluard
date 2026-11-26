@@ -28,6 +28,10 @@ export function IconCard(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></SVG>;
 }
 
+export function IconPaperclip(props) {
+  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1018 8.84l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.48" /></SVG>;
+}
+
 export function IconIdentity(props) {
   return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></SVG>;
 }

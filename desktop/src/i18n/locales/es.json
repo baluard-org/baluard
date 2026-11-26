@@ -272,7 +272,10 @@
     "movedToast": "Entrada movida",
     "reorderUri": "Arrastra para reordenar",
     "serveViaAgentLabel": "Compartir por el agente SSH",
-    "serveViaAgentDesc": "Permite que el agente SSH local use esta clave para autenticar en la terminal y firmar en Git. El interruptor principal en Ajustes también debe estar activado."
+    "serveViaAgentDesc": "Permite que el agente SSH local use esta clave para autenticar en la terminal y firmar en Git. El interruptor principal en Ajustes también debe estar activado.",
+    "hasAttachments": "Tiene adjuntos",
+    "hasPasskey": "Tiene llave de acceso",
+    "hasTotp": "Tiene códigos de un solo uso"
   },
   "settings": {
     "faviconLabel": "Mostrar iconos de sitios web",

@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 import { useI18n } from "../i18n/index.jsx";
 import CipherAvatar from "./CipherAvatar.jsx";
+import { IconPaperclip, IconFingerprint, IconClock } from "./Icon.jsx";
 import { uriStr } from "../lib/utils.js";
 
 export default function CipherRow(props) {
@@ -39,6 +40,17 @@ export default function CipherRow(props) {
             </span>
           </Show>
         </div>
+      </div>
+      <div class="shrink-0 flex items-center gap-1.5 text-[var(--color-muted)]">
+        <Show when={(props.cipher.attachments || []).length > 0}>
+          <IconPaperclip class="w-4 h-4" data-testid="row-attachment-indicator" title={t("entry.hasAttachments")} />
+        </Show>
+        <Show when={(props.cipher.fido2_credentials || []).length > 0}>
+          <IconFingerprint class="w-4 h-4" data-testid="row-passkey-indicator" title={t("entry.hasPasskey")} />
+        </Show>
+        <Show when={Boolean(props.cipher.totp)}>
+          <IconClock class="w-4 h-4" data-testid="row-totp-indicator" title={t("entry.hasTotp")} />
+        </Show>
       </div>
     </button>
   );
