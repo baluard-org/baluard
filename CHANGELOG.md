@@ -6,6 +6,12 @@ Notable user-facing changes per release.
 
 No user-facing changes yet.
 
+## 0.9.2 - 2026-11-26
+
+- Browser: passkey sign-ins on sites that require extra identity verification now work: the extension asks for your master password in a small popout, verifies it, and retries the sign-in. Previously these sign-ins always failed with an error.
+- All apps: security hardening for passkeys used through the browser extension: a "verified" result is honored only after a fresh master-password check, and a plain picker click now counts as presence, not verification.
+- All apps: syncing now refuses to release the provider access token when the sync URL is malformed (no host). Previously such a URL passed the check and the token went out anyway.
+
 ## 0.9.1 - 2026-11-25
 
 - Desktop: the "Check for Updates..." menu action now works on every screen, including the lock and login screens. Previously it only responded inside the vault.
