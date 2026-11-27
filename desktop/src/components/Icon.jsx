@@ -29,7 +29,7 @@ export function IconCard(props) {
 }
 
 export function IconPaperclip(props) {
-  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57A4 4 0 1018 8.84l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.48" /></SVG>;
+  return <SVG {...props}><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l8.57-8.57a4 4 0 115.66 5.66l-8.59 8.57a2 2 0 01-2.83-2.83l8.49-8.48" /></SVG>;
 }
 
 export function IconIdentity(props) {
