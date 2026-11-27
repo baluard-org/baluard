@@ -2,6 +2,10 @@
 
 Notable user-facing changes per release.
 
+## [UNRELEASED]
+
+No user-facing changes yet.
+
 ## 0.9.5 - 2026-11-26
 
 - Desktop: the attachments paperclip on entry rows draws its full loop again; a broken arc left it looking cut off at the top.
