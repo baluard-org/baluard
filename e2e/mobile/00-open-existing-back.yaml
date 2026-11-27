@@ -11,14 +11,14 @@ name: 00-open-existing-back
     optional: true
 - assertVisible: "Baluard"
 - tapOn: "Open an existing vault"
-- assertVisible: "Baluard Supporter"
+- assertVisible: "Baluard Fellowship"
 - tapOn: "Subscribe"
 - assertVisible: "Cancel"
 - tapOn: "Cancel"
-- assertVisible: "Baluard Supporter"
+- assertVisible: "Baluard Fellowship"
 - tapOn: "Back"
 - assertVisible: "Open an existing vault"
 - tapOn: "Open an existing vault"
-- assertVisible: "Baluard Supporter"
+- assertVisible: "Baluard Fellowship"
 - back
 - assertVisible: "Open an existing vault"

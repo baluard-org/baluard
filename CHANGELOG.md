@@ -4,7 +4,7 @@ Notable user-facing changes per release.
 
 ## [UNRELEASED]
 
-No user-facing changes yet.
+- Android: the supporter status is now called Baluard Fellowship everywhere in the app, and the Settings card carries the Fellowship golden lock. Same entitlement, clearer name; nothing about access, billing, or the vault changes.
 
 ## 0.9.4 - 2026-11-26
 

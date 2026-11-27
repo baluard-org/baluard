@@ -1,6 +1,6 @@
 # Baluard Fellowship
 
-Baluard Fellowship is a tiny companion APK for invited friends and family who help test and polish Baluard. While its genuine APK is installed, the Play flavor of Baluard unlocks the same features as an active Supporter subscription. Removing it returns Baluard to the normal Play entitlement check.
+Baluard Fellowship is a tiny companion APK for invited friends and family who help test and polish Baluard. While its genuine APK is installed, the Play flavor of Baluard unlocks the same features as an active paid subscription. Removing it returns Baluard to the normal Play entitlement check.
 
 The companion has no network permission, accounts, activation, expiry, billing, vault access, or backend. Its only screen thanks the user and confirms the active Fellowship access.
 

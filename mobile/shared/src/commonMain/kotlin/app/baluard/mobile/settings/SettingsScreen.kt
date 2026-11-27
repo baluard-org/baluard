@@ -78,6 +78,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.JsonArray
+import org.jetbrains.compose.resources.painterResource
+import baluard_mobile.shared.generated.resources.Res
+import baluard_mobile.shared.generated.resources.fellowship_lock
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import app.baluard.mobile.MobileProvider
@@ -202,8 +205,9 @@ fun SettingsScreen(
     // Sync-now feedback: shared runner choreography (spinner hold + terminal
     // beat + settle), same as the hub's sync button.
     var syncPhase by remember { mutableStateOf(SyncPhase.Idle) }
-var showSyncUpgrade by remember { mutableStateOf(false) }
-val entitlement by Entitlements.state.collectAsState()
+    var showSyncUpgrade by remember { mutableStateOf(false) }
+    var showFellowshipSheet by remember { mutableStateOf(false) }
+    val entitlement by Entitlements.state.collectAsState()
     var myRole by remember { mutableStateOf("viewer") }
     LaunchedEffect(vault) {
         myRole = repo.myRole(vault)
@@ -233,12 +237,30 @@ val entitlement by Entitlements.state.collectAsState()
             if (selectedCategory == null) {
                 if (Entitlements.shouldShowSupporterStatus(entitlement)) {
                     BaluardCard(animateSize = false) {
-                        Text(
-                            text = t("upgrade.title"),
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { showFellowshipSheet = true },
+                        ) {
+                            Image(
+                                painter = painterResource(Res.drawable.fellowship_lock),
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = t("upgrade.title"),
+                                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
+                    FellowshipSheet(shown = showFellowshipSheet, onDismiss = { showFellowshipSheet = false })
                 }
                 SettingsCategoryIndex(
                     onSelect = onSelectCategory,
