@@ -23,7 +23,12 @@ for relative in "${required[@]}"; do
   [[ -s "$SRC/$relative" ]] || fail "incomplete staging tree; missing $relative"
 done
 compgen -G "$SRC/fdroid/repo/*.apk" >/dev/null || fail "incomplete staging tree; no APK found"
-[[ "$(<"$SITE/CNAME")" == "baluard.app" ]] || fail "site marker is missing or invalid: $SITE/CNAME"
+# The site repo split on 2026-11-24: main carries sources (CNAME at
+# site/static/), gh-pages carries the build (CNAME at root). Either layout
+# proves the target is the baluard.app site repo.
+site_cname="$SITE/CNAME"
+[[ -s "$site_cname" ]] || site_cname="$SITE/site/static/CNAME"
+[[ -s "$site_cname" && "$(<"$site_cname")" == "baluard.app" ]] || fail "site marker is missing or invalid: $SITE (CNAME or site/static/CNAME must read baluard.app)"
 git -C "$SITE" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "site is not a git worktree: $SITE"
 # The site repo no longer carries the package trees; packages.baluard.app
 # serves them from the baluard-packages repository. Recreating the trees in
