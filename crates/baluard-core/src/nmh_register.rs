@@ -9,7 +9,9 @@
 //! the other side.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
+use std::path::PathBuf;
 
 pub const HOST_NAME: &str = "app.baluard.browser";
 pub const LEGACY_HOST_NAME: &str = "xyz.actitud.baluard";
