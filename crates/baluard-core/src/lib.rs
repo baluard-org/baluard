@@ -8,6 +8,7 @@ pub mod bridge;
 pub mod crypto;
 pub mod device_manager;
 pub mod devices;
+pub mod extract;
 pub mod generator;
 pub mod health;
 pub mod hwkey;

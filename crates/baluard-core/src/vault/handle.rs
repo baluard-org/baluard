@@ -9253,6 +9253,97 @@ impl VaultHandle {
         }
     }
 
+    /// Plaintext of one attachment. Offline paths (backup extract) use
+    /// this instead of reimplementing the domain-aware item-key resolution.
+    /// Torn root rotations can leave a blob on either the old or the new
+    /// key, so both the cipher's and the blob's own header epoch are tried.
+    pub fn read_attachment_plaintext(
+        &self,
+        cipher_id: Uuid,
+        attachment_id: Uuid,
+    ) -> Result<Vec<u8>, BaluardError> {
+        let unlocked = match &self.state {
+            VaultState::Unlocked(u) => u,
+            VaultState::Locked => {
+                return Err(VaultError::InvalidOperation(
+                    "unlock the vault before reading attachments".into(),
+                )
+                .into());
+            }
+        };
+        let cipher_path = self
+            .cipher_file_path(cipher_id)
+            .or_else(|| self.trash_file_path(cipher_id))
+            .ok_or_else(|| BaluardError::from(VaultError::CipherNotFound(cipher_id.to_string())))?;
+        let cipher_bytes = std::fs::read(&cipher_path)?;
+        let cipher_epoch = crate::vault::envelope::deserialize(&cipher_bytes)?
+            .header
+            .key_epoch;
+        let blob_path = self
+            .path
+            .join("entries")
+            .join(cipher_id.to_string())
+            .join("attachments")
+            .join(format!("{attachment_id}.enc"));
+        let enc_blob = std::fs::read(&blob_path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => VaultError::Corrupt(format!(
+                "attachment blob not found: {cipher_id}/{attachment_id}"
+            )),
+            _ => VaultError::Metadata(format!("reading attachment blob: {e}")),
+        })?;
+        let blob_epoch = crate::vault::envelope::deserialize(&enc_blob)?
+            .header
+            .key_epoch;
+        let mut last_err: Option<BaluardError> = None;
+        for epoch in [cipher_epoch, blob_epoch] {
+            let Ok(item_key) = self.resolve_item_key(unlocked, &cipher_path, cipher_id, epoch)
+            else {
+                continue;
+            };
+            match crate::vault::attachment::decrypt_attachment(
+                self.vault_id,
+                cipher_id,
+                attachment_id,
+                item_key.as_bytes(),
+                &enc_blob,
+            ) {
+                Ok(plain) => return Ok(plain),
+                Err(e) => last_err = Some(e.into()),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            BaluardError::from(VaultError::Corrupt(
+                "no usable item key epoch for attachment".into(),
+            ))
+        }))
+    }
+
+    /// Verify a master password against the KEK canary without changing
+    /// session state. `Ok(false)` means this vault copy carries no canary
+    /// to verify against (no member unlock file and no vault-level canary);
+    /// `Err` means the password is wrong.
+    pub fn verify_master_password(&self, master_password: &str) -> Result<bool, BaluardError> {
+        let member = crate::vault::members::load_member_unlock(&self.path, self.device_id)?;
+        let (kek, canary) = if let Some(m) = member {
+            let canary = hex::decode(&m.kek_canary)
+                .map_err(|_| VaultError::Corrupt("member canary".into()))?;
+            let kek = Zeroizing::new(kdf::derive_kek(master_password, &m.kdf_params)?);
+            (kek, canary)
+        } else {
+            let canary_path = self.path.join("meta/kek-canary.enc");
+            if !canary_path.exists() {
+                return Ok(false);
+            }
+            let canary = std::fs::read(&canary_path)
+                .map_err(|e| VaultError::Metadata(format!("reading kek canary: {e}")))?;
+            let kek = Zeroizing::new(kdf::derive_kek(master_password, &self.kdf_params)?);
+            (kek, canary)
+        };
+        let session_key = hkdf_derive::derive_session_key(&kek)?;
+        crate::vault::canary::verify_kek_canary(&session_key, &canary)?;
+        Ok(true)
+    }
+
     /// Schema probe for raw envelope bytes (git blob sides of a conflict):
     /// same epoch/key resolution as [`decrypt_cipher_bytes`], but returns
     /// the stored item schema instead of a typed cipher, without the typed

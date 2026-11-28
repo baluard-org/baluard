@@ -490,6 +490,15 @@ enum Commands {
         force: bool,
     },
 
+    /// Extract a plaintext migration dump (JSON + attachments) from a backup zip.
+    BackupExtract {
+        /// Path to the backup zip (a vault-folder zip or a mirror zip).
+        zip_path: String,
+        /// Output directory for the plaintext dump (created new).
+        #[arg(short, long)]
+        out: String,
+    },
+
     /// Show password health report (weak, reused, old passwords).
     Health,
 
@@ -2520,6 +2529,10 @@ fn main() {
             generate,
             force,
         ),
+
+        Commands::BackupExtract { zip_path, out } => {
+            commands::handle_backup_extract(&zip_path, &out)
+        }
 
         Commands::Health => commands::handle_health(cli.socket.as_deref()),
 

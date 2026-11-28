@@ -6342,3 +6342,164 @@ fn vaults_detach(
     }
     Ok(())
 }
+
+// ── Backup extract (offline migration dump) ──
+
+/// Write a file with owner-only permissions (0600 on Unix).
+fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        f.write_all(bytes)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes)?;
+    }
+    Ok(())
+}
+
+/// Create a directory with owner-only permissions (0700 on Unix).
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir_all(path)?;
+    }
+    Ok(())
+}
+
+const EXTRACT_README: &str = "\
+This folder holds a plaintext export made from a Baluard backup.
+
+- entries.json: every entry in interoperable JSON. Most password
+  managers import this directly: look for the Bitwarden import option
+  in the app you are moving to.
+- attachments/<entry>/<file>: files attached to entries, decrypted.
+- manifest.json: counts and SHA-256 checksums of everything above.
+
+Everything here is UNENCRYPTED. Anyone who can read this folder can
+read your passwords. Move it somewhere safe and delete it when the
+import is done.
+";
+
+/// Offline migration dump from a backup zip: decrypted JSON of every
+/// entry plus all attachment files. Asks for the 24-word recovery phrase
+/// (env: BALUARD_RECOVERY_PHRASE) and the master password
+/// (env: BALUARD_PASSWORD). Never touches the network or the daemon.
+pub fn handle_backup_extract(
+    zip_path: &str,
+    out_dir: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let phrase = match std::env::var("BALUARD_RECOVERY_PHRASE") {
+        Ok(p) => {
+            warn_argv_secret("BALUARD_RECOVERY_PHRASE");
+            p
+        }
+        Err(_) => prompt_password("Recovery phrase (24 words): ")?
+            .trim()
+            .to_string(),
+    };
+    if phrase.is_empty() {
+        return Err(
+            "no recovery phrase available. Set BALUARD_RECOVERY_PHRASE or run interactively."
+                .into(),
+        );
+    }
+    let password = match std::env::var("BALUARD_PASSWORD") {
+        Ok(p) => {
+            warn_argv_secret("BALUARD_PASSWORD");
+            p
+        }
+        Err(_) => prompt_password("Master password: ")?,
+    };
+
+    let zip = Path::new(zip_path);
+    if !zip.exists() {
+        return Err(format!("backup zip not found: {zip_path}").into());
+    }
+    let work = std::env::temp_dir().join(format!("baluard-extract-{}", uuid::Uuid::new_v4()));
+    let report = match baluard_core::extract::extract_from_zip(
+        zip,
+        &work,
+        &phrase,
+        if password.is_empty() {
+            None
+        } else {
+            Some(&password)
+        },
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&work);
+            return Err(e.into());
+        }
+    };
+    let _ = std::fs::remove_dir_all(&work);
+
+    let out = Path::new(out_dir);
+    if out.exists() {
+        return Err(format!("output directory already exists: {out_dir}").into());
+    }
+    create_private_dir(out)?;
+
+    write_private_file(&out.join("entries.json"), report.json.as_bytes())?;
+    for att in &report.attachments {
+        let dir = out.join("attachments").join(att.cipher_id.to_string());
+        create_private_dir(&dir)?;
+        // Attachment filenames come from the vault, not from the user's
+        // disk: keep them but refuse anything path-like.
+        let safe_name = att.filename.replace(['/', '\\'], "_");
+        write_private_file(&dir.join(safe_name), &att.data)?;
+    }
+
+    let manifest = serde_json::json!({
+        "entries": report.entries,
+        "folders": report.folders,
+        "password_verified": report.password_verified,
+        "attachments": report.attachments.iter().map(|a| {
+            serde_json::json!({
+                "entry": a.cipher_id.to_string(),
+                "file": a.filename,
+                "size": a.size_bytes,
+                "sha256": a.sha256_hex,
+            })
+        }).collect::<Vec<_>>(),
+    });
+    write_private_file(
+        &out.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest)?.as_bytes(),
+    )?;
+    write_private_file(&out.join("README.txt"), EXTRACT_README.as_bytes())?;
+
+    println!(
+        "Extracted {} entries ({} folders) and {} attachments to {}",
+        report.entries,
+        report.folders,
+        report.attachments.len(),
+        out_dir
+    );
+    if !report.password_verified {
+        println!(
+            "Note: this backup carries no master-password canary, so only the recovery phrase was verified."
+        );
+    }
+    println!(
+        "WARNING: this folder is plaintext. Move it somewhere safe and delete it after importing."
+    );
+    Ok(())
+}
