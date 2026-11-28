@@ -239,11 +239,17 @@ pub fn materialize_zip(zip_path: &Path, work_dir: &Path) -> Result<PathBuf, Balu
         return Err(VaultError::Corrupt("backup zip is too large to extract safely".into()).into());
     }
 
+    let mut total_written: u64 = 0;
     if is_mirror {
         let gitdir = work_dir.join("repo");
         std::fs::create_dir_all(&gitdir)
             .map_err(|e| VaultError::Metadata(format!("creating work dir: {e}")))?;
-        extract_zip_entries(&mut archive, &gitdir, shared_root.as_deref())?;
+        extract_zip_entries(
+            &mut archive,
+            &gitdir,
+            shared_root.as_deref(),
+            &mut total_written,
+        )?;
         // The mirror holds the repo history; the working tree with the
         // vault files comes out of the checkout.
         let checkout = work_dir.join("checkout");
@@ -254,7 +260,12 @@ pub fn materialize_zip(zip_path: &Path, work_dir: &Path) -> Result<PathBuf, Balu
         let dest = work_dir.join("vault");
         std::fs::create_dir_all(&dest)
             .map_err(|e| VaultError::Metadata(format!("creating work dir: {e}")))?;
-        extract_zip_entries(&mut archive, &dest, shared_root.as_deref())?;
+        extract_zip_entries(
+            &mut archive,
+            &dest,
+            shared_root.as_deref(),
+            &mut total_written,
+        )?;
         Ok(dest)
     }
 }
@@ -325,6 +336,7 @@ fn extract_zip_entries<R>(
     archive: &mut zip::ZipArchive<R>,
     dest: &Path,
     shared_root: Option<&str>,
+    total_written: &mut u64,
 ) -> Result<(), BaluardError>
 where
     R: std::io::Read + std::io::Seek,
@@ -335,6 +347,9 @@ where
             .map_err(|e| VaultError::Corrupt(format!("reading zip entry {i}: {e}")))?;
         let raw = entry.name().to_string();
         let rel = strip_shared(&raw, shared_root);
+        // Some zip producers prefix names with "./"; CurDir cannot
+        // escape, so it is stripped rather than rejected.
+        let rel = rel.trim_start_matches("./");
         if rel.is_empty() {
             continue;
         }
@@ -369,6 +384,16 @@ where
         .map_err(|e| VaultError::Metadata(format!("copying zip entry: {e}")))?;
         if copied > MAX_ZIP_UNCOMPRESSED_BYTES {
             return Err(VaultError::Corrupt(format!("zip entry too large: {raw}")).into());
+        }
+        // The per-entry take() cannot see the whole archive: a zip whose
+        // entries each claim 0 bytes could still fill the disk. Count
+        // bytes actually written across all entries.
+        *total_written = total_written.saturating_add(copied);
+        if *total_written > MAX_ZIP_UNCOMPRESSED_BYTES {
+            return Err(VaultError::Corrupt(
+                "backup zip expands beyond the safe size limit".into(),
+            )
+            .into());
         }
     }
     Ok(())

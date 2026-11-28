@@ -6366,25 +6366,51 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Make a vault attachment filename creatable on every platform: path
+/// separators and the characters Windows rejects become underscores,
+/// trailing dots and spaces go (Windows drops them silently anyway),
+/// and exact reserved device names get an underscore prefix.
+fn safe_attachment_name(filename: &str) -> String {
+    let cleaned: String = filename
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '?' | '*' | '<' | '>' | '|' | '"' | '\0' => '_',
+            _ => c,
+        })
+        .collect();
+    let cleaned = cleaned.trim_end_matches(['.', ' ']).to_string();
+    let base = cleaned.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if reserved.contains(&base.as_str()) {
+        format!("_{cleaned}")
+    } else {
+        cleaned
+    }
+}
+
 /// Keep vault attachment filenames but make collisions unique: two
-/// attachments may share a name (or differ only in path separators),
-/// and a mid-write AlreadyExists failure must not be possible.
+/// attachments may share a name, and a mid-write AlreadyExists failure
+/// must not be possible. Comparison is lowercase because macOS and
+/// Windows filesystems treat case-different names as one file.
 fn unique_attachment_name(
     used: &mut std::collections::HashSet<String>,
     id: &str,
     filename: &str,
 ) -> String {
-    let safe = filename.replace(['/', '\\'], "_");
+    let safe = safe_attachment_name(filename);
     let name = if safe.is_empty() {
         format!("{id}.bin")
     } else {
         safe
     };
-    if used.insert(name.clone()) {
+    if used.insert(name.to_lowercase()) {
         name
     } else {
         let file = format!("{id}_{name}");
-        used.insert(file.clone());
+        used.insert(file.to_lowercase());
         file
     }
 }
@@ -6498,21 +6524,48 @@ pub fn handle_backup_extract(
         uuid::Uuid::new_v4().simple()
     ));
     let _ = std::fs::remove_dir_all(&stage);
+    // A crashed run leaves a .partial dir with a random name the user
+    // never saw; sweep its siblings before staging a fresh one.
+    let parent = out
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let stage_prefix = format!(
+        "{}.partial-",
+        out.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("extract")
+    );
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with(&stage_prefix) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    // Compute every written filename up front so the manifest matches
+    // the files on disk even where a name needed uniquifying. Sets are
+    // per entry: files land in one folder per entry.
+    let mut used_by_entry: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    let named: Vec<(&baluard_core::extract::ExtractedAttachment, String)> = report
+        .attachments
+        .iter()
+        .map(|att| {
+            let used = used_by_entry.entry(att.cipher_id.to_string()).or_default();
+            let name = unique_attachment_name(used, &att.attachment_id.to_string(), &att.filename);
+            (att, name)
+        })
+        .collect();
+
     let staged = (|| -> std::io::Result<()> {
         create_private_dir(&stage)?;
         write_private_file(&stage.join("README.txt"), EXTRACT_README.as_bytes())?;
         write_private_file(&stage.join("entries.json"), report.json.as_bytes())?;
-        let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for att in &report.attachments {
+        for (att, safe_name) in &named {
             let dir = stage.join("attachments").join(att.cipher_id.to_string());
             create_private_dir(&dir)?;
-            // Attachment filenames come from the vault, not from the
-            // user's disk: keep them but refuse anything path-like.
-            let safe_name = unique_attachment_name(
-                &mut used_names,
-                &att.attachment_id.to_string(),
-                &att.filename,
-            );
             write_private_file(&dir.join(safe_name), &att.data)?;
         }
         let manifest = serde_json::json!({
@@ -6521,10 +6574,11 @@ pub fn handle_backup_extract(
             "password_verified": password_verified,
             "password_check": password_check,
             "attachments_skipped": report.skipped_attachments,
-            "attachments": report.attachments.iter().map(|a| {
+            "attachments": named.iter().map(|(a, written)| {
                 serde_json::json!({
                     "entry": a.cipher_id.to_string(),
-                    "file": a.filename,
+                    "file": written,
+                    "original_name": a.filename,
                     "size": a.size_bytes,
                     "sha256": a.sha256_hex,
                 })
@@ -6557,7 +6611,7 @@ pub fn handle_backup_extract(
         }
         Some(baluard_core::extract::MasterPasswordCheck::Mismatch) => {
             println!(
-                "WARNING: the master password did not match the canary this backup carries (normal for member-device backups). The recovery phrase opened it; if you expected a different vault, stop and delete this folder."
+                "WARNING: the master password did not match the canary this backup carries. The recovery phrase opened it; if you expected a different vault, stop and delete this folder."
             );
         }
         Some(baluard_core::extract::MasterPasswordCheck::NoCanary) => {
@@ -6588,6 +6642,24 @@ mod extract_output_tests {
     use super::unique_attachment_name;
 
     #[test]
+    fn attachment_names_are_sanitized_for_every_platform() {
+        let mut used = std::collections::HashSet::new();
+        // Windows-invalid characters become underscores.
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-1", "report?.pdf"),
+            "report_.pdf"
+        );
+        // Trailing dots disappear.
+        assert_eq!(unique_attachment_name(&mut used, "id-2", "name."), "name");
+        // Reserved device names get an underscore prefix.
+        assert_eq!(unique_attachment_name(&mut used, "id-3", "con"), "_con");
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-4", "NUL.txt"),
+            "_NUL.txt"
+        );
+    }
+
+    #[test]
     fn duplicate_attachment_names_get_uniquified() {
         let mut used = std::collections::HashSet::new();
         assert_eq!(
@@ -6597,6 +6669,11 @@ mod extract_output_tests {
         assert_eq!(
             unique_attachment_name(&mut used, "id-2", "scan.jpg"),
             "id-2_scan.jpg"
+        );
+        // Case-different names are one file on macOS and Windows.
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-9", "Scan.JPG"),
+            "id-9_Scan.JPG"
         );
         // Names that only differ by path separators collapse to the same
         // safe string and must not collide either.
