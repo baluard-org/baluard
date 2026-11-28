@@ -6366,6 +6366,29 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Keep vault attachment filenames but make collisions unique: two
+/// attachments may share a name (or differ only in path separators),
+/// and a mid-write AlreadyExists failure must not be possible.
+fn unique_attachment_name(
+    used: &mut std::collections::HashSet<String>,
+    id: &str,
+    filename: &str,
+) -> String {
+    let safe = filename.replace(['/', '\\'], "_");
+    let name = if safe.is_empty() {
+        format!("{id}.bin")
+    } else {
+        safe
+    };
+    if used.insert(name.clone()) {
+        name
+    } else {
+        let file = format!("{id}_{name}");
+        used.insert(file.clone());
+        file
+    }
+}
+
 /// Create a directory with owner-only permissions (0700 on Unix).
 fn create_private_dir(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
@@ -6455,36 +6478,71 @@ pub fn handle_backup_extract(
     if out.exists() {
         return Err(format!("output directory already exists: {out_dir}").into());
     }
-    create_private_dir(out)?;
+    let password_check = match report.password_check {
+        Some(baluard_core::extract::MasterPasswordCheck::Verified) => "verified",
+        Some(baluard_core::extract::MasterPasswordCheck::Mismatch) => "mismatch",
+        Some(baluard_core::extract::MasterPasswordCheck::NoCanary) => "no-canary",
+        None => "skipped",
+    };
+    let password_verified =
+        report.password_check == Some(baluard_core::extract::MasterPasswordCheck::Verified);
 
-    write_private_file(&out.join("entries.json"), report.json.as_bytes())?;
-    for att in &report.attachments {
-        let dir = out.join("attachments").join(att.cipher_id.to_string());
-        create_private_dir(&dir)?;
-        // Attachment filenames come from the vault, not from the user's
-        // disk: keep them but refuse anything path-like.
-        let safe_name = att.filename.replace(['/', '\\'], "_");
-        write_private_file(&dir.join(safe_name), &att.data)?;
+    // Stage in a sibling dir and rename only on full success: a crash or
+    // write error must never leave a plaintext dump without its README
+    // warning. README first, manifest last.
+    let stage = out.with_file_name(format!(
+        "{}.partial-{}",
+        out.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("extract"),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let _ = std::fs::remove_dir_all(&stage);
+    let staged = (|| -> std::io::Result<()> {
+        create_private_dir(&stage)?;
+        write_private_file(&stage.join("README.txt"), EXTRACT_README.as_bytes())?;
+        write_private_file(&stage.join("entries.json"), report.json.as_bytes())?;
+        let mut used_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for att in &report.attachments {
+            let dir = stage.join("attachments").join(att.cipher_id.to_string());
+            create_private_dir(&dir)?;
+            // Attachment filenames come from the vault, not from the
+            // user's disk: keep them but refuse anything path-like.
+            let safe_name = unique_attachment_name(
+                &mut used_names,
+                &att.attachment_id.to_string(),
+                &att.filename,
+            );
+            write_private_file(&dir.join(safe_name), &att.data)?;
+        }
+        let manifest = serde_json::json!({
+            "entries": report.entries,
+            "folders": report.folders,
+            "password_verified": password_verified,
+            "password_check": password_check,
+            "attachments_skipped": report.skipped_attachments,
+            "attachments": report.attachments.iter().map(|a| {
+                serde_json::json!({
+                    "entry": a.cipher_id.to_string(),
+                    "file": a.filename,
+                    "size": a.size_bytes,
+                    "sha256": a.sha256_hex,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        let manifest_bytes = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        write_private_file(&stage.join("manifest.json"), manifest_bytes.as_bytes())?;
+        Ok(())
+    })();
+    if let Err(e) = staged {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(e.into());
     }
-
-    let manifest = serde_json::json!({
-        "entries": report.entries,
-        "folders": report.folders,
-        "password_verified": report.password_verified,
-        "attachments": report.attachments.iter().map(|a| {
-            serde_json::json!({
-                "entry": a.cipher_id.to_string(),
-                "file": a.filename,
-                "size": a.size_bytes,
-                "sha256": a.sha256_hex,
-            })
-        }).collect::<Vec<_>>(),
-    });
-    write_private_file(
-        &out.join("manifest.json"),
-        serde_json::to_string_pretty(&manifest)?.as_bytes(),
-    )?;
-    write_private_file(&out.join("README.txt"), EXTRACT_README.as_bytes())?;
+    std::fs::rename(&stage, out).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&stage);
+        std::io::Error::new(e.kind(), format!("finalizing output directory: {e}"))
+    })?;
 
     println!(
         "Extracted {} entries ({} folders) and {} attachments to {}",
@@ -6493,13 +6551,63 @@ pub fn handle_backup_extract(
         report.attachments.len(),
         out_dir
     );
-    if !report.password_verified {
+    match report.password_check {
+        Some(baluard_core::extract::MasterPasswordCheck::Verified) => {
+            println!("Master password verified against this backup.");
+        }
+        Some(baluard_core::extract::MasterPasswordCheck::Mismatch) => {
+            println!(
+                "WARNING: the master password did not match the canary this backup carries (normal for member-device backups). The recovery phrase opened it; if you expected a different vault, stop and delete this folder."
+            );
+        }
+        Some(baluard_core::extract::MasterPasswordCheck::NoCanary) => {
+            println!(
+                "Note: this backup carries no master-password canary, so only the recovery phrase was verified."
+            );
+        }
+        None => {
+            println!(
+                "Note: no master password was entered, so the master-password check was skipped."
+            );
+        }
+    }
+    if report.skipped_attachments > 0 {
         println!(
-            "Note: this backup carries no master-password canary, so only the recovery phrase was verified."
+            "Note: {} attachment(s) had unreadable ids and were not extracted.",
+            report.skipped_attachments
         );
     }
     println!(
         "WARNING: this folder is plaintext. Move it somewhere safe and delete it after importing."
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod extract_output_tests {
+    use super::unique_attachment_name;
+
+    #[test]
+    fn duplicate_attachment_names_get_uniquified() {
+        let mut used = std::collections::HashSet::new();
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-1", "scan.jpg"),
+            "scan.jpg"
+        );
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-2", "scan.jpg"),
+            "id-2_scan.jpg"
+        );
+        // Names that only differ by path separators collapse to the same
+        // safe string and must not collide either.
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-3", "a/b.txt"),
+            "a_b.txt"
+        );
+        assert_eq!(
+            unique_attachment_name(&mut used, "id-4", "a\\b.txt"),
+            "id-4_a_b.txt"
+        );
+        assert_eq!(unique_attachment_name(&mut used, "id-5", ""), "id-5.bin");
+    }
 }

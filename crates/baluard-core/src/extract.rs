@@ -4,7 +4,9 @@
 //! recovery phrase, optionally verifying the master password against the
 //! KEK canary, and emits an interoperable JSON dump plus plaintext
 //! attachment files. Strictly read-only on the vault: no device
-//! enrollment, no git remote contact, no writes to the vault itself.
+//! enrollment, no git remote contact. The vault copy it opens is scratch
+//! data: Baluard's open path may heal integrity state in place, so never
+//! point this at a live vault.
 
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -31,6 +33,18 @@ pub struct ExtractedAttachment {
     pub data: Vec<u8>,
 }
 
+/// Outcome of the optional master-password check against the backup's
+/// KEK canary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MasterPasswordCheck {
+    Verified,
+    /// Reported, not fatal: the recovery phrase is the extract's
+    /// authority, and member-device backups carry no synced unlock wrap,
+    /// so their password cannot match the founder canary.
+    Mismatch,
+    NoCanary,
+}
+
 /// Result of a successful extract.
 #[derive(Debug)]
 pub struct ExtractReport {
@@ -38,9 +52,10 @@ pub struct ExtractReport {
     pub json: String,
     pub entries: usize,
     pub folders: usize,
-    /// True when the master password was checked against a KEK canary.
-    /// False when the backup carries no canary to verify against.
-    pub password_verified: bool,
+    /// None when no master password was supplied (check skipped).
+    pub password_check: Option<MasterPasswordCheck>,
+    /// Attachment ids that were not valid UUIDs and so were not extracted.
+    pub skipped_attachments: usize,
     pub attachments: Vec<ExtractedAttachment>,
 }
 
@@ -124,9 +139,16 @@ pub fn extract_from_folder(
     let root = root_key_from_phrase(vault_path, phrase)?;
     let handle = VaultHandle::open_with_root_key(vault_path, &root)?;
 
-    let password_verified = match password {
-        Some(p) => handle.verify_master_password(p)?,
-        None => false,
+    let password_check = match password {
+        Some(p) => match handle.verify_master_password(p) {
+            Ok(true) => Some(MasterPasswordCheck::Verified),
+            Ok(false) => Some(MasterPasswordCheck::NoCanary),
+            Err(BaluardError::Vault(VaultError::PasswordMismatch)) => {
+                Some(MasterPasswordCheck::Mismatch)
+            }
+            Err(e) => return Err(e),
+        },
+        None => None,
     };
 
     let mut ciphers = Vec::new();
@@ -150,9 +172,11 @@ pub fn extract_from_folder(
         .map_err(|e| VaultError::Corrupt(format!("export serialization failed: {e}")))?;
 
     let mut attachments = Vec::new();
+    let mut skipped_attachments: usize = 0;
     for cipher in &ciphers {
         for meta in &cipher.attachments {
             let Ok(attachment_id) = meta.id.parse::<Uuid>() else {
+                skipped_attachments += 1;
                 continue;
             };
             let data = handle.read_attachment_plaintext(cipher.id, attachment_id)?;
@@ -172,7 +196,8 @@ pub fn extract_from_folder(
         json,
         entries: ciphers.len(),
         folders: folder_pairs.len(),
-        password_verified,
+        password_check,
+        skipped_attachments,
         attachments,
     })
 }
@@ -187,17 +212,28 @@ pub fn materialize_zip(zip_path: &Path, work_dir: &Path) -> Result<PathBuf, Balu
     let mut archive = zip::ZipArchive::new(file)
         .map_err(|e| VaultError::Corrupt(format!("reading backup zip: {e}")))?;
 
-    let mut is_mirror = false;
+    let names: Vec<String> = (0..archive.len())
+        .map(|i| {
+            archive
+                .by_index(i)
+                .map(|e| e.name().to_string())
+                .map_err(|e| VaultError::Corrupt(format!("reading zip entry {i}: {e}")))
+        })
+        .collect::<Result<_, _>>()?;
+    let shared_root = shared_wrapper_root(&names);
+    // Shape detection must run on STRIPPED names: a mirror zipped under
+    // one wrapper folder (vault.git/HEAD) would otherwise read as a
+    // plain vault folder.
+    let is_mirror = names.iter().any(|n| {
+        matches!(strip_shared(n, shared_root.as_deref()), "HEAD")
+            || strip_shared(n, shared_root.as_deref()).starts_with("objects/")
+    });
     let mut total: u64 = 0;
     for i in 0..archive.len() {
         let entry = archive
             .by_index(i)
             .map_err(|e| VaultError::Corrupt(format!("reading zip entry {i}: {e}")))?;
         total = total.saturating_add(entry.size());
-        let name = entry.name().to_string();
-        if name == "HEAD" || name.starts_with("objects/") {
-            is_mirror = true;
-        }
     }
     if total > MAX_ZIP_UNCOMPRESSED_BYTES {
         return Err(VaultError::Corrupt("backup zip is too large to extract safely".into()).into());
@@ -207,40 +243,31 @@ pub fn materialize_zip(zip_path: &Path, work_dir: &Path) -> Result<PathBuf, Balu
         let gitdir = work_dir.join("repo");
         std::fs::create_dir_all(&gitdir)
             .map_err(|e| VaultError::Metadata(format!("creating work dir: {e}")))?;
-        extract_zip_entries(&mut archive, &gitdir)?;
+        extract_zip_entries(&mut archive, &gitdir, shared_root.as_deref())?;
         // The mirror holds the repo history; the working tree with the
         // vault files comes out of the checkout.
-        materialize_worktree_from_gitdir(&gitdir, &work_dir.join("checkout"))
+        let checkout = work_dir.join("checkout");
+        materialize_worktree_from_gitdir(&gitdir, &checkout)?;
+        reject_symlinks(&checkout)?;
+        Ok(checkout)
     } else {
         let dest = work_dir.join("vault");
         std::fs::create_dir_all(&dest)
             .map_err(|e| VaultError::Metadata(format!("creating work dir: {e}")))?;
-        extract_zip_entries(&mut archive, &dest)?;
+        extract_zip_entries(&mut archive, &dest, shared_root.as_deref())?;
         Ok(dest)
     }
 }
 
-/// Extract every entry of an already-opened zip into `dest`, stripping a
-/// shared leading folder and refusing path traversal (zip-slip).
-fn extract_zip_entries<R>(archive: &mut zip::ZipArchive<R>, dest: &Path) -> Result<(), BaluardError>
-where
-    R: std::io::Read + std::io::Seek,
-{
-    let names: Vec<String> = (0..archive.len())
-        .map(|i| {
-            archive
-                .by_index(i)
-                .map(|e| e.name().to_string())
-                .map_err(|e| VaultError::Corrupt(format!("reading zip entry {i}: {e}")))
-        })
-        .collect::<Result<_, _>>()?;
-
-    // Strip a wrapper folder only when EVERY entry shares one first
-    // component; any entry without it (or without a slash at all) kills it.
+/// Strip a wrapper folder only when EVERY entry shares one first
+/// component; any entry without it (or without a slash at all) kills it.
+fn shared_wrapper_root(names: &[String]) -> Option<String> {
     let mut shared_root: Option<String> = None;
-    for name in &names {
+    for name in names {
         let first = name.split('/').next().unwrap_or("");
-        if name.contains('/') && !first.is_empty() {
+        // "." and ".." are never wrapper folders: treating them as one
+        // would strip a traversal away before the path guard sees it.
+        if name.contains('/') && !first.is_empty() && first != "." && first != ".." {
             match &shared_root {
                 None => shared_root = Some(first.to_string()),
                 Some(r) if r != first => {
@@ -254,25 +281,70 @@ where
             break;
         }
     }
+    shared_root
+}
 
+fn strip_shared<'a>(name: &'a str, shared_root: Option<&str>) -> &'a str {
+    let s = match shared_root {
+        Some(root) => name.strip_prefix(root).unwrap_or(name),
+        None => name,
+    };
+    s.trim_start_matches('/')
+}
+
+/// git2 materializes symlinks stored in the repo; an extract must not
+/// follow links out of the tree it just created.
+fn reject_symlinks(dir: &Path) -> Result<(), BaluardError> {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d)
+            .map_err(|e| VaultError::Metadata(format!("walking extracted tree: {e}")))?
+        {
+            let path = entry
+                .map_err(|e| VaultError::Metadata(format!("walking extracted tree: {e}")))?
+                .path();
+            let md = std::fs::symlink_metadata(&path)
+                .map_err(|e| VaultError::Metadata(format!("walking extracted tree: {e}")))?;
+            if md.file_type().is_symlink() {
+                return Err(VaultError::Corrupt(
+                    "backup contains a symlink; refusing to extract it".into(),
+                )
+                .into());
+            }
+            if md.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract every entry of an already-opened zip into `dest`, stripping a
+/// shared leading folder and refusing path traversal (zip-slip).
+fn extract_zip_entries<R>(
+    archive: &mut zip::ZipArchive<R>,
+    dest: &Path,
+    shared_root: Option<&str>,
+) -> Result<(), BaluardError>
+where
+    R: std::io::Read + std::io::Seek,
+{
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
             .map_err(|e| VaultError::Corrupt(format!("reading zip entry {i}: {e}")))?;
         let raw = entry.name().to_string();
-        let rel = match shared_root.as_deref() {
-            Some(root) => raw.strip_prefix(root).unwrap_or(&raw),
-            None => raw.as_str(),
-        };
-        let rel = rel.trim_start_matches('/');
+        let rel = strip_shared(&raw, shared_root);
         if rel.is_empty() {
             continue;
         }
+        // Only plain name components survive: Prefix/RootDir/ParentDir
+        // components would let a crafted zip escape `dest` (on Windows,
+        // "C:evil" and "\evil" are neither absolute nor ParentDir).
         let rel_path = Path::new(rel);
-        if rel_path.is_absolute()
-            || rel_path
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
+        if !rel_path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
         {
             return Err(VaultError::Corrupt(format!("unsafe path in backup zip: {raw}")).into());
         }
@@ -288,8 +360,16 @@ where
         }
         let mut out = std::fs::File::create(&out_path)
             .map_err(|e| VaultError::Metadata(format!("writing zip entry: {e}")))?;
-        std::io::copy(&mut entry, &mut out)
-            .map_err(|e| VaultError::Metadata(format!("copying zip entry: {e}")))?;
+        // Enforce the cap on bytes actually written: a zip may lie about
+        // entry.size(), which the pre-pass total trusts.
+        let copied = std::io::copy(
+            &mut std::io::Read::take(&mut entry, MAX_ZIP_UNCOMPRESSED_BYTES + 1),
+            &mut out,
+        )
+        .map_err(|e| VaultError::Metadata(format!("copying zip entry: {e}")))?;
+        if copied > MAX_ZIP_UNCOMPRESSED_BYTES {
+            return Err(VaultError::Corrupt(format!("zip entry too large: {raw}")).into());
+        }
     }
     Ok(())
 }
@@ -464,8 +544,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            report.password_verified,
+        assert_eq!(
+            report.password_check,
+            Some(MasterPasswordCheck::Verified),
             "master password must verify against the KEK canary"
         );
         assert_eq!(report.entries, 1);
@@ -516,22 +597,88 @@ mod tests {
             Some(&tv.password),
         )
         .expect_err("wrong phrase must fail");
-        assert!(!err.to_string().is_empty());
+        // The failure must come from unwrapping the kit, not from a
+        // missing one: distinguish shape errors from crypto errors.
+        assert!(
+            !err.to_string().contains("no recovery kit"),
+            "unexpected failure: {err}"
+        );
     }
 
     #[test]
-    fn wrong_password_is_rejected_when_canary_exists() {
+    fn wrong_password_reports_mismatch_when_canary_exists() {
         let tv = create_vault_with_attachment();
         let work = tempfile::tempdir().unwrap();
         let zip_path = work.path().join("backup.zip");
         zip_folder(tv.dir.path(), &zip_path);
-        let err = extract_from_zip(
+        let report = extract_from_zip(
             &zip_path,
             &work.path().join("u"),
             &tv.phrase,
-            Some("definitely-wrong-password"),
+            Some("definitely-wrong"),
         )
-        .expect_err("wrong password must fail");
-        assert!(!err.to_string().is_empty());
+        .unwrap();
+        assert_eq!(
+            report.password_check,
+            Some(MasterPasswordCheck::Mismatch),
+            "a canary-bearing backup must report the mismatch"
+        );
+    }
+
+    #[test]
+    fn skipped_password_reports_none() {
+        let tv = create_vault_with_attachment();
+        let work = tempfile::tempdir().unwrap();
+        let zip_path = work.path().join("backup.zip");
+        zip_folder(tv.dir.path(), &zip_path);
+        let report = extract_from_zip(&zip_path, &work.path().join("u"), &tv.phrase, None).unwrap();
+        assert_eq!(report.password_check, None);
+    }
+
+    #[test]
+    fn zip_slip_entries_are_rejected() {
+        let tv = create_vault_with_attachment();
+        let work = tempfile::tempdir().unwrap();
+        let zip_path = work.path().join("evil.zip");
+        {
+            let file = std::fs::File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("../evil.txt", options).unwrap();
+            std::io::Write::write_all(&mut zip, b"nope").unwrap();
+            zip.finish().unwrap();
+        }
+        let err = extract_from_zip(&zip_path, &work.path().join("u"), &tv.phrase, None)
+            .expect_err("zip-slip entry must be rejected");
+        assert!(err.to_string().contains("unsafe path"), "{err}");
+    }
+
+    #[test]
+    fn wrapped_mirror_zip_is_detected_as_mirror() {
+        let tv = create_vault_with_attachment();
+        commit_all(tv.dir.path());
+        fn copy_tree(src: &Path, dst: &Path) {
+            std::fs::create_dir_all(dst).unwrap();
+            for entry in std::fs::read_dir(src).unwrap().flatten() {
+                let target = dst.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    copy_tree(&entry.path(), &target);
+                } else {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        // Mirror-format backups wrap the bare repo in one folder.
+        let stage = tempfile::tempdir().unwrap();
+        copy_tree(&tv.dir.path().join(".git"), &stage.path().join("vault.git"));
+        let work = tempfile::tempdir().unwrap();
+        let zip_path = work.path().join("wrapped.zip");
+        zip_folder(stage.path(), &zip_path);
+        let report = extract_from_zip(&zip_path, &work.path().join("u"), &tv.phrase, None).unwrap();
+        assert_eq!(
+            report.entries, 1,
+            "a wrapped mirror must materialize via git2, not fail as a folder"
+        );
     }
 }
